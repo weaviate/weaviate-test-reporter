@@ -39,11 +39,22 @@ jobs:
       - name: Spin up Weaviate + model2vec
         uses: weaviate/weaviate-local-k8s@v2
         with:
-          workers: "0"
+          # 1 worker minimum so the cluster has a real worker node next to
+          # the control-plane (recommended for smoke / integration runs).
+          workers: "1"
           replicas: "1"
           weaviate-version: "1.37.3"
           modules: "text2vec-model2vec"
           observability: "false"
+          # Disable async indexing in the smoke. Local-k8s sets
+          # ASYNC_INDEXING=true by default which makes vectorization run
+          # in the background — when the smoke queries immediately after
+          # ingest, only the cheap `name` vector has computed; the heavier
+          # `error_message` / `stack_trace` vectors are still queued and
+          # the named-vector assertion fails. Synchronous indexing
+          # mirrors testcontainers behavior and keeps the test
+          # deterministic without polling.
+          values-inline: "--set env.ASYNC_INDEXING=false"
 
       - name: Verify Weaviate ready
         run: |
