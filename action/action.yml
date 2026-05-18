@@ -65,12 +65,21 @@ runs:
         echo "requirements=${abs}/requirements.txt" >> "$GITHUB_OUTPUT"
         echo "src=${abs}/src" >> "$GITHUB_OUTPUT"
 
+    # No `cache: pip` here. setup-python's pip cache requires
+    # `cache-dependency-path` to point INSIDE `github.workspace` (the
+    # consumer repo's checkout); when this action is consumed via
+    # `uses: weaviate/weaviate-test-reporter/action@v1`, its files live
+    # at `_actions/weaviate/...` which is OUTSIDE the workspace, and the
+    # cache step fails with:
+    #   No file in <workspace> matched to [<absolute path>/requirements.txt
+    #   or **/pyproject.toml], make sure you have checked out the target
+    #   repository
+    # The 6-dep install takes ~15s — small enough that skipping the
+    # cache is the simpler fix than smuggling files into the workspace.
     - name: Set up Python 3.11
       uses: actions/setup-python@v5
       with:
         python-version: "3.11"
-        cache: pip
-        cache-dependency-path: ${{ steps.action-paths.outputs.requirements }}
 
     - name: Install dependencies
       shell: bash
