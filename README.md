@@ -17,7 +17,7 @@ Add this step to any GitHub Actions workflow that produces JUnit XML:
 
 ```yaml
 - name: Upload test results to Weaviate
-  uses: weaviate/weaviate-test-reporter@v0.1.0
+  uses: weaviate/weaviate-test-reporter/action@v1
   if: always()  # ingest results even when prior steps failed
   with:
     weaviate_url: ${{ secrets.WEAVIATE_URL }}
@@ -25,6 +25,8 @@ Add this step to any GitHub Actions workflow that produces JUnit XML:
     junit_path: "reports/junit-*.xml"
     job_name: "e2e-backup"
 ```
+
+> The `/action` segment in the `uses:` line points GitHub at the `action/` subdirectory where `action.yml` lives — `weaviate/weaviate-test-reporter@v1` would 404 because there is no root-level `action.yml` in this repo.
 
 ### Inputs
 
