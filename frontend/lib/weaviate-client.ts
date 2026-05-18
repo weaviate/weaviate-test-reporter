@@ -40,6 +40,26 @@ function baseUrl(): string {
         "or in the deployment environment before serving the static bundle."
     );
   }
+  // A scheme-less URL like "my-cluster.weaviate.cloud" is treated by
+  // fetch() as a relative path and resolved against the page origin —
+  // so requests silently hit the page's own server instead of Weaviate
+  // (returning the HTML 404 page). Catch it loudly here.
+  let parsed: URL;
+  try {
+    parsed = new URL(env.weaviateUrl);
+  } catch {
+    throw new Error(
+      `NEXT_PUBLIC_WEAVIATE_URL is malformed ("${env.weaviateUrl}"): ` +
+        "must be a full URL including scheme, e.g. " +
+        "https://my-cluster.weaviate.cloud"
+    );
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(
+      `NEXT_PUBLIC_WEAVIATE_URL has unsupported scheme "${parsed.protocol}" ` +
+        `(value: "${env.weaviateUrl}"). Use http:// or https://.`
+    );
+  }
   return env.weaviateUrl.replace(/\/$/, "");
 }
 
