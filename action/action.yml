@@ -48,22 +48,40 @@ inputs:
 runs:
   using: composite
   steps:
+    # Resolve ${{ github.action_path }} to a canonical absolute path before
+    # handing it to actions/setup-python. When this action is invoked
+    # locally via `uses: ./action` (the action-smoke workflow + any fork
+    # testing in-place), action_path resolves to `${WORKSPACE}/./action`
+    # with a literal `./` — and setup-python's cache-dependency-path
+    # rejects any path containing `.` or `..` segments
+    # ("Invalid pattern ... Relative pathing '.' and '..' is not allowed").
+    # `cd ... && pwd` strips the segment in all invocation modes.
+    - name: Resolve action paths
+      id: action-paths
+      shell: bash
+      run: |
+        abs=$(cd "${{ github.action_path }}" && pwd)
+        echo "abs=${abs}" >> "$GITHUB_OUTPUT"
+        echo "requirements=${abs}/requirements.txt" >> "$GITHUB_OUTPUT"
+        echo "src=${abs}/src" >> "$GITHUB_OUTPUT"
+
     - name: Set up Python 3.11
       uses: actions/setup-python@v5
       with:
         python-version: "3.11"
         cache: pip
-        cache-dependency-path: ${{ github.action_path }}/requirements.txt
+        cache-dependency-path: ${{ steps.action-paths.outputs.requirements }}
 
     - name: Install dependencies
       shell: bash
       env:
         VERBOSE: ${{ inputs.verbose }}
+        REQUIREMENTS: ${{ steps.action-paths.outputs.requirements }}
       run: |
         if [ "$VERBOSE" = "true" ]; then
-          pip install --requirement "${{ github.action_path }}/requirements.txt"
+          pip install --requirement "$REQUIREMENTS"
         else
-          pip install --quiet --requirement "${{ github.action_path }}/requirements.txt"
+          pip install --quiet --requirement "$REQUIREMENTS"
         fi
 
     - name: Run Weaviate Test Reporter
@@ -89,6 +107,8 @@ runs:
         GH_PR_NUMBER: ${{ github.event.pull_request.number }}
         GH_ACTOR: ${{ github.actor }}
         GH_SERVER_URL: ${{ github.server_url }}
-        # PYTHONPATH so src layout is importable without an editable install
-        PYTHONPATH: ${{ github.action_path }}/src
+        # PYTHONPATH so the src layout is importable without an editable install.
+        # Use the resolved absolute path so this also works when the action is
+        # invoked via `uses: ./action` (no `./` segment in the path).
+        PYTHONPATH: ${{ steps.action-paths.outputs.src }}
       run: python -m weaviate_test_reporter

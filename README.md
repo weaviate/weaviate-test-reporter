@@ -169,4 +169,4 @@ For production deployment behind Nginx/Twingate, set the env vars at **build tim
 
 ## License
 
-Apache-2.0 — see [`LICENSE`](LICENSE).
+BSD-3-Clause — see [`LICENSE`](LICENSE).

@@ -3,7 +3,7 @@ name = "weaviate-test-reporter"
 version = "0.1.0"
 description = "Parse JUnit XML and ingest test results into Weaviate."
 requires-python = ">=3.11"
-license = { text = "Apache-2.0" }
+license = { text = "BSD-3-Clause" }
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
