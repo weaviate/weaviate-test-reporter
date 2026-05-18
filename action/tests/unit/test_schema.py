@@ -22,7 +22,6 @@ from weaviate_test_reporter.vectorization import (
     build_test_case_vector_config,
 )
 
-
 # ---------- contract: collection names ----------
 
 
@@ -49,10 +48,21 @@ def test_ensure_test_run_creates_when_missing():
 
     prop_names = {p.name for p in kwargs["properties"]}
     expected = {
-        "run_id", "repository", "branch", "commit_hash", "trigger_type",
-        "status", "total_duration_ms", "timestamp",
-        "workflow_run_id", "workflow_run_attempt", "workflow_name",
-        "job_name", "pr_number", "actor", "run_url",
+        "run_id",
+        "repository",
+        "branch",
+        "commit_hash",
+        "trigger_type",
+        "status",
+        "total_duration_ms",
+        "timestamp",
+        "workflow_run_id",
+        "workflow_run_attempt",
+        "workflow_name",
+        "job_name",
+        "pr_number",
+        "actor",
+        "run_url",
     }
     assert prop_names == expected
 
@@ -65,15 +75,23 @@ def test_test_run_index_flags_are_explicit():
     client = MagicMock()
     client.collections.exists.return_value = False
     ensure_test_run_collection(client)
-    props = {
-        p.name: p for p in client.collections.create.call_args.kwargs["properties"]
-    }
+    props = {p.name: p for p in client.collections.create.call_args.kwargs["properties"]}
 
     # Filterable — these power filter / aggregate queries.
     for f in (
-        "run_id", "repository", "branch", "commit_hash", "trigger_type",
-        "status", "total_duration_ms", "timestamp", "workflow_run_id",
-        "workflow_run_attempt", "workflow_name", "job_name", "pr_number",
+        "run_id",
+        "repository",
+        "branch",
+        "commit_hash",
+        "trigger_type",
+        "status",
+        "total_duration_ms",
+        "timestamp",
+        "workflow_run_id",
+        "workflow_run_attempt",
+        "workflow_name",
+        "job_name",
+        "pr_number",
         "actor",
     ):
         assert props[f].indexFilterable is True, f"{f} should be filterable"
@@ -84,7 +102,10 @@ def test_test_run_index_flags_are_explicit():
 
     # Range filterable (numeric + date — for "slowest" and "since" queries).
     for r in (
-        "total_duration_ms", "timestamp", "workflow_run_attempt", "pr_number",
+        "total_duration_ms",
+        "timestamp",
+        "workflow_run_attempt",
+        "pr_number",
     ):
         assert props[r].indexRangeFilters is True, f"{r} should be range-filterable"
 
@@ -111,9 +132,7 @@ def test_ensure_test_run_enables_index_timestamps():
 def test_ensure_test_case_creates_with_named_vector_config():
     client = MagicMock()
     client.collections.exists.return_value = False
-    vector_config = build_test_case_vector_config(
-        "text2vec-model2vec", "http://m2v:8080"
-    )
+    vector_config = build_test_case_vector_config("text2vec-model2vec", "http://m2v:8080")
 
     ensure_test_case_collection(client, vector_config=vector_config)
 
@@ -125,8 +144,14 @@ def test_ensure_test_case_creates_with_named_vector_config():
 
     prop_names = {p.name for p in kwargs["properties"]}
     expected = {
-        "name", "test_suite", "framework", "status", "duration_ms",
-        "error_message", "stack_trace", "failure_type",
+        "name",
+        "test_suite",
+        "framework",
+        "status",
+        "duration_ms",
+        "error_message",
+        "stack_trace",
+        "failure_type",
     }
     assert prop_names == expected
 
@@ -135,9 +160,7 @@ def test_test_case_index_flags_match_schema_doc():
     client = MagicMock()
     client.collections.exists.return_value = False
     ensure_test_case_collection(client, vector_config=None)
-    props = {
-        p.name: p for p in client.collections.create.call_args.kwargs["properties"]
-    }
+    props = {p.name: p for p in client.collections.create.call_args.kwargs["properties"]}
 
     # Vectorized text bodies are searchable (BM25 fallback) but NOT filterable.
     for v in ("name", "error_message", "stack_trace"):
@@ -206,26 +229,26 @@ def test_build_vector_config_text2vec_weaviate():
 
 
 def test_build_vector_config_text2vec_model2vec():
-    cfg = build_test_case_vector_config(
-        "text2vec-model2vec", "http://m2v:8080"
-    )
+    cfg = build_test_case_vector_config("text2vec-model2vec", "http://m2v:8080")
     assert cfg is not None
     names = {getattr(v, "name", None) for v in cfg}
     assert names == set(NAMED_VECTOR_PROPERTIES)
 
 
 def test_build_vector_config_model2vec_requires_inference_url():
+    import pytest as _pytest
+
     from weaviate_test_reporter.vectorization import UnknownVectorizerError
 
-    import pytest as _pytest
     with _pytest.raises(UnknownVectorizerError):
         build_test_case_vector_config("text2vec-model2vec", "")
 
 
 def test_build_vector_config_rejects_unknown_vectorizer():
+    import pytest as _pytest
+
     from weaviate_test_reporter.vectorization import UnknownVectorizerError
 
-    import pytest as _pytest
     with _pytest.raises(UnknownVectorizerError):
         build_test_case_vector_config("davinci-2000")
 

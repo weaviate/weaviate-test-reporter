@@ -15,7 +15,7 @@ Weaviate (Task 1.12). Unit tests pin the algorithmic contract:
 from __future__ import annotations
 
 import uuid as _uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -192,9 +192,20 @@ def test_insert_test_run_first_time_uses_insert():
     # All required properties must be present
     props = kwargs["properties"]
     for required in (
-        "run_id", "repository", "branch", "commit_hash", "trigger_type",
-        "status", "total_duration_ms", "timestamp", "workflow_run_id",
-        "workflow_run_attempt", "workflow_name", "job_name", "actor", "run_url",
+        "run_id",
+        "repository",
+        "branch",
+        "commit_hash",
+        "trigger_type",
+        "status",
+        "total_duration_ms",
+        "timestamp",
+        "workflow_run_id",
+        "workflow_run_attempt",
+        "workflow_name",
+        "job_name",
+        "actor",
+        "run_url",
     ):
         assert required in props, f"missing TestRun property: {required}"
 
@@ -234,7 +245,9 @@ def test_ingest_test_cases_uses_server_side_streaming_batch():
     run_uuid = "00000000-0000-0000-0000-000000000001"
 
     successful, failed = ingest_test_cases(
-        client, cases, run_uuid,
+        client,
+        cases,
+        run_uuid,
         repository="weaviate/weaviate",
         workflow_run_id="12345",
         workflow_run_attempt=2,
@@ -256,8 +269,12 @@ def test_ingest_test_cases_sets_belongsToRun_cross_reference():
 
     run_uuid = "00000000-0000-0000-0000-000000000001"
     ingest_test_cases(
-        client, [_case(), _case()], run_uuid,
-        repository="r", workflow_run_id="1", workflow_run_attempt=1,
+        client,
+        [_case(), _case()],
+        run_uuid,
+        repository="r",
+        workflow_run_id="1",
+        workflow_run_attempt=1,
     )
 
     for call in batch_ctx.add_object.call_args_list:
@@ -274,8 +291,12 @@ def test_ingest_test_cases_uses_deterministic_uuids():
     collection.batch.failed_objects = []
 
     ingest_test_cases(
-        client, [_case(name="t1", test_suite="s1")], "run-uuid",
-        repository="r", workflow_run_id="1", workflow_run_attempt=1,
+        client,
+        [_case(name="t1", test_suite="s1")],
+        "run-uuid",
+        repository="r",
+        workflow_run_id="1",
+        workflow_run_attempt=1,
     )
 
     uid_arg = batch_ctx.add_object.call_args.kwargs["uuid"]
@@ -296,8 +317,12 @@ def test_ingest_test_cases_counts_failed_objects():
     collection.batch.failed_objects = [MagicMock(), MagicMock()]
 
     successful, failed = ingest_test_cases(
-        client, [_case(), _case(), _case(), _case(), _case()], "ru",
-        repository="r", workflow_run_id="1", workflow_run_attempt=1,
+        client,
+        [_case(), _case(), _case(), _case(), _case()],
+        "ru",
+        repository="r",
+        workflow_run_id="1",
+        workflow_run_attempt=1,
     )
     assert successful == 3
     assert failed == 2
@@ -314,7 +339,10 @@ def test_ingest_test_cases_retries_on_connection_error():
         call_count["n"] += 1
         if call_count["n"] < 2:
             raise WeaviateConnectionError("transient")
-        return MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))
+        return MagicMock(
+            __enter__=MagicMock(return_value=MagicMock()),
+            __exit__=MagicMock(return_value=False),
+        )
 
     client = MagicMock()
     collection = MagicMock()
@@ -325,8 +353,12 @@ def test_ingest_test_cases_retries_on_connection_error():
     # Patch tenacity's wait to make the test fast
     with patch("weaviate_test_reporter.ingest._retry_wait", return_value=0):
         successful, failed = ingest_test_cases(
-            client, [_case()], "ru",
-            repository="r", workflow_run_id="1", workflow_run_attempt=1,
+            client,
+            [_case()],
+            "ru",
+            repository="r",
+            workflow_run_id="1",
+            workflow_run_attempt=1,
         )
 
     assert call_count["n"] == 2  # one failure, one success
@@ -346,6 +378,10 @@ def test_ingest_test_cases_gives_up_after_max_attempts():
     with patch("weaviate_test_reporter.ingest._retry_wait", return_value=0):
         with pytest.raises(WeaviateConnectionError):
             ingest_test_cases(
-                client, [_case()], "ru",
-                repository="r", workflow_run_id="1", workflow_run_attempt=1,
+                client,
+                [_case()],
+                "ru",
+                repository="r",
+                workflow_run_id="1",
+                workflow_run_attempt=1,
             )

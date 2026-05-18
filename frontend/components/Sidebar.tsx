@@ -36,17 +36,12 @@ export function Sidebar() {
       <div className="px-6 pt-7 pb-5 border-b border-wv-navy-3/40">
         <Link
           href="/"
-          className="flex items-center gap-3 group"
+          className="flex flex-col gap-2 group"
           aria-label="Weaviate Test Reporter, go to Test Explorer"
         >
-          <span className="text-wv-green">
-            <BrandMark size={28} />
-          </span>
-          <span className="font-display text-[15px] leading-tight">
-            <span className="block text-wv-fog">Weaviate</span>
-            <span className="block text-wv-fog-muted text-[12px] font-medium uppercase tracking-[0.18em]">
-              Test Reporter
-            </span>
+          <BrandMark height={22} />
+          <span className="text-wv-fog-muted text-[11px] font-medium uppercase tracking-[0.22em] font-mono">
+            Test Reporter
           </span>
         </Link>
       </div>

@@ -78,7 +78,9 @@ def _ingest_pipeline(client, meta, cfg):
     cases = list(parse_junit_file(FIXTURE))
     run_uuid = insert_test_run(client, cases, meta, cfg)
     successful, failed = ingest_test_cases(
-        client, cases, run_uuid,
+        client,
+        cases,
+        run_uuid,
         repository=meta["repository"],
         workflow_run_id=meta["workflow_run_id"],
         workflow_run_attempt=meta["workflow_run_attempt"],
@@ -87,9 +89,7 @@ def _ingest_pipeline(client, meta, cfg):
 
 
 def test_full_pipeline_lands_one_run_and_three_cases(weaviate_client):
-    run_uuid, cases, successful, failed = _ingest_pipeline(
-        weaviate_client, _meta(), _cfg()
-    )
+    run_uuid, cases, successful, failed = _ingest_pipeline(weaviate_client, _meta(), _cfg())
 
     assert successful == 3
     assert failed == 0
@@ -150,8 +150,7 @@ def test_belongs_to_run_cross_reference_resolves(weaviate_client):
         # The reference must point at exactly the inserted run UUID.
         ref_uuids = [str(o.uuid) for o in ref.objects]
         assert ref_uuids == [run_uuid], (
-            f"case {obj.properties['name']!r} cross-ref={ref_uuids}, "
-            f"expected [{run_uuid!r}]"
+            f"case {obj.properties['name']!r} cross-ref={ref_uuids}, " f"expected [{run_uuid!r}]"
         )
 
 
@@ -242,7 +241,7 @@ def test_semantic_search_can_target_different_named_vectors(weaviate_client):
 def test_semantic_search_ranks_relevant_above_unrelated(weaviate_client):
     """Insert a synthetic mix of failures with distinct semantic content
     and verify the vectorizer ranks them in the expected order."""
-    from weaviate_test_reporter.ingest import insert_test_run, ingest_test_cases
+    from weaviate_test_reporter.ingest import ingest_test_cases, insert_test_run
     from weaviate_test_reporter.parser import ParsedCase
 
     cases = [
@@ -281,7 +280,9 @@ def test_semantic_search_ranks_relevant_above_unrelated(weaviate_client):
     cfg = _cfg()
     run_uuid = insert_test_run(weaviate_client, cases, meta, cfg)
     ingest_test_cases(
-        weaviate_client, cases, run_uuid,
+        weaviate_client,
+        cases,
+        run_uuid,
         repository=meta["repository"],
         workflow_run_id=meta["workflow_run_id"],
         workflow_run_attempt=meta["workflow_run_attempt"],
@@ -295,9 +296,9 @@ def test_semantic_search_ranks_relevant_above_unrelated(weaviate_client):
         limit=3,
     )
     assert len(result.objects) >= 1
-    assert result.objects[0].properties["name"] == "test_kubernetes_pod_oom", (
-        f"top hit was {result.objects[0].properties['name']!r}, expected OOM case"
-    )
+    assert (
+        result.objects[0].properties["name"] == "test_kubernetes_pod_oom"
+    ), f"top hit was {result.objects[0].properties['name']!r}, expected OOM case"
 
 
 def test_vectorization_actually_runs(weaviate_client):
@@ -322,13 +323,11 @@ def test_vectorization_actually_runs(weaviate_client):
     for obj in result.objects:
         assert obj.vector, f"TestCase {obj.properties['name']!r} has no vectors"
         # `name` is always populated for every case.
-        assert "name" in obj.vector, (
-            f"{obj.properties['name']!r} missing 'name' vector"
-        )
+        assert "name" in obj.vector, f"{obj.properties['name']!r} missing 'name' vector"
         for slot, vec_values in obj.vector.items():
-            assert len(vec_values) > 0, (
-                f"{obj.properties['name']!r} has empty vector for slot {slot!r}"
-            )
+            assert (
+                len(vec_values) > 0
+            ), f"{obj.properties['name']!r} has empty vector for slot {slot!r}"
         if set(obj.vector.keys()) == {"name", "error_message", "stack_trace"}:
             failed_with_all_slots += 1
 
@@ -337,5 +336,3 @@ def test_vectorization_actually_runs(weaviate_client):
         "expected at least one TestCase with all three named vectors "
         "(populated when name + error_message + stack_trace are all set)"
     )
-
-

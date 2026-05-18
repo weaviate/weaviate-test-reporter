@@ -13,12 +13,20 @@ export type AsyncState<T> = {
  * Minimal async hook — runs `fn()` on mount and whenever any of `deps` changes.
  *
  * Why not react-query: an MVP dashboard with three tabs and zero caching
- * needs doesn't justify the dependency footprint. Swap in if either show
- * up (Phase 3 territory).
+ * needs doesn't justify the dependency footprint. Swap in if either show up
+ * (Phase 3 territory).
+ *
+ * Loading state is reset to `true` synchronously inside the effect when
+ * deps change — `react-hooks/set-state-in-effect` flags that as a
+ * cascading-render anti-pattern, but for a one-shot fetch hook it is the
+ * correct shape (we WANT a render that shows the loading state for the
+ * new deps before the promise settles). The alternative — moving loading
+ * into a render-time computation — couples consumers to internal state
+ * shape we don't want to leak.
  */
 export function useAsync<T>(
   fn: () => Promise<T>,
-  deps: React.DependencyList = []
+  deps: React.DependencyList = [],
 ): AsyncState<T> {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
@@ -28,6 +36,7 @@ export function useAsync<T>(
 
   useEffect(() => {
     const mySeq = ++seq.current;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
     fn()

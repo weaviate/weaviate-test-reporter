@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Iterator
+from collections.abc import Iterator
 
 import httpx
 import pytest
@@ -95,8 +95,7 @@ def _wait_for_model2vec(container: DockerContainer) -> None:
             last_error = e
         time.sleep(2)
     raise TimeoutError(
-        f"model2vec inference probe never returned 2xx within 90s "
-        f"(last error: {last_error!r})"
+        f"model2vec inference probe never returned 2xx within 90s " f"(last error: {last_error!r})"
     )
 
 
@@ -131,9 +130,7 @@ def weaviate_container(
     """Weaviate container with text2vec-model2vec enabled and pointed at
     the sibling model2vec container via the shared network alias."""
     inference_api = f"http://{MODEL2VEC_ALIAS}:8080"
-    container = _TolerantWeaviateContainer(image=WEAVIATE_IMAGE).with_network(
-        docker_network
-    )
+    container = _TolerantWeaviateContainer(image=WEAVIATE_IMAGE).with_network(docker_network)
     # WeaviateContainer's parent DockerContainer accepts with_env(); these
     # are the same env vars docker-compose sets to enable the module.
     container.with_env("ENABLE_MODULES", "text2vec-model2vec")

@@ -7,11 +7,11 @@ so callers can keep memory bounded on large CI reports.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
-from junitparser import Error, Failure, JUnitXml, Skipped
+from junitparser import Error, Failure, JUnitXml, Skipped, TestSuite
 from junitparser import TestCase as JUnitTestCase
 
 MAX_TEXT_BYTES = 32_768
@@ -81,18 +81,31 @@ def _detect_framework(case: JUnitTestCase) -> str:
 def parse_junit_file(path: Path) -> Iterator[ParsedCase]:
     """Yield a ParsedCase per <testcase> element.
 
-    junitparser handles both `<testsuites>` (multi-suite) and bare `<testsuite>`
-    documents transparently — iterating the root yields suites in either case.
+    Handles two XML root shapes:
+
+    - `<testsuites>` wrapping multiple `<testsuite>` blocks — junitparser
+      returns a `JUnitXml` object whose iteration yields TestSuite instances.
+    - A bare `<testsuite>` root (Maven surefire) — junitparser returns a
+      `TestSuite` directly; iterating it yields TestCase instances, not
+      TestSuite. We detect this with isinstance and wrap accordingly.
+
+    Inside each suite, we also skip non-TestCase children (`<system-out>`,
+    `<system-err>`, `<properties>`) which some junitparser versions yield
+    as part of TestSuite iteration.
     """
     xml = JUnitXml.fromfile(str(path))
-    try:
+    if isinstance(xml, TestSuite):
+        iter_suites: Iterator[TestSuite] = iter([xml])
+    else:
         iter_suites = iter(xml)
-    except TypeError:
-        iter_suites = [xml]
 
     for suite in iter_suites:
         fallback_suite_name = suite.name or "unknown"
         for case in suite:
+            # Defensive: some junitparser versions yield non-TestCase
+            # children of a TestSuite (system-out / properties / etc.).
+            if not isinstance(case, JUnitTestCase):
+                continue
             status, msg, stack, ftype = _classify(case)
             yield ParsedCase(
                 name=case.name or "unknown",

@@ -78,9 +78,7 @@ def main() -> int:
         get_logger().error("config_error", error=str(e))
         return 1
 
-    configure_logging(
-        level=stdlib_logging.DEBUG if cfg.verbose else stdlib_logging.INFO
-    )
+    configure_logging(level=stdlib_logging.DEBUG if cfg.verbose else stdlib_logging.INFO)
     log = get_logger()
 
     try:
@@ -140,7 +138,9 @@ def main() -> int:
             log.info("test_run_inserted", uuid=run_uuid)
 
             successful, failed = ingest_test_cases(
-                client, cases, run_uuid,
+                client,
+                cases,
+                run_uuid,
                 repository=meta["repository"],
                 workflow_run_id=meta["workflow_run_id"],
                 workflow_run_attempt=meta["workflow_run_attempt"],

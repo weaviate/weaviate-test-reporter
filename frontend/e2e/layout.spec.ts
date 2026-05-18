@@ -4,8 +4,8 @@ test.describe("Layout & navigation", () => {
   test("loads the app shell with brand + 3 nav links", async ({ page }) => {
     await page.goto("/");
 
-    // Brand mark + name in the sidebar.
-    await expect(page.getByText("Weaviate", { exact: true })).toBeVisible();
+    // Brand mark (Weaviate logo image) + sub-title in the sidebar.
+    await expect(page.getByRole("img", { name: "Weaviate" })).toBeVisible();
     await expect(page.getByText("Test Reporter", { exact: true })).toBeVisible();
 
     // All three primary nav links are present. Use `exact: true` so the

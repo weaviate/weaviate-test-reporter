@@ -42,9 +42,7 @@ def test_resolve_push_event(monkeypatch: pytest.MonkeyPatch):
     assert meta["trigger_type"] == "push"
     assert meta["actor"] == "alice"
     assert meta["pr_number"] is None
-    assert meta["run_url"] == (
-        "https://github.com/weaviate/weaviate/actions/runs/12345/attempts/2"
-    )
+    assert meta["run_url"] == ("https://github.com/weaviate/weaviate/actions/runs/12345/attempts/2")
 
 
 def test_resolve_pull_request_event(monkeypatch: pytest.MonkeyPatch):

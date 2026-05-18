@@ -19,7 +19,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 FIXTURE = Path(__file__).parent / "fixtures" / "pytest_simple.xml"
 
 
@@ -75,6 +74,7 @@ def test_main_returns_one_on_config_error(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("FAIL_ON_ERROR", "false")  # explicit: doesn't help
 
     from weaviate_test_reporter.__main__ import main
+
     assert main() == 1
 
 
@@ -84,12 +84,11 @@ def test_main_returns_one_on_github_metadata_error(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("FAIL_ON_ERROR", "false")
 
     from weaviate_test_reporter.__main__ import main
+
     assert main() == 1
 
 
-def test_main_warns_and_exits_zero_on_no_xml_files(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-):
+def test_main_warns_and_exits_zero_on_no_xml_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """An empty glob is a soft warning — most teams just want the action
     to be a no-op when their job didn't produce a report."""
     _full_env(monkeypatch, str(tmp_path / "nonexistent*.xml"))
@@ -176,6 +175,7 @@ def test_main_returns_zero_when_partial_ingest_failure_and_failsafe(
 
 def _make_cfg(**overrides):
     from weaviate_test_reporter.config import Config
+
     defaults = dict(
         weaviate_url="http://localhost:8080",
         weaviate_api_key="",
@@ -192,6 +192,7 @@ def _make_cfg(**overrides):
 
 def test_connect_to_weaviate_routes_localhost():
     from weaviate_test_reporter.__main__ import connect_to_weaviate
+
     cfg = _make_cfg(weaviate_url="http://localhost:8080")
     with patch("weaviate.connect_to_local") as ctl:
         connect_to_weaviate(cfg)
@@ -205,6 +206,7 @@ def test_connect_to_weaviate_handles_trailing_path():
     """urllib.parse.urlparse must extract host/port cleanly even if the
     URL ends with a path component."""
     from weaviate_test_reporter.__main__ import connect_to_weaviate
+
     cfg = _make_cfg(weaviate_url="http://localhost:8080/foo/bar")
     with patch("weaviate.connect_to_local") as ctl:
         connect_to_weaviate(cfg)
@@ -215,6 +217,7 @@ def test_connect_to_weaviate_handles_trailing_path():
 
 def test_connect_to_weaviate_routes_cloud_url():
     from weaviate_test_reporter.__main__ import connect_to_weaviate
+
     cfg = _make_cfg(
         weaviate_url="https://my-cluster.weaviate.cloud",
         weaviate_api_key="my-key",

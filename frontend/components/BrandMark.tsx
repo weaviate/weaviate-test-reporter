@@ -1,33 +1,32 @@
+import Image from "next/image";
+
 /**
  * Weaviate brand mark.
  *
- * Geometric W rendered from path data so it can be tinted with currentColor
- * (the official SVG from the Brand Drive folder is the long-term source of
- * truth — swap this for that asset before public release).
+ * Renders the official horizontal Weaviate logo (icon + wordmark) shipped
+ * by weaviate.io. The asset lives at public/weaviate-logo.svg so it is
+ * served by Nginx as-is from the static export.
+ *
+ * The intrinsic SVG is 614 x 106 (~5.8 aspect). Use the `height` prop to
+ * scale; width is derived to preserve the aspect ratio.
  */
 export function BrandMark({
-  size = 28,
+  height = 24,
   className = "",
 }: {
-  size?: number;
+  height?: number;
   className?: string;
 }) {
+  const ratio = 614.6 / 106;
+  const width = Math.round(height * ratio);
   return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width={size}
-      height={size}
-      viewBox="0 0 32 32"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2.4}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
+    <Image
+      src="/weaviate-logo.svg"
+      alt="Weaviate"
+      width={width}
+      height={height}
+      priority
       className={className}
-    >
-      <path d="M4 8 L10 24 L16 14 L22 24 L28 8" />
-      <circle cx="16" cy="14" r="1.6" fill="currentColor" stroke="none" />
-    </svg>
+    />
   );
 }

@@ -59,9 +59,9 @@ def test_pytest_realistic_test_suite_uses_classname_not_pytest():
     cases = list(parse_junit_file(FIXTURES / "pytest_realistic.xml"))
     assert len(cases) == 3
     suites = {c.test_suite for c in cases}
-    assert "pytest" not in suites, (
-        "test_suite must NOT collapse to the generic 'pytest' wrapper name"
-    )
+    assert (
+        "pytest" not in suites
+    ), "test_suite must NOT collapse to the generic 'pytest' wrapper name"
     assert suites == {
         "tests.e2e.python_e2e.core.collection_alias_test",
         "tests.e2e.python_e2e.core.async_indexing_test",
@@ -209,7 +209,7 @@ def _build_large_xml(num_cases: int) -> str:
     """
     chunks: list[str] = [
         '<?xml version="1.0" encoding="UTF-8"?>',
-        '<testsuites>',
+        "<testsuites>",
         f'<testsuite name="synth" tests="{num_cases}" '
         f'failures="{num_cases // 4}" time="120.0">',
     ]
@@ -220,15 +220,15 @@ def _build_large_xml(num_cases: int) -> str:
                 f'<testcase classname="synth.module_{i % 20}" '
                 f'name="test_case_{i}" time="0.05">'
                 f'<failure type="SynthError" message="boom {i}">{big_payload}</failure>'
-                f'</testcase>'
+                f"</testcase>"
             )
         else:
             chunks.append(
                 f'<testcase classname="synth.module_{i % 20}" '
                 f'name="test_case_{i}" time="0.01"/>'
             )
-    chunks.append('</testsuite>')
-    chunks.append('</testsuites>')
+    chunks.append("</testsuite>")
+    chunks.append("</testsuites>")
     return "\n".join(chunks)
 
 

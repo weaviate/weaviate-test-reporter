@@ -111,8 +111,6 @@ def resolve_github_metadata() -> GithubMetadata:
         "trigger_type": _normalize_trigger(_require("GH_EVENT_NAME")),
         "actor": _require("GH_ACTOR"),
         "pr_number": _int_optional("GH_PR_NUMBER"),
-        "run_url": (
-            f"{server_url}/{repository}/actions/runs/{run_id}/attempts/{run_attempt}"
-        ),
+        "run_url": (f"{server_url}/{repository}/actions/runs/{run_id}/attempts/{run_attempt}"),
     }
     return meta  # type: ignore[return-value]

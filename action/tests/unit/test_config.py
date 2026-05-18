@@ -116,9 +116,7 @@ def test_vectorizer_defaults_to_text2vec_weaviate(monkeypatch: pytest.MonkeyPatc
     "value",
     ["text2vec-weaviate", "text2vec-model2vec", "none"],
 )
-def test_vectorizer_accepts_known_values(
-    monkeypatch: pytest.MonkeyPatch, value: str
-):
+def test_vectorizer_accepts_known_values(monkeypatch: pytest.MonkeyPatch, value: str):
     _base_env(monkeypatch)
     monkeypatch.setenv("VECTORIZER", value)
     if value == "text2vec-model2vec":

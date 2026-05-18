@@ -17,8 +17,9 @@ https://docs.weaviate.io/weaviate/manage-objects/import#server-side-batching
 from __future__ import annotations
 
 import uuid as _uuid
-from datetime import datetime, timezone
-from typing import Any, Iterable
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from typing import Any
 
 import weaviate
 from tenacity import retry, retry_if_exception_type, stop_after_attempt
@@ -27,7 +28,6 @@ from weaviate.exceptions import WeaviateConnectionError
 from .config import Config
 from .parser import ParsedCase
 from .schema import TEST_CASE, TEST_RUN
-
 
 # ---------- UUID derivation ----------
 
@@ -77,11 +77,10 @@ def aggregate_run_properties(
     any_failed = any(c.status == "failed" for c in cases)
     status = "failure" if any_failed else "success"
     total_duration = sum(c.duration_ms for c in cases)
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     workflow = meta["workflow_name"]
     run_id_friendly = (
-        f"{workflow}/{cfg.job_name}#{meta['workflow_run_id']}"
-        f".{meta['workflow_run_attempt']}"
+        f"{workflow}/{cfg.job_name}#{meta['workflow_run_id']}" f".{meta['workflow_run_attempt']}"
     )
 
     return {
@@ -140,7 +139,7 @@ def insert_test_run(
 # to return 0 for fast unit tests. Exponential backoff capped at 8s.
 def _retry_wait(retry_state: Any) -> float:
     attempt = getattr(retry_state, "attempt_number", 1)
-    return min(2 ** attempt, 8)
+    return min(2**attempt, 8)
 
 
 def _case_properties(c: ParsedCase) -> dict[str, Any]:

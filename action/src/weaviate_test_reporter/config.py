@@ -17,9 +17,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-VALID_VECTORIZERS: frozenset[str] = frozenset(
-    {"text2vec-weaviate", "text2vec-model2vec", "none"}
-)
+VALID_VECTORIZERS: frozenset[str] = frozenset({"text2vec-weaviate", "text2vec-model2vec", "none"})
 
 
 class ConfigError(ValueError):
@@ -59,7 +57,7 @@ class Config:
     verbose: bool
 
     @classmethod
-    def from_env(cls) -> "Config":
+    def from_env(cls) -> Config:
         vectorizer = _str_optional("VECTORIZER", "text2vec-weaviate")
         if vectorizer not in VALID_VECTORIZERS:
             raise ConfigError(
