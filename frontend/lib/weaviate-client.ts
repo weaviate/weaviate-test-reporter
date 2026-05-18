@@ -60,6 +60,20 @@ function baseUrl(): string {
         `(value: "${env.weaviateUrl}"). Use http:// or https://.`
     );
   }
+  // In dev, route through the same-origin Next.js rewrite proxy
+  // (configured in next.config.ts) so the browser never crosses
+  // origins — WCD locks `Access-Control-Allow-Origin` to
+  // `https://console.weaviate.cloud` and rejects any other origin's
+  // preflight. The rewrite forwards the request server-side to the
+  // real WCD URL, preserving the Authorization header.
+  //
+  // In production the static bundle is served by Nginx behind
+  // Twingate, which proxies same-origin to WCD — so the full URL is
+  // never crossed at the browser layer there either, but we don't
+  // need (or have) the dev rewrite.
+  if (process.env.NODE_ENV === "development") {
+    return "/api/weaviate";
+  }
   return env.weaviateUrl.replace(/\/$/, "");
 }
 
