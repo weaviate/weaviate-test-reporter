@@ -85,6 +85,18 @@ function headers(extra: HeadersInit = {}): HeadersInit {
   };
   if (env.weaviateApiKey) {
     h.Authorization = `Bearer ${env.weaviateApiKey}`;
+    // text2vec-weaviate (Weaviate Embeddings) needs these two headers
+    // to reach the embeddings cluster from a WCD instance. The Python
+    // v4 client auto-injects them on connect_to_weaviate_cloud(); the
+    // raw GraphQL path doesn't, so requests using nearText against a
+    // text2vec-weaviate collection fail with:
+    //   vectorize keywords: remote client vectorize: text2vec-weaviate
+    //   module: cluster URL: no cluster URL found in request header:
+    //   X-Weaviate-Cluster-Url
+    // Use the raw env URL (not baseUrl()), since in dev baseUrl()
+    // returns the same-origin proxy path.
+    h["X-Weaviate-Cluster-Url"] = env.weaviateUrl;
+    h["X-Weaviate-Api-Key"] = env.weaviateApiKey;
   }
   return h;
 }
