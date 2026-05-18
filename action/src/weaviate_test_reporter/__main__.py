@@ -144,6 +144,7 @@ def main() -> int:
                 repository=meta["repository"],
                 workflow_run_id=meta["workflow_run_id"],
                 workflow_run_attempt=meta["workflow_run_attempt"],
+                job_name=cfg.job_name,
             )
             log.info("test_cases_ingested", successful=successful, failed=failed)
 

@@ -82,10 +82,10 @@ def _case(**overrides) -> ParsedCase:
 
 
 def test_run_uuid_is_deterministic_for_same_attempt():
-    """Identical (repository, run_id, attempt) -> identical UUID. This is
-    the property that makes CI retries idempotent."""
-    a = _run_uuid("weaviate/weaviate", "12345", 2)
-    b = _run_uuid("weaviate/weaviate", "12345", 2)
+    """Identical (repository, run_id, attempt, job_name) -> identical UUID.
+    This is the property that makes CI retries idempotent."""
+    a = _run_uuid("weaviate/weaviate", "12345", 2, "e2e-backup")
+    b = _run_uuid("weaviate/weaviate", "12345", 2, "e2e-backup")
     assert a == b
     # Sanity: the result is a valid UUID
     _uuid.UUID(a)
@@ -94,17 +94,40 @@ def test_run_uuid_is_deterministic_for_same_attempt():
 def test_run_uuid_differs_across_attempts():
     """Different attempts of the same run get different UUIDs so retries
     are stored separately (not overwriting attempt 1 with attempt 2)."""
-    assert _run_uuid("weaviate/weaviate", "12345", 1) != _run_uuid("weaviate/weaviate", "12345", 2)
+    assert _run_uuid("weaviate/weaviate", "12345", 1, "e2e") != _run_uuid(
+        "weaviate/weaviate", "12345", 2, "e2e"
+    )
+
+
+def test_run_uuid_differs_across_job_names():
+    """Matrix jobs in a single workflow run share `run_id` / `run_attempt`
+    but call the action with distinct `job_name` values. The TestRun UUID
+    MUST include `job_name` so matrix cells don't clobber each other's
+    rows."""
+    a = _run_uuid("weaviate/weaviate", "12345", 1, "e2e-replicas-1")
+    b = _run_uuid("weaviate/weaviate", "12345", 1, "e2e-replicas-3")
+    c = _run_uuid("weaviate/weaviate", "12345", 1, "e2e-replicas-7")
+    assert len({a, b, c}) == 3
 
 
 def test_case_uuid_includes_full_path():
-    """The TestCase UUID must include repo, run, attempt, suite, and name
-    so the same logical test in different runs gets distinct UUIDs."""
-    a = _case_uuid("repo", "1", 1, "suite", "test_a")
-    b = _case_uuid("repo", "1", 1, "suite", "test_b")
-    c = _case_uuid("repo", "1", 2, "suite", "test_a")  # different attempt
+    """The TestCase UUID must include repo, run, attempt, job_name, suite,
+    and name so the same logical test in different runs gets distinct
+    UUIDs."""
+    a = _case_uuid("repo", "1", 1, "job", "suite", "test_a")
+    b = _case_uuid("repo", "1", 1, "job", "suite", "test_b")
+    c = _case_uuid("repo", "1", 2, "job", "suite", "test_a")  # different attempt
     assert a != b
     assert a != c
+
+
+def test_case_uuid_differs_across_job_names():
+    """Matrix cells running the same test suite/name MUST produce distinct
+    TestCase UUIDs — otherwise replicas=1 and replicas=7 would clobber each
+    other's per-test results within a single workflow run."""
+    a = _case_uuid("repo", "1", 1, "matrix-a", "suite", "test_x")
+    b = _case_uuid("repo", "1", 1, "matrix-b", "suite", "test_x")
+    assert a != b
 
 
 # ---------- aggregate_run_properties ----------
@@ -179,7 +202,7 @@ def test_insert_test_run_first_time_uses_insert():
     client.collections.get.return_value = collection
     collection.data.exists.return_value = False
 
-    expected_uuid = _run_uuid("weaviate/weaviate", "12345", 2)
+    expected_uuid = _run_uuid("weaviate/weaviate", "12345", 2, "e2e-backup")
     result_uuid = insert_test_run(client, [_case()], _meta(), _cfg())
 
     assert result_uuid == expected_uuid
@@ -218,7 +241,7 @@ def test_insert_test_run_existing_uuid_uses_replace():
     client.collections.get.return_value = collection
     collection.data.exists.return_value = True
 
-    expected_uuid = _run_uuid("weaviate/weaviate", "12345", 2)
+    expected_uuid = _run_uuid("weaviate/weaviate", "12345", 2, "e2e-backup")
     result_uuid = insert_test_run(client, [_case()], _meta(), _cfg())
 
     assert result_uuid == expected_uuid
@@ -251,6 +274,7 @@ def test_ingest_test_cases_uses_server_side_streaming_batch():
         repository="weaviate/weaviate",
         workflow_run_id="12345",
         workflow_run_attempt=2,
+        job_name="e2e-backup",
     )
 
     collection.batch.stream.assert_called_once()  # NOT fixed_size or dynamic
@@ -275,6 +299,7 @@ def test_ingest_test_cases_sets_belongsToRun_cross_reference():
         repository="r",
         workflow_run_id="1",
         workflow_run_attempt=1,
+        job_name="j",
     )
 
     for call in batch_ctx.add_object.call_args_list:
@@ -297,10 +322,11 @@ def test_ingest_test_cases_uses_deterministic_uuids():
         repository="r",
         workflow_run_id="1",
         workflow_run_attempt=1,
+        job_name="j",
     )
 
     uid_arg = batch_ctx.add_object.call_args.kwargs["uuid"]
-    expected = _case_uuid("r", "1", 1, "s1", "t1")
+    expected = _case_uuid("r", "1", 1, "j", "s1", "t1")
     assert uid_arg == expected
 
 
@@ -323,6 +349,7 @@ def test_ingest_test_cases_counts_failed_objects():
         repository="r",
         workflow_run_id="1",
         workflow_run_attempt=1,
+        job_name="j",
     )
     assert successful == 3
     assert failed == 2
@@ -359,6 +386,7 @@ def test_ingest_test_cases_retries_on_connection_error():
             repository="r",
             workflow_run_id="1",
             workflow_run_attempt=1,
+            job_name="j",
         )
 
     assert call_count["n"] == 2  # one failure, one success
@@ -384,4 +412,5 @@ def test_ingest_test_cases_gives_up_after_max_attempts():
                 repository="r",
                 workflow_run_id="1",
                 workflow_run_attempt=1,
+                job_name="j",
             )

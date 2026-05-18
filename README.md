@@ -50,7 +50,7 @@ Two collections:
 
 `TestCase` references `TestRun` via `belongsToRun`. Full contract: [`.project/02-weaviate-schema.md`](.project/02-weaviate-schema.md).
 
-Idempotent UUID5 strategy means re-running a workflow attempt **upserts** existing rows rather than duplicating.
+Idempotent UUID5 strategy means re-running a workflow attempt **upserts** existing rows rather than duplicating. `job_name` is part of the UUID derivation, so matrix builds (e.g., one CI run that fans out over `replicas` ∈ {1, 3, 7}) produce a separate `TestRun` per cell as long as each cell passes its own distinct `job_name` — re-runs of that same `job_name` still upsert.
 
 ## Supported JUnit dialects
 

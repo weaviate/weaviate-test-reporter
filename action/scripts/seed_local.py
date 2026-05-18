@@ -217,8 +217,8 @@ def _insert_run(client: weaviate.WeaviateClient, run_idx: int, cases: list[Parse
         else "main"
     )
     actor = random.choice(["alice", "bob", "carol", "dave", "weaviate-bot"])
-    run_uuid = _run_uuid(REPO, workflow_run_id, attempt)
     job_name = random.choice(["e2e-backup", "e2e-replication", "e2e-multitenancy", "go-unit", "e2e-rbac"])
+    run_uuid = _run_uuid(REPO, workflow_run_id, attempt, job_name)
 
     props = {
         "run_id": f"ci/{job_name}#{workflow_run_id}.{attempt}",
@@ -249,6 +249,7 @@ def _insert_run(client: weaviate.WeaviateClient, run_idx: int, cases: list[Parse
         repository=REPO,
         workflow_run_id=workflow_run_id,
         workflow_run_attempt=attempt,
+        job_name=job_name,
     )
     return run_uuid, status, len(cases)
 
