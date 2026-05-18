@@ -1,0 +1,8 @@
+# Pinned tighter than `~=` so a new 4.30 release with a breaking property-
+# config kwarg can't silently break the action on the next CI run. Bump
+# manually after testing.
+weaviate-client>=4.21.0,<4.30.0
+junitparser>=3.2.0,<4.0.0
+structlog>=24.4.0,<26.0.0
+tenacity>=9.0.0,<10.0.0
+lxml>=5.3.0,<7.0.0

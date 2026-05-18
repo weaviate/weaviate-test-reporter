@@ -1,0 +1,33 @@
+name: Unit tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.11"
+          - "3.12"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: action/requirements-dev.txt
+
+      - name: Install dev dependencies
+        working-directory: action
+        run: pip install --quiet --requirement requirements-dev.txt
+
+      - name: pytest tests/unit/
+        working-directory: action
+        run: pytest tests/unit/ --cov=src/weaviate_test_reporter --cov-report=term-missing

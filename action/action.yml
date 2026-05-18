@@ -1,0 +1,94 @@
+name: Weaviate Test Reporter
+description: Parse JUnit XML reports from CI and ingest them into Weaviate for semantic search and dashboards.
+author: jfrancoa
+branding:
+  icon: bar-chart-2
+  color: green
+
+inputs:
+  weaviate_url:
+    description: Weaviate cluster URL. WCD (https://...) or local (http://host:port).
+    required: true
+  weaviate_api_key:
+    description: API key with write access. Empty for anonymous self-hosted instances.
+    required: false
+    default: ""
+  junit_path:
+    description: Glob for JUnit XML files (e.g., "reports/*.xml" or "**/junit-*.xml").
+    required: true
+  job_name:
+    description: Logical job name stored on TestRun (e.g., "e2e-backup"). Surfaced in the dashboard.
+    required: true
+  fail_on_error:
+    description: If "true", exit non-zero when ingestion fails. Default false (fail-safe — never breaks user CI).
+    required: false
+    default: "false"
+  vectorizer:
+    description: |
+      Weaviate vectorizer for the TestCase collection. Accepted values:
+      `text2vec-weaviate` (default; Weaviate Embeddings, no extra setup on WCD),
+      `text2vec-model2vec` (self-hosted; requires `model2vec_inference_url`),
+      or `none` (no vectorization — filtering / aggregation only).
+      Only applied when the TestCase collection is first created; existing
+      collections are left untouched.
+    required: false
+    default: "text2vec-weaviate"
+  model2vec_inference_url:
+    description: |
+      Inference URL for `text2vec-model2vec` from the Weaviate cluster's
+      perspective (e.g., `http://model2vec-inference:8080` in-cluster).
+      Required when `vectorizer = text2vec-model2vec`.
+    required: false
+    default: ""
+  verbose:
+    description: If "true", emit verbose pip and runtime logs. Default false.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+        cache: pip
+        cache-dependency-path: ${{ github.action_path }}/requirements.txt
+
+    - name: Install dependencies
+      shell: bash
+      env:
+        VERBOSE: ${{ inputs.verbose }}
+      run: |
+        if [ "$VERBOSE" = "true" ]; then
+          pip install --requirement "${{ github.action_path }}/requirements.txt"
+        else
+          pip install --quiet --requirement "${{ github.action_path }}/requirements.txt"
+        fi
+
+    - name: Run Weaviate Test Reporter
+      shell: bash
+      env:
+        # User inputs
+        WEAVIATE_URL: ${{ inputs.weaviate_url }}
+        WEAVIATE_API_KEY: ${{ inputs.weaviate_api_key }}
+        JUNIT_PATH: ${{ inputs.junit_path }}
+        JOB_NAME: ${{ inputs.job_name }}
+        FAIL_ON_ERROR: ${{ inputs.fail_on_error }}
+        VECTORIZER: ${{ inputs.vectorizer }}
+        MODEL2VEC_INFERENCE_URL: ${{ inputs.model2vec_inference_url }}
+        VERBOSE: ${{ inputs.verbose }}
+        # GitHub Actions context (auto-populated; never set by the caller).
+        GH_REPOSITORY: ${{ github.repository }}
+        GH_RUN_ID: ${{ github.run_id }}
+        GH_RUN_ATTEMPT: ${{ github.run_attempt }}
+        GH_WORKFLOW: ${{ github.workflow }}
+        GH_REF: ${{ github.ref_name }}
+        GH_SHA: ${{ github.sha }}
+        GH_EVENT_NAME: ${{ github.event_name }}
+        GH_PR_NUMBER: ${{ github.event.pull_request.number }}
+        GH_ACTOR: ${{ github.actor }}
+        GH_SERVER_URL: ${{ github.server_url }}
+        # PYTHONPATH so src layout is importable without an editable install
+        PYTHONPATH: ${{ github.action_path }}/src
+      run: python -m weaviate_test_reporter

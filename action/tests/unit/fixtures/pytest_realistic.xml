@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Mimics what pytest-junit emits in practice: a single <testsuite name="pytest">
+wrapping every case, with per-case classname carrying the actual module path.
+This is the shape produced by Weaviate's e2e-tests workflow.
+-->
+<testsuites name="pytest tests">
+  <testsuite name="pytest" errors="0" failures="0" skipped="0" tests="3" time="120.0">
+    <testcase classname="tests.e2e.python_e2e.core.collection_alias_test" name="test_alias_creation_validation[alias_1]" time="1.5"/>
+    <testcase classname="tests.e2e.python_e2e.core.async_indexing_test" name="test_async_indexing_vector_indexes[flat]" time="76.0"/>
+    <testcase classname="tests.e2e.python_e2e.core.usage_metrics_test" name="test_usage_metrics_single_tenant_multi_vector[bq-1]" time="288.0"/>
+  </testsuite>
+</testsuites>
