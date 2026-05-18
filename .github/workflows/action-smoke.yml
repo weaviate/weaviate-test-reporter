@@ -1,0 +1,161 @@
+name: Action smoke
+
+# End-to-end test of the composite action itself: spin up Weaviate +
+# model2vec as service containers, then invoke `uses: ./action` from
+# within this workflow. Catches contract issues that the Python unit
+# and integration suites can't see (e.g., a missing input in action.yml,
+# a typo in a `${{ github.* }}` expression, PYTHONPATH wiring problems).
+#
+# If this job fails on a PR but unit + integration pass, the bug is in
+# action.yml — not in the Python package.
+
+on:
+  pull_request:
+    paths:
+      - "action/**"
+      - ".github/workflows/action-smoke.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "action/**"
+      - ".github/workflows/action-smoke.yml"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    services:
+      weaviate:
+        image: semitechnologies/weaviate:1.37.3
+        ports:
+          - 8080:8080
+          - 50051:50051
+        env:
+          AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+          PERSISTENCE_DATA_PATH: /var/lib/weaviate
+          DEFAULT_VECTORIZER_MODULE: none
+          ENABLE_MODULES: text2vec-model2vec
+          # Service containers share a default Docker network where they
+          # can reach each other by service name. Weaviate must reach
+          # model2vec via the alias "model2vec" on port 8080.
+          MODEL2VEC_INFERENCE_API: http://model2vec:8080
+          CLUSTER_HOSTNAME: node1
+      model2vec:
+        image: semitechnologies/model2vec-inference:minishlab-potion-retrieval-32M
+        ports:
+          - 8012:8080
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Wait for Weaviate ready
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8080/v1/.well-known/ready; then
+              echo "weaviate ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "weaviate did not become ready in 120s" >&2
+          curl -v http://localhost:8080/v1/meta || true
+          exit 1
+
+      - name: Wait for model2vec ready
+        run: |
+          # model2vec returns 204 No Content on /.well-known/ready.
+          for i in $(seq 1 60); do
+            status=$(curl -sS -o /dev/null -w "%{http_code}" http://localhost:8012/.well-known/ready || echo ERR)
+            if [ "$status" = "200" ] || [ "$status" = "204" ]; then
+              echo "model2vec ready ($status)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "model2vec did not become ready in 120s" >&2
+          exit 1
+
+      # === The action under test ===
+      # Invoking via `uses: ./action` is the WHOLE POINT of this job — it
+      # exercises action.yml end-to-end exactly as a downstream caller
+      # would. A missing input, wrong env var name, or stale PYTHONPATH
+      # would surface here, NOT in the Python suites.
+      - name: Run Weaviate Test Reporter (the action under test)
+        uses: ./action
+        with:
+          weaviate_url: http://localhost:8080
+          weaviate_api_key: ""
+          junit_path: action/tests/unit/fixtures/pytest_simple.xml
+          job_name: action-smoke
+          vectorizer: text2vec-model2vec
+          model2vec_inference_url: http://model2vec:8080
+          fail_on_error: "true"
+          verbose: "true"
+
+      # === Verify the action actually wrote data ===
+      - name: Verify TestRun was created
+        run: |
+          set -e
+          response=$(curl -fsS -X POST http://localhost:8080/v1/graphql \
+            -H "Content-Type: application/json" \
+            -d '{"query":"{ Aggregate { TestRun { meta { count } } TestCase { meta { count } } } }"}')
+          echo "$response"
+          run_count=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin)['data']['Aggregate']['TestRun'][0]['meta']['count'])")
+          case_count=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin)['data']['Aggregate']['TestCase'][0]['meta']['count'])")
+          echo "TestRun=$run_count  TestCase=$case_count"
+          # pytest_simple.xml has 3 testcases -> 1 TestRun, 3 TestCases.
+          if [ "$run_count" != "1" ]; then
+            echo "::error::expected 1 TestRun, got $run_count" >&2
+            exit 1
+          fi
+          if [ "$case_count" != "3" ]; then
+            echo "::error::expected 3 TestCases, got $case_count" >&2
+            exit 1
+          fi
+
+      - name: Verify named vectors are populated
+        run: |
+          set -e
+          # The TestCase with a stack trace must have all three named
+          # vectors. The other two only get `name` (their stack_trace and
+          # error_message sources are empty, which Weaviate skips).
+          response=$(curl -fsS -X POST http://localhost:8080/v1/graphql \
+            -H "Content-Type: application/json" \
+            -d '{"query":"{ Get { TestCase(where: {path: [\"status\"], operator: Equal, valueText: \"failed\"}) { name _additional { vectors { name } } } } }"}')
+          echo "$response"
+          slots=$(echo "$response" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          objs = d['data']['Get']['TestCase']
+          assert len(objs) == 1, f'expected 1 failed case, got {len(objs)}'
+          vecs = objs[0]['_additional']['vectors']
+          print(','.join(sorted(v['name'] for v in vecs)))
+          ")
+          echo "named vectors on the failed case: $slots"
+          if [ "$slots" != "error_message,name,stack_trace" ]; then
+            echo "::error::expected all three named vectors on the failed case, got $slots" >&2
+            exit 1
+          fi
+
+      - name: Re-run the action (idempotency check)
+        uses: ./action
+        with:
+          weaviate_url: http://localhost:8080
+          junit_path: action/tests/unit/fixtures/pytest_simple.xml
+          job_name: action-smoke
+          vectorizer: text2vec-model2vec
+          model2vec_inference_url: http://model2vec:8080
+          fail_on_error: "true"
+
+      - name: Verify counts did NOT double after re-run
+        run: |
+          response=$(curl -fsS -X POST http://localhost:8080/v1/graphql \
+            -H "Content-Type: application/json" \
+            -d '{"query":"{ Aggregate { TestRun { meta { count } } TestCase { meta { count } } } }"}')
+          run_count=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin)['data']['Aggregate']['TestRun'][0]['meta']['count'])")
+          case_count=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin)['data']['Aggregate']['TestCase'][0]['meta']['count'])")
+          if [ "$run_count" != "1" ] || [ "$case_count" != "3" ]; then
+            echo "::error::idempotency violated — after re-run got TestRun=$run_count TestCase=$case_count" >&2
+            exit 1
+          fi
+          echo "idempotency check passed"

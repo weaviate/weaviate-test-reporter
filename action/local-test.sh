@@ -1,32 +1,63 @@
 #!/usr/bin/env bash
-# Local developer convenience: run the action against a local Weaviate instance
-# from inside this directory. Mirrors what action.yml does in CI so the same
-# code path is exercised.
+# Local developer convenience: run the action against a Weaviate instance
+# from this directory. Mirrors what action.yml does in CI so the same code
+# path is exercised — useful for debugging an ingestion issue without
+# pushing to GitHub.
 #
 # Prereqs:
-#   - Python 3.11 (pyenv-managed is fine)
-#   - A local Weaviate listening on http://localhost:8080 (e.g., via
-#     `docker run -p 8080:8080 -p 50051:50051 cr.weaviate.io/semitechnologies/weaviate:latest`)
-#   - This repo's venv set up: `python3.11 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt`
+#   - Python 3.11 (pyenv-managed is fine).
+#   - A reachable Weaviate (default: http://localhost:8080). Anonymous
+#     access works (WEAVIATE_API_KEY="").
+#   - This repo's venv: `python3.11 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt`
 #
-# Usage:
-#   ./local-test.sh                                  # uses pytest_simple.xml
-#   JUNIT_PATH='reports/*.xml' ./local-test.sh       # custom glob
-#   FAIL_ON_ERROR=true ./local-test.sh               # strict mode for debugging
+# All env vars below are overridable. The most common knob is JUNIT_PATH,
+# which controls WHICH JUnit XML file (or glob) the action parses:
+#
+#   ./local-test.sh                                          # default fixture
+#   JUNIT_PATH="reports/junit.xml" ./local-test.sh           # one file
+#   JUNIT_PATH="reports/junit-*.xml" ./local-test.sh         # one-level glob
+#   JUNIT_PATH="**/test-results*.xml" ./local-test.sh        # recursive glob
+#   JUNIT_PATH="/abs/path/to/report.xml" ./local-test.sh     # absolute path
+#
+# Common multi-knob examples:
+#
+#   # Against WCD with a real API key:
+#   WEAVIATE_URL="https://my-cluster.weaviate.cloud" \
+#   WEAVIATE_API_KEY="$WCD_KEY" \
+#   JUNIT_PATH="reports/e2e.xml" \
+#   JOB_NAME="e2e-backup" \
+#       ./local-test.sh
+#
+#   # Against weaviate-local-k8s using its bundled model2vec:
+#   VECTORIZER="text2vec-model2vec" \
+#   MODEL2VEC_INFERENCE_URL="http://model2vec-inference.weaviate.svc.cluster.local.:8080" \
+#       ./local-test.sh
+#
+#   # Fail-safe off so any ingestion error exits non-zero (debugging):
+#   FAIL_ON_ERROR="true" VERBOSE="true" ./local-test.sh
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# User inputs (override via env if you want).
+# --- Action inputs (mirror the keys defined in action.yml) ----------------
 export WEAVIATE_URL="${WEAVIATE_URL:-http://localhost:8080}"
 export WEAVIATE_API_KEY="${WEAVIATE_API_KEY:-}"
+# JUNIT_PATH: file path or glob to the JUnit XML report(s) the action will
+# parse. Defaults to the small bundled fixture so the script "just works".
 export JUNIT_PATH="${JUNIT_PATH:-tests/unit/fixtures/pytest_simple.xml}"
 export JOB_NAME="${JOB_NAME:-local-dev}"
-export FAIL_ON_ERROR="${FAIL_ON_ERROR:-true}"  # strict by default for local debugging
+# fail_on_error defaults to true here (the opposite of the action default)
+# because for local debugging you usually want to see real errors loudly.
+export FAIL_ON_ERROR="${FAIL_ON_ERROR:-true}"
+export VECTORIZER="${VECTORIZER:-text2vec-weaviate}"
+export MODEL2VEC_INFERENCE_URL="${MODEL2VEC_INFERENCE_URL:-}"
+export VERBOSE="${VERBOSE:-false}"
 
-# Synthetic GitHub Actions context.
+# --- Synthetic GitHub Actions context -------------------------------------
+# These mirror what GitHub Actions sets at runtime. The action treats them
+# as required, so we synthesize plausible values from the local git state.
 export GH_REPOSITORY="${GH_REPOSITORY:-local/weaviate-test-reporter}"
 export GH_RUN_ID="${GH_RUN_ID:-$(date +%s)}"
 export GH_RUN_ATTEMPT="${GH_RUN_ATTEMPT:-1}"
@@ -51,6 +82,7 @@ echo "==> Running with:"
 echo "    WEAVIATE_URL=$WEAVIATE_URL"
 echo "    JUNIT_PATH=$JUNIT_PATH"
 echo "    JOB_NAME=$JOB_NAME"
+echo "    VECTORIZER=$VECTORIZER"
 echo "    FAIL_ON_ERROR=$FAIL_ON_ERROR"
 echo
 
