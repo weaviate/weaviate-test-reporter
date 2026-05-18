@@ -6,3 +6,10 @@ junitparser>=3.2.0,<4.0.0
 structlog>=24.4.0,<26.0.0
 tenacity>=9.0.0,<10.0.0
 lxml>=5.3.0,<7.0.0
+# weaviate-client imports `packaging.version` at module load time but
+# doesn't declare it as a dep (see https://github.com/weaviate/weaviate-python-client).
+# The dev/test environment gets it transitively from pytest/testcontainers,
+# so unit + integration tests pass — but a fresh production install would
+# fail with `ModuleNotFoundError: No module named 'packaging'`.
+# action-smoke caught this. Declare it explicitly until the upstream fix.
+packaging>=24.0,<26.0
