@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://maven.apache.org/surefire/maven-surefire-plugin/xsd/surefire-test-report-3.0.xsd" name="com.example.WidgetTest" time="0.234" tests="2" errors="1" skipped="0" failures="0">
+  <properties>
+    <property name="java.version" value="17.0.10"/>
+  </properties>
+  <testcase name="testWidgetRender" classname="com.example.WidgetTest" time="0.100"/>
+  <testcase name="testWidgetSerialize" classname="com.example.WidgetTest" time="0.134">
+    <error message="NullPointerException" type="java.lang.NullPointerException">java.lang.NullPointerException: Cannot invoke &quot;Widget.toJson()&quot; because &quot;w&quot; is null
+	at com.example.WidgetTest.testWidgetSerialize(WidgetTest.java:42)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:568)</error>
+  </testcase>
+  <system-out><![CDATA[some stdout output]]></system-out>
+  <system-err><![CDATA[stderr noise]]></system-err>
+</testsuite>

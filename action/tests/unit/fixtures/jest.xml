@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="jest tests" tests="3" failures="1" errors="0" time="2.450">
+  <testsuite name="UserService" errors="0" failures="1" skipped="0" timestamp="2026-05-17T20:00:00" time="2.450" tests="3">
+    <testcase classname="UserService creates user with valid email" name="UserService creates user with valid email" time="0.500"/>
+    <testcase classname="UserService rejects invalid email" name="UserService rejects invalid email" time="1.200">
+      <failure>Error: expected validation to fail
+    at Object.&lt;anonymous&gt; (/app/tests/users.test.ts:42:11)
+    at runMicrotasks (&lt;anonymous&gt;)
+    at processTicksAndRejections (internal/process/task_queues.js:95:5)</failure>
+    </testcase>
+    <testcase classname="UserService normalizes whitespace" name="UserService normalizes whitespace" time="0.750"/>
+  </testsuite>
+</testsuites>

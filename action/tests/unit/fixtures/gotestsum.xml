@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+	<testsuite tests="4" failures="1" errors="0" time="0.150" name="github.com/weaviate/weaviate/usecases/backup" timestamp="2026-05-17T20:00:00Z">
+		<properties>
+			<property name="go.version" value="go1.25.0"></property>
+		</properties>
+		<testcase classname="github.com/weaviate/weaviate/usecases/backup" name="TestBackup_CreatesSnapshot" time="0.045"></testcase>
+		<testcase classname="github.com/weaviate/weaviate/usecases/backup" name="TestBackup_RestoreFromMissing" time="0.080">
+			<failure message="Failed" type="">=== RUN   TestBackup_RestoreFromMissing
+    backup_test.go:142:
+        	Error Trace:	/runner/_work/weaviate/weaviate/usecases/backup/backup_test.go:142
+        	Error:      	Received unexpected error:
+        	            	snapshot s3://bucket/missing not found
+        	Test:       	TestBackup_RestoreFromMissing
+--- FAIL: TestBackup_RestoreFromMissing (0.08s)
+</failure>
+		</testcase>
+		<testcase classname="github.com/weaviate/weaviate/usecases/backup" name="TestBackup_Skipped" time="0.000">
+			<skipped message="requires S3 credentials"></skipped>
+		</testcase>
+		<testcase classname="github.com/weaviate/weaviate/usecases/backup" name="TestBackup_Concurrent" time="0.025"></testcase>
+	</testsuite>
+	<testsuite tests="1" failures="0" errors="0" time="0.010" name="github.com/weaviate/weaviate/adapters/repos/db">
+		<testcase classname="github.com/weaviate/weaviate/adapters/repos/db" name="TestShard_Init" time="0.010"></testcase>
+	</testsuite>
+</testsuites>

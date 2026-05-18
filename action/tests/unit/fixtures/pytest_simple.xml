@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites>
+  <testsuite name="tests.test_backup" tests="3" failures="1" errors="0" skipped="1" time="2.345">
+    <testcase classname="tests.test_backup" name="test_backup_creates_snapshot" time="1.234"/>
+    <testcase classname="tests.test_backup" name="test_restore_fails_on_missing" time="0.567">
+      <failure type="AssertionError" message="expected snapshot to exist">
+Traceback (most recent call last):
+  File "test_backup.py", line 42, in test_restore_fails_on_missing
+    assert snapshot.exists()
+AssertionError: expected snapshot to exist
+      </failure>
+    </testcase>
+    <testcase classname="tests.test_backup" name="test_backup_skip_when_disabled" time="0.001">
+      <skipped message="feature disabled"/>
+    </testcase>
+  </testsuite>
+</testsuites>

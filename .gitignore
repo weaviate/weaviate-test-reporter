@@ -1,0 +1,24 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# Node / frontend (Phase 2)
+node_modules/
+.next/
+out/
+.env.local
+
+# Python virtualenvs at any depth
+.venv/
+*.venv/
+
+# Python — per-package ignores live under action/.gitignore
+
+# Private working notes — kept on the maintainer's machine, never pushed.
+.project/
+tasks/

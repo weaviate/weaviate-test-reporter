@@ -1,0 +1,19 @@
+# Pinned tighter than `~=` so a new 4.30 release with a breaking property-
+# config kwarg can't silently break the action on the next CI run. Bump
+# manually after testing.
+weaviate-client>=4.21.0,<4.30.0
+junitparser>=3.2.0,<4.0.0
+structlog>=24.4.0,<26.0.0
+tenacity>=9.0.0,<10.0.0
+lxml>=5.3.0,<7.0.0
+# weaviate-client imports `packaging.version` at module load. The setup.cfg
+# on weaviate-python-client `main` declares packaging in install_requires,
+# but the *released wheel* on PyPI (4.21.0, the latest as of writing)
+# does NOT list packaging in its `requires_dist` metadata — so pip won't
+# pull it transitively. Our dev/test environment gets packaging from
+# pytest / testcontainers, which masks the gap; a fresh production install
+# fails at `import weaviate` with `ModuleNotFoundError: No module named
+# 'packaging'`. action-smoke catches this exact case.
+# Drop this line once weaviate-client publishes a release with packaging
+# in install_requires (and bump the floor pin above accordingly).
+packaging>=24.0,<26.0

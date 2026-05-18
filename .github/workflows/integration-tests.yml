@@ -1,0 +1,42 @@
+name: Integration tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: action/requirements-dev.txt
+
+      - name: Install dev dependencies
+        working-directory: action
+        run: pip install --quiet --requirement requirements-dev.txt
+
+      # testcontainers expects a working Docker daemon — the ubuntu-latest
+      # runner ships with one preinstalled.
+      - name: Verify Docker is available
+        run: docker version
+
+      # Pre-pull images so the test wall-time is bounded and the pulls
+      # don't fight with testcontainers' container start.
+      - name: Pre-pull container images
+        run: |
+          docker pull semitechnologies/weaviate:1.37.3
+          docker pull semitechnologies/model2vec-inference:minishlab-potion-retrieval-32M
+
+      - name: pytest tests/integration/
+        working-directory: action
+        env:
+          WEAVIATE_TEST_IMAGE: semitechnologies/weaviate:1.37.3
+          MODEL2VEC_TEST_IMAGE: semitechnologies/model2vec-inference:minishlab-potion-retrieval-32M
+        run: pytest tests/integration/ -v --tb=short
