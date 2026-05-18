@@ -1,13 +1,14 @@
 name: Action smoke
 
-# End-to-end test of the composite action itself: spin up Weaviate +
-# model2vec as service containers, then invoke `uses: ./action` from
-# within this workflow. Catches contract issues that the Python unit
-# and integration suites can't see (e.g., a missing input in action.yml,
-# a typo in a `${{ github.* }}` expression, PYTHONPATH wiring problems).
+# End-to-end test of the composite action itself: spin up a real
+# Weaviate cluster (weaviate-local-k8s, the same tool downstream users
+# would use locally) with text2vec-model2vec, then invoke `uses: ./action`
+# from within this workflow.
 #
-# If this job fails on a PR but unit + integration pass, the bug is in
-# action.yml — not in the Python package.
+# This catches contract issues that the Python unit + integration suites
+# can't see (a missing input in action.yml, a typo in a `${{ github.* }}`
+# expression, PYTHONPATH wiring, or a missing runtime dep that the dev/
+# test env masks transitively).
 
 on:
   pull_request:
@@ -24,62 +25,44 @@ on:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    services:
-      weaviate:
-        image: semitechnologies/weaviate:1.37.3
-        ports:
-          - 8080:8080
-          - 50051:50051
-        env:
-          AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
-          PERSISTENCE_DATA_PATH: /var/lib/weaviate
-          DEFAULT_VECTORIZER_MODULE: none
-          ENABLE_MODULES: text2vec-model2vec
-          # Service containers share a default Docker network where they
-          # can reach each other by service name. Weaviate must reach
-          # model2vec via the alias "model2vec" on port 8080.
-          MODEL2VEC_INFERENCE_API: http://model2vec:8080
-          CLUSTER_HOSTNAME: node1
-      model2vec:
-        image: semitechnologies/model2vec-inference:minishlab-potion-retrieval-32M
-        ports:
-          - 8012:8080
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Wait for Weaviate ready
-        run: |
-          for i in $(seq 1 60); do
-            if curl -fsS http://localhost:8080/v1/.well-known/ready; then
-              echo "weaviate ready"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "weaviate did not become ready in 120s" >&2
-          curl -v http://localhost:8080/v1/meta || true
-          exit 1
+      # Spin up Weaviate + model2vec via the official weaviate-local-k8s
+      # GitHub Action. This is the same tool downstream users would run
+      # locally to host an internal cluster, so the smoke exercises a
+      # realistic deployment shape.
+      #
+      # The `modules: text2vec-model2vec` input deploys a sibling
+      # model2vec-inference pod and wires Weaviate's
+      # MODEL2VEC_INFERENCE_API to it via in-cluster DNS.
+      - name: Spin up Weaviate + model2vec
+        uses: weaviate/weaviate-local-k8s@v2
+        with:
+          workers: "0"
+          replicas: "1"
+          weaviate-version: "1.37.3"
+          modules: "text2vec-model2vec"
+          observability: "false"
 
-      - name: Wait for model2vec ready
+      - name: Verify Weaviate ready
         run: |
-          # model2vec returns 204 No Content on /.well-known/ready.
-          for i in $(seq 1 60); do
-            status=$(curl -sS -o /dev/null -w "%{http_code}" http://localhost:8012/.well-known/ready || echo ERR)
-            if [ "$status" = "200" ] || [ "$status" = "204" ]; then
-              echo "model2vec ready ($status)"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "model2vec did not become ready in 120s" >&2
-          exit 1
+          curl -fsS http://localhost:8080/v1/.well-known/ready
+          curl -fsS http://localhost:8080/v1/meta | python3 -c "
+          import sys, json
+          m = json.load(sys.stdin)
+          modules = list(m.get('modules', {}).keys())
+          print('version:', m.get('version'))
+          print('modules:', modules)
+          assert 'text2vec-model2vec' in modules, 'text2vec-model2vec module not loaded'
+          "
 
       # === The action under test ===
-      # Invoking via `uses: ./action` is the WHOLE POINT of this job — it
-      # exercises action.yml end-to-end exactly as a downstream caller
-      # would. A missing input, wrong env var name, or stale PYTHONPATH
-      # would surface here, NOT in the Python suites.
+      # Invoking via `uses: ./action` exercises action.yml end-to-end
+      # exactly as a downstream caller would. Missing inputs, typos in
+      # `${{ github.* }}` interpolation, broken PYTHONPATH wiring, or
+      # un-declared transitive deps would surface here — NOT in unit /
+      # integration tests.
       - name: Run Weaviate Test Reporter (the action under test)
         uses: ./action
         with:
@@ -88,12 +71,14 @@ jobs:
           junit_path: action/tests/unit/fixtures/pytest_simple.xml
           job_name: action-smoke
           vectorizer: text2vec-model2vec
-          model2vec_inference_url: http://model2vec:8080
+          # Inside the Kind cluster, Weaviate reaches model2vec via DNS
+          # set up by weaviate-local-k8s. This URL is from Weaviate's
+          # perspective inside the cluster — NOT from the runner host.
+          model2vec_inference_url: http://model2vec-inference.weaviate.svc.cluster.local.:8080
           fail_on_error: "true"
           verbose: "true"
 
-      # === Verify the action actually wrote data ===
-      - name: Verify TestRun was created
+      - name: Verify TestRun + TestCases landed
         run: |
           set -e
           response=$(curl -fsS -X POST http://localhost:8080/v1/graphql \
@@ -117,19 +102,23 @@ jobs:
         run: |
           set -e
           # The TestCase with a stack trace must have all three named
-          # vectors. The other two only get `name` (their stack_trace and
-          # error_message sources are empty, which Weaviate skips).
+          # vectors. Passed / skipped cases without a stack_trace only
+          # get the `name` slot — Weaviate skips empty sources.
+          # The `_additional.vectors` GraphQL field returns a DICT
+          # keyed by named-vector name: {"name": [..], "stack_trace": [..]}
+          # — NOT a list of objects.
           response=$(curl -fsS -X POST http://localhost:8080/v1/graphql \
             -H "Content-Type: application/json" \
             -d '{"query":"{ Get { TestCase(where: {path: [\"status\"], operator: Equal, valueText: \"failed\"}) { name _additional { vectors { name } } } } }"}')
-          echo "$response"
           slots=$(echo "$response" | python3 -c "
           import sys, json
           d = json.load(sys.stdin)
           objs = d['data']['Get']['TestCase']
           assert len(objs) == 1, f'expected 1 failed case, got {len(objs)}'
           vecs = objs[0]['_additional']['vectors']
-          print(','.join(sorted(v['name'] for v in vecs)))
+          # vecs is a dict[name -> embedding-or-meta-object]; the keys
+          # are the slot names we care about.
+          print(','.join(sorted(vecs.keys())))
           ")
           echo "named vectors on the failed case: $slots"
           if [ "$slots" != "error_message,name,stack_trace" ]; then
@@ -144,7 +133,7 @@ jobs:
           junit_path: action/tests/unit/fixtures/pytest_simple.xml
           job_name: action-smoke
           vectorizer: text2vec-model2vec
-          model2vec_inference_url: http://model2vec:8080
+          model2vec_inference_url: http://model2vec-inference.weaviate.svc.cluster.local.:8080
           fail_on_error: "true"
 
       - name: Verify counts did NOT double after re-run
