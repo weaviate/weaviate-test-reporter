@@ -84,6 +84,7 @@ def _ingest_pipeline(client, meta, cfg):
         repository=meta["repository"],
         workflow_run_id=meta["workflow_run_id"],
         workflow_run_attempt=meta["workflow_run_attempt"],
+        job_name=cfg.job_name,
     )
     return run_uuid, cases, successful, failed
 
@@ -177,11 +178,31 @@ def test_different_attempt_produces_separate_run(weaviate_client):
 
     run_uuids = {str(r.uuid) for r in runs.objects}
     expected_uuids = {
-        _run_uuid(_meta()["repository"], "999", 1),
-        _run_uuid(_meta()["repository"], "999", 2),
+        _run_uuid(_meta()["repository"], "999", 1, "integration"),
+        _run_uuid(_meta()["repository"], "999", 2, "integration"),
     }
     assert run_uuids == expected_uuids
     assert len(cases.objects) == 6  # 3 cases x 2 attempts
+
+
+def test_different_job_names_in_same_run_produce_separate_test_runs(weaviate_client):
+    """Matrix jobs share `run_id` / `run_attempt` but call the action with
+    distinct `job_name` values (e.g., replicas=1 vs replicas=3). Each
+    matrix cell MUST get its own TestRun row, and its TestCases must not
+    overwrite the other cell's TestCases for the same {suite, name} pair.
+    """
+    _ingest_pipeline(weaviate_client, _meta(), _cfg(job_name="matrix-replicas-1"))
+    _ingest_pipeline(weaviate_client, _meta(), _cfg(job_name="matrix-replicas-3"))
+
+    runs = weaviate_client.collections.get(TEST_RUN).query.fetch_objects(limit=10)
+    cases = weaviate_client.collections.get(TEST_CASE).query.fetch_objects(limit=10)
+
+    assert len(runs.objects) == 2, "matrix job_names must produce 2 distinct TestRuns"
+    # 3 cases per cell x 2 cells; collision would collapse to 3.
+    assert len(cases.objects) == 6, "matrix TestCases must not clobber each other"
+
+    job_names = {r.properties["job_name"] for r in runs.objects}
+    assert job_names == {"matrix-replicas-1", "matrix-replicas-3"}
 
 
 def test_filter_by_failure_type(weaviate_client):
@@ -286,6 +307,7 @@ def test_semantic_search_ranks_relevant_above_unrelated(weaviate_client):
         repository=meta["repository"],
         workflow_run_id=meta["workflow_run_id"],
         workflow_run_attempt=meta["workflow_run_attempt"],
+        job_name=cfg.job_name,
     )
 
     # Query for memory issues against the stack_trace vector — the OOM

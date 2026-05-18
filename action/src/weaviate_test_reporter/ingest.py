@@ -2,8 +2,14 @@
 
 Idempotency strategy (per .project/02-weaviate-schema.md section 4):
 
-  TestRun UUID  = uuid5(NAMESPACE_URL, "{repo}|{run_id}|{attempt}")
-  TestCase UUID = uuid5(NAMESPACE_URL, "{repo}|{run_id}|{attempt}|{suite}|{name}")
+  TestRun UUID  = uuid5(NAMESPACE_URL, "{repo}|{run_id}|{attempt}|{job_name}")
+  TestCase UUID = uuid5(NAMESPACE_URL, "{repo}|{run_id}|{attempt}|{job_name}|{suite}|{name}")
+
+`job_name` participates in both UUIDs so that matrix jobs within a single
+workflow run (e.g., `replicas` ∈ {1, 3, 7}) produce DISTINCT TestRun rows
+and DISTINCT TestCase rows for the same `{suite, name}` pair — otherwise
+all matrix cells would clobber each other under the shared `run_id` /
+`run_attempt`.
 
 Because the Weaviate v4 client treats matching UUIDs as updates, this
 guarantees that re-running the same workflow attempt does not duplicate
@@ -32,11 +38,16 @@ from .schema import TEST_CASE, TEST_RUN
 # ---------- UUID derivation ----------
 
 
-def _run_uuid(repository: str, workflow_run_id: str, workflow_run_attempt: int) -> str:
+def _run_uuid(
+    repository: str,
+    workflow_run_id: str,
+    workflow_run_attempt: int,
+    job_name: str,
+) -> str:
     return str(
         _uuid.uuid5(
             _uuid.NAMESPACE_URL,
-            f"{repository}|{workflow_run_id}|{workflow_run_attempt}",
+            f"{repository}|{workflow_run_id}|{workflow_run_attempt}|{job_name}",
         )
     )
 
@@ -45,13 +56,14 @@ def _case_uuid(
     repository: str,
     workflow_run_id: str,
     workflow_run_attempt: int,
+    job_name: str,
     test_suite: str,
     name: str,
 ) -> str:
     return str(
         _uuid.uuid5(
             _uuid.NAMESPACE_URL,
-            f"{repository}|{workflow_run_id}|{workflow_run_attempt}|{test_suite}|{name}",
+            f"{repository}|{workflow_run_id}|{workflow_run_attempt}|{job_name}|{test_suite}|{name}",
         )
     )
 
@@ -123,6 +135,7 @@ def insert_test_run(
         meta["repository"],
         meta["workflow_run_id"],
         meta["workflow_run_attempt"],
+        cfg.job_name,
     )
     collection = client.collections.get(TEST_RUN)
     if collection.data.exists(uuid=run_uuid):
@@ -168,6 +181,7 @@ def ingest_test_cases(
     repository: str,
     workflow_run_id: str,
     workflow_run_attempt: int,
+    job_name: str,
 ) -> tuple[int, int]:
     """Server-side streaming batch insert. Returns (successful, failed).
 
@@ -180,7 +194,12 @@ def ingest_test_cases(
     with collection.batch.stream() as batch:
         for c in cases:
             uid = _case_uuid(
-                repository, workflow_run_id, workflow_run_attempt, c.test_suite, c.name
+                repository,
+                workflow_run_id,
+                workflow_run_attempt,
+                job_name,
+                c.test_suite,
+                c.name,
             )
             batch.add_object(
                 properties=_case_properties(c),

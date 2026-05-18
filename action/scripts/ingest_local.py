@@ -227,7 +227,9 @@ def main(argv: list[str] | None = None) -> int:
         )
 
         # Upsert the TestRun.
-        run_uuid = _run_uuid(args.repository, workflow_run_id, args.workflow_run_attempt)
+        run_uuid = _run_uuid(
+            args.repository, workflow_run_id, args.workflow_run_attempt, cfg.job_name
+        )
         run_props = aggregate_run_properties(cases, meta, cfg)
         run_collection = client.collections.get(TEST_RUN)
         if run_collection.data.exists(uuid=run_uuid):
@@ -244,6 +246,7 @@ def main(argv: list[str] | None = None) -> int:
             repository=args.repository,
             workflow_run_id=workflow_run_id,
             workflow_run_attempt=args.workflow_run_attempt,
+            job_name=cfg.job_name,
         )
         elapsed = time.perf_counter() - t0
         print(f"→ Ingested {success} TestCase(s) in {elapsed:.2f}s ({failed} failed)")
