@@ -39,22 +39,11 @@ jobs:
       - name: Spin up Weaviate + model2vec
         uses: weaviate/weaviate-local-k8s@v2
         with:
-          # 1 worker minimum so the cluster has a real worker node next to
-          # the control-plane (recommended for smoke / integration runs).
           workers: "1"
           replicas: "1"
           weaviate-version: "1.37.3"
           modules: "text2vec-model2vec"
           observability: "false"
-          # Disable async indexing in the smoke. Local-k8s sets
-          # ASYNC_INDEXING=true by default which makes vectorization run
-          # in the background — when the smoke queries immediately after
-          # ingest, only the cheap `name` vector has computed; the heavier
-          # `error_message` / `stack_trace` vectors are still queued and
-          # the named-vector assertion fails. Synchronous indexing
-          # mirrors testcontainers behavior and keeps the test
-          # deterministic without polling.
-          values-inline: "--set env.ASYNC_INDEXING=false"
 
       - name: Verify Weaviate ready
         run: |
@@ -115,23 +104,28 @@ jobs:
           # The TestCase with a stack trace must have all three named
           # vectors. Passed / skipped cases without a stack_trace only
           # get the `name` slot — Weaviate skips empty sources.
-          # The `_additional.vectors` GraphQL field returns a DICT
-          # keyed by named-vector name: {"name": [..], "stack_trace": [..]}
-          # — NOT a list of objects.
+          #
+          # NB about the GraphQL shape: `_additional.vectors` is a struct
+          # where each NAMED VECTOR is a separate FIELD. To fetch them
+          # we must explicitly list each field name in the selection set:
+          #   vectors { name error_message stack_trace }
+          # NOT `vectors { name }` (which would request only the `name`
+          # slot's vector array). Each field value is either a list of
+          # floats (populated) or null (source property was empty).
           response=$(curl -fsS -X POST http://localhost:8080/v1/graphql \
             -H "Content-Type: application/json" \
-            -d '{"query":"{ Get { TestCase(where: {path: [\"status\"], operator: Equal, valueText: \"failed\"}) { name _additional { vectors { name } } } } }"}')
+            -d '{"query":"{ Get { TestCase(where: {path: [\"status\"], operator: Equal, valueText: \"failed\"}) { name _additional { vectors { name error_message stack_trace } } } } }"}')
           slots=$(echo "$response" | python3 -c "
           import sys, json
           d = json.load(sys.stdin)
           objs = d['data']['Get']['TestCase']
           assert len(objs) == 1, f'expected 1 failed case, got {len(objs)}'
           vecs = objs[0]['_additional']['vectors']
-          # vecs is a dict[name -> embedding-or-meta-object]; the keys
-          # are the slot names we care about.
-          print(','.join(sorted(vecs.keys())))
+          # Each slot field is null when its source property was empty.
+          populated = sorted(k for k, v in vecs.items() if v)
+          print(','.join(populated))
           ")
-          echo "named vectors on the failed case: $slots"
+          echo "populated named vectors on the failed case: $slots"
           if [ "$slots" != "error_message,name,stack_trace" ]; then
             echo "::error::expected all three named vectors on the failed case, got $slots" >&2
             exit 1
