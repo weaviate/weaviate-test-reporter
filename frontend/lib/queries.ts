@@ -643,52 +643,48 @@ export function isoDaysAgo(days: number): string {
 export type FlakesWindow = "7d" | "30d";
 
 /**
- * Per-test flakiness via a two-phase server-then-client query.
+ * Per-test flakiness over the time window. Pulls every passed/failed
+ * observation in the window, groups by `(suite, name)`, and counts
+ * adjacent status transitions ⇒ `flakiness_score = transitions /
+ * (runs - 1)`.
  *
- * Why two phases (the v1 single-fetch didn't scale):
- *   - Real CI drops ~2000 TestCases per run. A 7-day window with
- *     realistic cadence can produce 40k–100k rows. A single
- *     `Get TestCase(limit: 5000)` would silently truncate by
- *     alphabetic `(suite, name)` order — i.e. the page would lie.
- *   - Weaviate's `Aggregate.groupBy` accepts only ONE property path
- *     so we can't directly group by `(suite, name)` server-side. But
- *     `Aggregate { ... groupBy: "name" } { status { topOccurrences } }`
- *     gives per-name pass/fail counts in one call, bounded by the
- *     number of DISTINCT test names (a few thousand at worst), NOT
- *     by total CI volume.
+ * Scaling strategy: Weaviate's `Aggregate.groupBy` accepts only one
+ * property path, so we can't group by `(suite, name)` server-side.
+ * Instead we paginate the raw rows in chunks of FLAKES_PAGE_SIZE
+ * (sorted deterministically) and stop once Weaviate returns a partial
+ * page (signaling end of data) OR once we've pulled the hard ceiling
+ * `FLAKES_MAX_ROWS`. The ceiling exists so a runaway query can't OOM
+ * the browser tab; if you genuinely have > 200k rows in a 30d window
+ * you should split the query by suite or add a version filter.
  *
- * The plan:
- *   1. Phase 1 (aggregate): group by `name`, find candidates that
- *      have BOTH passed and failed in the window.
- *   2. Phase 2 (filtered raw fetch): pull every observation row for
- *      the top-N candidate names via `name IN [...]`. Bounded by
- *      `n_candidates × runs_per_candidate`.
- *   3. Phase 3 (client compute): group by `(suite, name)` and count
- *      adjacent status transitions ⇒ `flakiness_score = transitions
- *      / (runs - 1)`.
+ * An earlier two-phase attempt used `Aggregate(groupBy: name) {
+ * status { topOccurrences } }` to pre-filter candidates server-side.
+ * Weaviate's `topOccurrences` has an undocumented minimum-occurrences
+ * floor that silently drops small-occurrence statuses, so tests with
+ * just a few observations would disappear from the candidate list and
+ * the page would under-report flakes — sometimes with refresh-to-
+ * refresh jitter when active ingest pushed counts across the
+ * threshold. The simpler pagination approach is deterministic and
+ * correct at any reasonable scale.
  */
-const FLAKES_MAX_CANDIDATES = 200;
-const FLAKES_CANDIDATE_ROWS_LIMIT = 10_000;
+const FLAKES_PAGE_SIZE = 5000;
+const FLAKES_MAX_ROWS = 200_000;
 const FLAKES_RECENT_STATUSES = 20;
-// `\u0000` cannot appear in a JUnit `name` / `classname` (those
-// are XML attribute values; NUL is invalid XML), so this is a
-// guaranteed collision-free delimiter. A space would NOT be safe —
-// pytest parametrize ids like `test_x[a, b]` legitimately contain them.
-const FLAKES_KEY_SEP = String.fromCharCode(0);
+// `__SEP__` cannot appear in a JUnit `name` / `classname` (those are
+// XML attribute values; NUL is invalid XML), so this is a guaranteed
+// collision-free delimiter. A space would NOT be safe — pytest
+// parametrize ids like `test_x[a, b]` legitimately contain them.
+const FLAKES_KEY_SEP = "__SEP__";
+
 export async function fetchFlakyTests(
   window: FlakesWindow,
-  opts: { minRuns?: number; maxCandidates?: number } = {},
+  opts: { minRuns?: number } = {},
 ): Promise<import("./types").FlakyTest[]> {
   const days = window === "7d" ? 7 : 30;
   const sinceIso = isoDaysAgo(days);
-  // `_creationTimeUnix` is indexed via inverted_index_config.index_timestamps;
-  // the comparator takes a stringified milliseconds-since-epoch.
   const sinceMs = String(Date.parse(sinceIso));
   const minRuns = opts.minRuns ?? 3;
-  const maxCandidates = opts.maxCandidates ?? FLAKES_MAX_CANDIDATES;
 
-  // The same window + passed/failed filter shape used in both phases.
-  // Skipped cases don't contribute to flakiness signal.
   const windowFilter: WhereOperand = {
     operator: "And",
     operands: [
@@ -697,6 +693,8 @@ export async function fetchFlakyTests(
         operator: "GreaterThanEqual",
         valueText: sinceMs,
       },
+      // Skipped cases don't contribute to flakiness signal; filter them
+      // out at the server so each page's budget is spent on pass/fail.
       {
         operator: "Or",
         operands: [
@@ -707,88 +705,9 @@ export async function fetchFlakyTests(
     ],
   };
 
-  // ---------- Phase 1: aggregate by name → candidate set ----------
-  type StatusBucket = { value: string; occurs: number };
-  type AggGroup = {
-    meta: { count: number };
-    status: { topOccurrences: StatusBucket[] };
-    groupedBy: { value: string };
-  };
-  const aggQuery = /* GraphQL */ `
-    query FlakeCandidates($where: AggregateObjectsTestCaseWhereInpObj!) {
-      Aggregate {
-        ${COLLECTIONS.TEST_CASE}(where: $where, groupBy: ["name"]) {
-          meta { count }
-          status { topOccurrences(limit: 5) { value occurs } }
-          groupedBy { value }
-        }
-      }
-    }
-  `;
-  const aggData = await graphql<{ Aggregate: { [k: string]: AggGroup[] } }>(
-    aggQuery,
-    { where: windowFilter },
-  );
-  const aggGroups = aggData.Aggregate[COLLECTIONS.TEST_CASE] ?? [];
-
-  type Candidate = { name: string; total: number };
-  const candidates: Candidate[] = [];
-  for (const g of aggGroups) {
-    const occurs = g.status?.topOccurrences ?? [];
-    const passed = occurs.find((o) => o.value === "passed")?.occurs ?? 0;
-    const failed = occurs.find((o) => o.value === "failed")?.occurs ?? 0;
-    const total = passed + failed;
-    // Has-both-statuses is a necessary precondition for flakiness;
-    // total >= minRuns ensures enough observations to be meaningful.
-    if (passed > 0 && failed > 0 && total >= minRuns) {
-      candidates.push({ name: g.groupedBy.value, total });
-    }
-  }
-  if (candidates.length === 0) return [];
-
-  // Cap at the top-N by observation count.
-  candidates.sort((a, b) => b.total - a.total);
-  const topNames = candidates.slice(0, maxCandidates).map((c) => c.name);
-
-  // ---------- Phase 2: pull raw rows for the candidates ----------
-  // Weaviate's `Or` requires ≥ 2 operands; collapse to a bare equality
-  // when there's a single candidate so we don't trip the validator.
-  const namesFilter: WhereOperand =
-    topNames.length === 1
-      ? { path: ["name"], operator: "Equal", valueText: topNames[0] }
-      : {
-          operator: "Or",
-          operands: topNames.map((n) => ({
-            path: ["name"],
-            operator: "Equal",
-            valueText: n,
-          })),
-        };
-  const rowsWhere: WhereOperand = {
-    operator: "And",
-    operands: [windowFilter, namesFilter],
-  };
-  const rowsQuery = /* GraphQL */ `
-    query FlakeRows($where: GetObjectsTestCaseWhereInpObj!) {
-      Get {
-        ${COLLECTIONS.TEST_CASE}(
-          limit: ${FLAKES_CANDIDATE_ROWS_LIMIT}
-          where: $where
-          sort: [
-            { path: ["test_suite"], order: asc }
-            { path: ["name"], order: asc }
-            { path: ["_creationTimeUnix"], order: asc }
-          ]
-        ) {
-          name
-          test_suite
-          framework
-          status
-          _additional { id }
-        }
-      }
-    }
-  `;
+  // Page through the raw rows. Sort key (suite, name, time) is stable
+  // across pages, so concatenating pages preserves the contiguous-per-
+  // (suite, name) property the grouping loop below relies on.
   type RawCase = {
     name: string;
     test_suite: string;
@@ -796,15 +715,45 @@ export async function fetchFlakyTests(
     status: TestCaseStatus;
     _additional: { id: string };
   };
-  const rowsData = await graphql<{ Get: Record<string, RawCase[]> }>(
-    rowsQuery,
-    { where: rowsWhere },
-  );
-  const rows = rowsData.Get[COLLECTIONS.TEST_CASE] ?? [];
+  const rows: RawCase[] = [];
+  let offset = 0;
+  while (rows.length < FLAKES_MAX_ROWS) {
+    const remaining = FLAKES_MAX_ROWS - rows.length;
+    const pageSize = Math.min(FLAKES_PAGE_SIZE, remaining);
+    const query = /* GraphQL */ `
+      query FlakeRows($where: GetObjectsTestCaseWhereInpObj!) {
+        Get {
+          ${COLLECTIONS.TEST_CASE}(
+            limit: ${pageSize}
+            offset: ${offset}
+            where: $where
+            sort: [
+              { path: ["test_suite"], order: asc }
+              { path: ["name"], order: asc }
+              { path: ["_creationTimeUnix"], order: asc }
+            ]
+          ) {
+            name
+            test_suite
+            framework
+            status
+            _additional { id }
+          }
+        }
+      }
+    `;
+    const data = await graphql<{ Get: Record<string, RawCase[]> }>(query, {
+      where: windowFilter,
+    });
+    const page = data.Get[COLLECTIONS.TEST_CASE] ?? [];
+    rows.push(...page);
+    if (page.length < pageSize) break;
+    offset += page.length;
+  }
 
-  // ---------- Phase 3: group by (suite, name) + compute ----------
-  // A test name may appear in multiple suites (rare in practice, but
-  // legitimate); the (suite, name) key keeps them distinct.
+  // Group by (suite, name). Rows arrive sorted by suite, name, time
+  // (preserved across page boundaries) — so per-test status sequences
+  // are in chronological order.
   type Acc = {
     test_suite: string;
     name: string;
@@ -853,7 +802,6 @@ export async function fetchFlakyTests(
       failed,
       transitions,
       flakiness_score,
-      // Most-recent N for the pixel strip; the timeline was oldest-first.
       recent_statuses: g.statuses.slice(-FLAKES_RECENT_STATUSES),
     });
   }
