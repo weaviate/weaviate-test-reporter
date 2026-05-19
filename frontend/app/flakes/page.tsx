@@ -98,7 +98,16 @@ function FlakeTable({ rows }: { rows: FlakyTest[] }) {
               <th className="text-right px-3 py-2 font-medium">Flakiness</th>
               <th className="text-right px-3 py-2 font-medium">Runs</th>
               <th className="text-right px-3 py-2 font-medium">Pass rate</th>
-              <th className="text-left px-3 py-2 font-medium">Last {Math.min(20, rows[0].recent_statuses.length)}</th>
+              <th className="text-left px-3 py-2 font-medium">
+                Last{" "}
+                {Math.min(
+                  20,
+                  rows.reduce(
+                    (m, r) => Math.max(m, r.recent_statuses.length),
+                    0,
+                  ),
+                )}
+              </th>
             </tr>
           </thead>
           <tbody>
