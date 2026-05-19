@@ -50,6 +50,15 @@ _TEST_RUN_PROPERTY_SPEC: list[tuple[str, wvcc.DataType, bool, bool, bool]] = [
     ("actor", wvcc.DataType.TEXT, True, False, False),
     # Display-only — no need to index.
     ("run_url", wvcc.DataType.TEXT, False, False, False),
+    # Version of the artifact under test (e.g., Weaviate version). Both
+    # are populated by the action when `version_under_test` is provided
+    # and parses as semver; null on older rows or non-version-aware
+    # callers. Filterable so the dashboard can group/aggregate per
+    # version lineage. See `.project/02-weaviate-schema.md` §6 for the
+    # additive-schema migration policy that makes adding these safe on
+    # an existing TestRun collection.
+    ("version_full", wvcc.DataType.TEXT, True, False, False),
+    ("version_minor", wvcc.DataType.TEXT, True, False, False),
 ]
 
 # TestCase: (name, data_type, filterable, searchable, range_filters, skip_vectorization)
@@ -141,3 +150,44 @@ def ensure_test_case_collection(
             wvcc.ReferenceProperty(name="belongsToRun", target_collection=TEST_RUN),
         ],
     )
+
+
+def ensure_test_run_properties(client: weaviate.WeaviateClient) -> None:
+    """Additive migration: add any properties in the spec that are
+    missing on the existing TestRun collection.
+
+    Called at action startup AFTER `ensure_test_run_collection`. Lets us
+    extend the schema (new optional properties) without dropping data
+    on the live WCD instance. Idempotent — no-op when every property
+    in the spec is already present on the collection. Defensive no-op
+    when the collection doesn't yet exist (ordering bug guard).
+
+    Schema evolution policy (.project/02-weaviate-schema.md §6):
+    additive changes are free; renames / type changes require a
+    dual-write window or stop-the-world reingest.
+    """
+    if not client.collections.exists(TEST_RUN):
+        return
+    collection = client.collections.get(TEST_RUN)
+    existing = {p.name for p in collection.config.get().properties}
+    for spec in _TEST_RUN_PROPERTY_SPEC:
+        name = spec[0]
+        if name in existing:
+            continue
+        collection.config.add_property(_build_property(*spec))
+
+
+def ensure_test_case_properties(client: weaviate.WeaviateClient) -> None:
+    """Mirror of `ensure_test_run_properties` for TestCase. No new
+    properties today, but the function exists so future TestCase spec
+    extensions inherit the same idempotent additive-migration path.
+    """
+    if not client.collections.exists(TEST_CASE):
+        return
+    collection = client.collections.get(TEST_CASE)
+    existing = {p.name for p in collection.config.get().properties}
+    for spec in _TEST_CASE_PROPERTY_SPEC:
+        name = spec[0]
+        if name in existing:
+            continue
+        collection.config.add_property(_build_property(*spec))

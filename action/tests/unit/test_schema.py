@@ -15,7 +15,9 @@ from weaviate_test_reporter.schema import (
     TEST_CASE,
     TEST_RUN,
     ensure_test_case_collection,
+    ensure_test_case_properties,
     ensure_test_run_collection,
+    ensure_test_run_properties,
 )
 from weaviate_test_reporter.vectorization import (
     NAMED_VECTOR_PROPERTIES,
@@ -63,6 +65,8 @@ def test_ensure_test_run_creates_when_missing():
         "pr_number",
         "actor",
         "run_url",
+        "version_full",
+        "version_minor",
     }
     assert prop_names == expected
 
@@ -251,6 +255,115 @@ def test_build_vector_config_rejects_unknown_vectorizer():
 
     with _pytest.raises(UnknownVectorizerError):
         build_test_case_vector_config("davinci-2000")
+
+
+# ---------- additive migration: ensure_test_run_properties ----------
+
+
+def _mock_existing_collection(existing_property_names: set[str]):
+    """Build a (client, collection) mock pair where the collection
+    reports a config with the given existing properties."""
+    client = MagicMock()
+    client.collections.exists.return_value = True
+    collection = MagicMock()
+    client.collections.get.return_value = collection
+    # collection.config.get().properties -> list of objects with .name
+    fake_props = [MagicMock(name=f"prop_{n}") for n in existing_property_names]
+    for fp, n in zip(fake_props, existing_property_names, strict=True):
+        fp.name = n
+    collection.config.get.return_value.properties = fake_props
+    return client, collection
+
+
+def test_ensure_test_run_properties_adds_missing_version_props():
+    """The TestRun collection pre-dates `version_full` / `version_minor`
+    on the live WCD instance — calling `ensure_test_run_properties`
+    must add exactly those two via `collection.config.add_property`."""
+    pre_migration = {
+        "run_id",
+        "repository",
+        "branch",
+        "commit_hash",
+        "trigger_type",
+        "status",
+        "total_duration_ms",
+        "timestamp",
+        "workflow_run_id",
+        "workflow_run_attempt",
+        "workflow_name",
+        "job_name",
+        "pr_number",
+        "actor",
+        "run_url",
+    }
+    client, collection = _mock_existing_collection(pre_migration)
+
+    ensure_test_run_properties(client)
+
+    assert collection.config.add_property.call_count == 2
+    added_names = {call.args[0].name for call in collection.config.add_property.call_args_list}
+    assert added_names == {"version_full", "version_minor"}
+
+
+def test_ensure_test_run_properties_is_idempotent():
+    """When every property in the spec is already on the collection,
+    `add_property` must not be called."""
+    full_spec_names = {
+        "run_id",
+        "repository",
+        "branch",
+        "commit_hash",
+        "trigger_type",
+        "status",
+        "total_duration_ms",
+        "timestamp",
+        "workflow_run_id",
+        "workflow_run_attempt",
+        "workflow_name",
+        "job_name",
+        "pr_number",
+        "actor",
+        "run_url",
+        "version_full",
+        "version_minor",
+    }
+    client, collection = _mock_existing_collection(full_spec_names)
+
+    ensure_test_run_properties(client)
+
+    collection.config.add_property.assert_not_called()
+
+
+def test_ensure_test_run_properties_no_op_when_collection_missing():
+    """Defensive: if the collection doesn't exist (ordering bug), the
+    function silently returns rather than 404-ing on `collections.get`."""
+    client = MagicMock()
+    client.collections.exists.return_value = False
+
+    ensure_test_run_properties(client)
+
+    client.collections.get.assert_not_called()
+
+
+def test_ensure_test_case_properties_is_idempotent_on_current_spec():
+    """No new TestCase props in this migration — `add_property` must
+    not be called when the live collection already has the full spec.
+    The function exists so future additive changes inherit the path."""
+    full_case_spec_names = {
+        "name",
+        "test_suite",
+        "framework",
+        "status",
+        "duration_ms",
+        "error_message",
+        "stack_trace",
+        "failure_type",
+    }
+    client, collection = _mock_existing_collection(full_case_spec_names)
+
+    ensure_test_case_properties(client)
+
+    collection.config.add_property.assert_not_called()
 
 
 # Silence unused-import lint when wvcc isn't directly referenced.

@@ -34,7 +34,12 @@ from .github_meta import GithubMetadataError, resolve_github_metadata
 from .ingest import ingest_test_cases, insert_test_run
 from .logging import configure_logging, get_logger, group
 from .parser import parse_junit_file
-from .schema import ensure_test_case_collection, ensure_test_run_collection
+from .schema import (
+    ensure_test_case_collection,
+    ensure_test_case_properties,
+    ensure_test_run_collection,
+    ensure_test_run_properties,
+)
 from .vectorization import build_test_case_vector_config
 
 
@@ -108,6 +113,13 @@ def main() -> int:
                     cfg.vectorizer, cfg.model2vec_inference_url
                 ),
             )
+            # Additive migration: pick up any new properties in the
+            # spec on collections that pre-date them. Safe on fresh
+            # collections (no-op) and idempotent on every subsequent
+            # invocation. See schema.ensure_*_properties + the schema
+            # evolution policy in .project/02-weaviate-schema.md §6.
+            ensure_test_run_properties(client)
+            ensure_test_case_properties(client)
     except Exception as e:
         log.error("weaviate_connect_failed", error=str(e), error_type=type(e).__name__)
         if client is not None:

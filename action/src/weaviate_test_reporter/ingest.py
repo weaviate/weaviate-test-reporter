@@ -31,7 +31,8 @@ import weaviate
 from tenacity import retry, retry_if_exception_type, stop_after_attempt
 from weaviate.exceptions import WeaviateConnectionError
 
-from .config import Config
+from .config import Config, parse_version
+from .logging import get_logger
 from .parser import ParsedCase
 from .schema import TEST_CASE, TEST_RUN
 
@@ -95,7 +96,20 @@ def aggregate_run_properties(
         f"{workflow}/{cfg.job_name}#{meta['workflow_run_id']}" f".{meta['workflow_run_attempt']}"
     )
 
-    return {
+    # Optional artifact version: parsed once here. If the caller fed a
+    # non-empty value that's not valid SemVer 2.0, emit one structured
+    # warning so the misconfiguration is visible in CI logs — but
+    # never raise. Non-version-aware callers stay supported.
+    version_full, version_minor = parse_version(cfg.version_under_test)
+    if cfg.version_under_test and version_full is None:
+        get_logger().warning(
+            "malformed_version_under_test",
+            value=cfg.version_under_test,
+            hint="must be SemVer 2.0 (e.g. 1.37.5, 1.37.5-rc1); "
+            "skipping version_full/version_minor population",
+        )
+
+    properties: dict[str, Any] = {
         "run_id": run_id_friendly,
         "repository": meta["repository"],
         "branch": meta["branch"],
@@ -112,6 +126,14 @@ def aggregate_run_properties(
         "actor": meta["actor"],
         "run_url": meta["run_url"],
     }
+    # Only populate the version slots when parsing succeeded. Weaviate
+    # accepts missing optional properties on insert/replace; this
+    # keeps old rows ingested before the additive migration distinct
+    # from rows where the caller deliberately omitted the input.
+    if version_full is not None:
+        properties["version_full"] = version_full
+        properties["version_minor"] = version_minor
+    return properties
 
 
 # ---------- insert_test_run ----------

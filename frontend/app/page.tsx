@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { ArrowUpRight, ChevronRight, FlaskConical, GitCommitHorizontal } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { EmptyState } from "@/components/EmptyState";
@@ -164,15 +165,53 @@ function RunRow({ run, expanded, onToggle }: {
   );
 }
 
+function initialFiltersFromURL(params: URLSearchParams | null): RunFilters {
+  // Deep-link entry points (e.g., from the Versions landing page card
+  // -> `/?versionMinor=1.37`). Existing user-typed search / multi-select
+  // state lives in component state from here on.
+  if (!params) return {};
+  const seed: RunFilters = {};
+  const versionMinors = params.getAll("versionMinor").filter(Boolean);
+  if (versionMinors.length) seed.versionMinors = versionMinors;
+  const versionFulls = params.getAll("versionFull").filter(Boolean);
+  if (versionFulls.length) seed.versionFulls = versionFulls;
+  const repos = params.getAll("repository").filter(Boolean);
+  if (repos.length) seed.repositories = repos;
+  const statuses = params.getAll("status").filter(Boolean);
+  if (statuses.length) seed.statuses = statuses;
+  const search = params.get("search")?.trim();
+  if (search) seed.search = search;
+  return seed;
+}
+
 export default function TestExplorerPage() {
-  const [filters, setFilters] = useState<RunFilters>({});
+  // `useSearchParams` requires a Suspense boundary under static export
+  // (the search params are only known at request time). Wrap the inner
+  // body so the page can still pre-render the chrome.
+  return (
+    <Suspense fallback={<LoadingState label="Loading runs…" />}>
+      <TestExplorerBody />
+    </Suspense>
+  );
+}
+
+function TestExplorerBody() {
+  const searchParams = useSearchParams();
+  // useState initializer runs once — captures the URL-seeded filters
+  // on first render. Subsequent navigation back to / preserves whatever
+  // the user typed; deep-links from /versions still work.
+  const [filters, setFilters] = useState<RunFilters>(() =>
+    initialFiltersFromURL(searchParams),
+  );
   const runs = useAsync(
     () => fetchRecentRuns(filters, 50),
     [
       filters.search ?? "",
       (filters.repositories ?? []).join("|"),
       (filters.statuses ?? []).join("|"),
-    ]
+      (filters.versionMinors ?? []).join("|"),
+      (filters.versionFulls ?? []).join("|"),
+    ],
   );
   const [expanded, setExpanded] = useState<string | null>(null);
 

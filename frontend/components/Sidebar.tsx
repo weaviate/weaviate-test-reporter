@@ -1,6 +1,6 @@
 "use client";
 
-import { FlaskConical, Gauge, SearchCode } from "lucide-react";
+import { FlaskConical, Gauge, GitBranch, SearchCode } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { BrandMark } from "./BrandMark";
@@ -13,6 +13,7 @@ type NavItem = {
 
 const NAV: NavItem[] = [
   { href: "/", label: "Test Explorer", Icon: FlaskConical },
+  { href: "/versions", label: "Versions", Icon: GitBranch },
   { href: "/search", label: "Semantic Search", Icon: SearchCode },
   { href: "/dashboard", label: "Metrics", Icon: Gauge },
 ];

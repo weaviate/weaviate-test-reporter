@@ -40,6 +40,40 @@ function baseUrl(): string {
         "or in the deployment environment before serving the static bundle."
     );
   }
+  // A scheme-less URL like "my-cluster.weaviate.cloud" is treated by
+  // fetch() as a relative path and resolved against the page origin —
+  // so requests silently hit the page's own server instead of Weaviate
+  // (returning the HTML 404 page). Catch it loudly here.
+  let parsed: URL;
+  try {
+    parsed = new URL(env.weaviateUrl);
+  } catch {
+    throw new Error(
+      `NEXT_PUBLIC_WEAVIATE_URL is malformed ("${env.weaviateUrl}"): ` +
+        "must be a full URL including scheme, e.g. " +
+        "https://my-cluster.weaviate.cloud"
+    );
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(
+      `NEXT_PUBLIC_WEAVIATE_URL has unsupported scheme "${parsed.protocol}" ` +
+        `(value: "${env.weaviateUrl}"). Use http:// or https://.`
+    );
+  }
+  // In dev, route through the same-origin Next.js rewrite proxy
+  // (configured in next.config.ts) so the browser never crosses
+  // origins — WCD locks `Access-Control-Allow-Origin` to
+  // `https://console.weaviate.cloud` and rejects any other origin's
+  // preflight. The rewrite forwards the request server-side to the
+  // real WCD URL, preserving the Authorization header.
+  //
+  // In production the static bundle is served by Nginx behind
+  // Twingate, which proxies same-origin to WCD — so the full URL is
+  // never crossed at the browser layer there either, but we don't
+  // need (or have) the dev rewrite.
+  if (process.env.NODE_ENV === "development") {
+    return "/api/weaviate";
+  }
   return env.weaviateUrl.replace(/\/$/, "");
 }
 
@@ -51,6 +85,18 @@ function headers(extra: HeadersInit = {}): HeadersInit {
   };
   if (env.weaviateApiKey) {
     h.Authorization = `Bearer ${env.weaviateApiKey}`;
+    // text2vec-weaviate (Weaviate Embeddings) needs these two headers
+    // to reach the embeddings cluster from a WCD instance. The Python
+    // v4 client auto-injects them on connect_to_weaviate_cloud(); the
+    // raw GraphQL path doesn't, so requests using nearText against a
+    // text2vec-weaviate collection fail with:
+    //   vectorize keywords: remote client vectorize: text2vec-weaviate
+    //   module: cluster URL: no cluster URL found in request header:
+    //   X-Weaviate-Cluster-Url
+    // Use the raw env URL (not baseUrl()), since in dev baseUrl()
+    // returns the same-origin proxy path.
+    h["X-Weaviate-Cluster-Url"] = env.weaviateUrl;
+    h["X-Weaviate-Api-Key"] = env.weaviateApiKey;
   }
   return h;
 }

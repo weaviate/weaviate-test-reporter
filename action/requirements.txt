@@ -17,3 +17,9 @@ lxml>=5.3.0,<7.0.0
 # Drop this line once weaviate-client publishes a release with packaging
 # in install_requires (and bump the floor pin above accordingly).
 packaging>=24.0,<26.0
+# SemVer 2.0 parser for the `version_under_test` action input. Used only
+# by config.parse_version (TestRun.version_full / version_minor population).
+# Regex would silently mishandle pre-release tags like 1.37.5-rc1 and
+# build metadata like 1.37.5+build.42 — python-semver implements the
+# full SemVer spec.
+semver>=3.0.0,<4.0.0
