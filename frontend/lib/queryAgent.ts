@@ -110,12 +110,25 @@ export type AskOptions = {
   signal?: AbortSignal;
 };
 
-/** Default the agent searches: TestRun bare, TestCase pointed at the
- *  stack_trace named vector. Matches `DEFAULT_TARGET_VECTOR` in
- *  `queries.ts`. */
+/** Default the agent searches: TestRun bare, TestCase across ALL three
+ *  named vectors. Safe to combine here because every TestCase vector
+ *  uses the same embedder (`text2vec-weaviate` on WCD by default), so
+ *  the distance scales are comparable and Weaviate's multi-target
+ *  ranking can merge them sensibly.
+ *
+ *  Per https://docs.weaviate.io/agents/query/usage#configure-collections-in-detail
+ *  the agent explicitly supports passing multiple vectors per
+ *  collection. This gives broader recall for the open-ended prompts
+ *  a chatbot tends to receive (`name` matches a specific test, the
+ *  other two carry the failure-shape signal). The rest of the
+ *  dashboard still defaults to `stack_trace` alone — that's the right
+ *  call for triage queries where precision matters more. */
 const DEFAULT_COLLECTIONS: AgentCollection[] = [
   "TestRun",
-  { name: "TestCase", target_vector: ["stack_trace"] },
+  {
+    name: "TestCase",
+    target_vector: ["stack_trace", "error_message", "name"],
+  },
 ];
 
 export class QueryAgentError extends Error {
