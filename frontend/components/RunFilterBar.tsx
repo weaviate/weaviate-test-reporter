@@ -27,11 +27,21 @@ export function RunFilterBar({
 }) {
   const repoOptions = useAsync(() => fetchDistinctRunValues("repository"), []);
   const statusOptions = useAsync(() => fetchDistinctRunValues("status"), []);
+  const versionMinorOptions = useAsync(
+    () => fetchDistinctRunValues("version_minor"),
+    [],
+  );
+  const versionFullOptions = useAsync(
+    () => fetchDistinctRunValues("version_full"),
+    [],
+  );
 
   const anyActive =
     Boolean(filters.search?.trim()) ||
     (filters.repositories?.length ?? 0) > 0 ||
-    (filters.statuses?.length ?? 0) > 0;
+    (filters.statuses?.length ?? 0) > 0 ||
+    (filters.versionMinors?.length ?? 0) > 0 ||
+    (filters.versionFulls?.length ?? 0) > 0;
 
   return (
     <div className="flex flex-wrap items-center gap-2" data-testid="run-filter-bar">
@@ -87,6 +97,34 @@ export function RunFilterBar({
         onChange={(next) => onChange({ ...filters, statuses: next })}
         placeholder="Filter statuses…"
         emptyHint={statusOptions.loading ? "Loading…" : "No statuses yet."}
+      />
+
+      <MultiSelectFilter
+        label="Minor version"
+        testId="filter-version-minor"
+        options={versionMinorOptions.data ?? []}
+        selected={filters.versionMinors ?? []}
+        onChange={(next) => onChange({ ...filters, versionMinors: next })}
+        placeholder="Filter minor versions…"
+        emptyHint={
+          versionMinorOptions.loading
+            ? "Loading versions…"
+            : "No versions recorded yet — set version_under_test on the action to populate."
+        }
+      />
+
+      <MultiSelectFilter
+        label="Full version"
+        testId="filter-version-full"
+        options={versionFullOptions.data ?? []}
+        selected={filters.versionFulls ?? []}
+        onChange={(next) => onChange({ ...filters, versionFulls: next })}
+        placeholder="Filter full versions…"
+        emptyHint={
+          versionFullOptions.loading
+            ? "Loading versions…"
+            : "No versions recorded yet."
+        }
       />
 
       {anyActive ? (

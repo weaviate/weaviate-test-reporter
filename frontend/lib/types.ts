@@ -26,6 +26,25 @@ export type TestRun = {
   pr_number: number | null;
   actor: string;
   run_url: string;
+  // Version of the artifact under test (e.g. Weaviate). Null when the
+  // action was invoked without `version_under_test` or when the value
+  // failed semver validation. See `.project/02-weaviate-schema.md` §1.
+  version_full: string | null;
+  version_minor: string | null;
+};
+
+/** Per-minor-version aggregate surfaced by the /versions landing page. */
+export type VersionRollup = {
+  /** e.g. "1.37" */
+  minor: string;
+  /** Distinct full versions seen for this minor (e.g. ["1.37.5", "1.37.4"]). */
+  fulls: string[];
+  /** TestRuns landed for this minor. */
+  runs: number;
+  /** TestCases landed across those runs. */
+  cases: number;
+  /** Passed-case ratio in 0..1, or null when no cases ran. */
+  passRate: number | null;
 };
 
 export type TestCaseStatus = "passed" | "failed" | "skipped";

@@ -220,6 +220,22 @@ def _insert_run(client: weaviate.WeaviateClient, run_idx: int, cases: list[Parse
     job_name = random.choice(["e2e-backup", "e2e-replication", "e2e-multitenancy", "go-unit", "e2e-rbac"])
     run_uuid = _run_uuid(REPO, workflow_run_id, attempt, job_name)
 
+    # Synthesize Weaviate versions for the Versions landing page demo.
+    # Realistic-ish patch progression: most runs are on the latest two
+    # minors so the rollup has meaningful counts; a smattering of older
+    # minors keeps the cards interesting.
+    version_full = random.choice(
+        [
+            "1.37.5", "1.37.5", "1.37.5",  # weight towards the newest patch
+            "1.37.4", "1.37.4",
+            "1.37.3",
+            "1.36.8", "1.36.8",
+            "1.36.7",
+            "1.35.12",
+        ]
+    )
+    version_minor = ".".join(version_full.split(".")[:2])
+
     props = {
         "run_id": f"ci/{job_name}#{workflow_run_id}.{attempt}",
         "repository": REPO,
@@ -236,6 +252,8 @@ def _insert_run(client: weaviate.WeaviateClient, run_idx: int, cases: list[Parse
         "pr_number": pr_number,
         "actor": actor,
         "run_url": f"https://github.com/{REPO}/actions/runs/{workflow_run_id}/attempts/{attempt}",
+        "version_full": version_full,
+        "version_minor": version_minor,
     }
 
     run_collection = client.collections.get(TEST_RUN)

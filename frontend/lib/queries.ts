@@ -41,6 +41,10 @@ export type RunFilters = {
   repositories?: string[];
   /** Status property — multi-select. Empty/undefined = no filter. */
   statuses?: string[];
+  /** Minor version (e.g. "1.37") — multi-select. Empty/undefined = no filter. */
+  versionMinors?: string[];
+  /** Full version (e.g. "1.37.5") — multi-select. Empty/undefined = no filter. */
+  versionFulls?: string[];
 };
 
 type WhereOperand = Record<string, unknown>;
@@ -81,6 +85,26 @@ function whereForRunFilters(filters: RunFilters): WhereOperand | null {
       })),
     });
   }
+  if (filters.versionMinors?.length) {
+    operands.push({
+      operator: "Or",
+      operands: filters.versionMinors.map((v) => ({
+        path: ["version_minor"],
+        operator: "Equal",
+        valueText: v,
+      })),
+    });
+  }
+  if (filters.versionFulls?.length) {
+    operands.push({
+      operator: "Or",
+      operands: filters.versionFulls.map((v) => ({
+        path: ["version_full"],
+        operator: "Equal",
+        valueText: v,
+      })),
+    });
+  }
 
   if (operands.length === 0) return null;
   if (operands.length === 1) return operands[0];
@@ -105,6 +129,8 @@ type GraphQLTestRun = {
   pr_number: number | null;
   actor: string;
   run_url: string;
+  version_full: string | null;
+  version_minor: string | null;
   _additional: { id: string };
 };
 
@@ -142,6 +168,8 @@ function asTestRun(r: GraphQLTestRun): TestRun {
     pr_number: r.pr_number ?? null,
     actor: r.actor ?? "",
     run_url: r.run_url ?? "",
+    version_full: r.version_full ?? null,
+    version_minor: r.version_minor ?? null,
   };
 }
 
@@ -189,6 +217,7 @@ export async function fetchRecentRuns(
               run_id repository branch commit_hash trigger_type status
               total_duration_ms timestamp workflow_run_id workflow_run_attempt
               workflow_name job_name pr_number actor run_url
+              version_full version_minor
               _additional { id }
             }
           }
@@ -204,6 +233,7 @@ export async function fetchRecentRuns(
               run_id repository branch commit_hash trigger_type status
               total_duration_ms timestamp workflow_run_id workflow_run_attempt
               workflow_name job_name pr_number actor run_url
+              version_full version_minor
               _additional { id }
             }
           }
@@ -222,7 +252,13 @@ export async function fetchRecentRuns(
  * Powers the filter-bar dropdowns.
  */
 export async function fetchDistinctRunValues(
-  property: "repository" | "branch" | "actor" | "status"
+  property:
+    | "repository"
+    | "branch"
+    | "actor"
+    | "status"
+    | "version_full"
+    | "version_minor",
 ): Promise<Array<{ value: string; count: number }>> {
   const query = /* GraphQL */ `
     query DistinctRunValues($property: String!) {
@@ -246,6 +282,141 @@ export async function fetchDistinctRunValues(
   return (data.Aggregate[COLLECTIONS.TEST_RUN] ?? [])
     .map((g) => ({ value: g.groupedBy.value, count: g.meta.count }))
     .sort((a, b) => b.count - a.count);
+}
+
+/**
+ * Per-minor-version aggregate for the /versions landing page.
+ *
+ * Returns one entry per distinct `version_minor` (excluding null/empty),
+ * sorted by minor descending (newest version first by string compare —
+ * SemVer ordering of MAJOR.MINOR strings agrees with lexicographic when
+ * components stay single-digit; for 10.x we'd want a proper semver
+ * comparator, deferred).
+ *
+ * Implementation note: Weaviate's `Aggregate.groupBy` returns one
+ * record per group with that group's count. To also count TestCases
+ * per minor and derive a pass rate we need TWO queries:
+ *   1. TestRun grouped by version_minor -> {minor, runs}
+ *   2. For each minor, a TestCase aggregate filtered by that minor
+ *      (via cross-ref) -> {cases, passed}
+ *
+ * Doing N+1 queries per minor is fine in practice — there are O(10)
+ * Weaviate minor versions in flight at any time, not O(1000). When
+ * that assumption breaks, add server-side cross-ref aggregation.
+ */
+export async function fetchVersionRollup(): Promise<
+  import("./types").VersionRollup[]
+> {
+  // 1. TestRuns grouped by version_minor.
+  const runsQuery = /* GraphQL */ `
+    query VersionRunCounts {
+      Aggregate {
+        ${COLLECTIONS.TEST_RUN}(groupBy: ["version_minor"]) {
+          meta { count }
+          groupedBy { value }
+        }
+      }
+    }
+  `;
+  type RunsResp = {
+    Aggregate: {
+      [k: string]: Array<{
+        meta: { count: number };
+        groupedBy: { value: string | null };
+      }>;
+    };
+  };
+  const runsData = await graphql<RunsResp>(runsQuery);
+  const minorGroups = (runsData.Aggregate[COLLECTIONS.TEST_RUN] ?? [])
+    .map((g) => ({ minor: g.groupedBy.value, runs: g.meta.count }))
+    .filter((g): g is { minor: string; runs: number } => Boolean(g.minor));
+
+  // 2. For each minor: distinct full versions + TestCase rollup.
+  const rollups: import("./types").VersionRollup[] = await Promise.all(
+    minorGroups.map(async ({ minor, runs }) => {
+      // Distinct full versions for this minor.
+      const fullsQuery = /* GraphQL */ `
+        query FullsForMinor($where: GetObjectsTestRunWhereInpObj!) {
+          Aggregate {
+            ${COLLECTIONS.TEST_RUN}(
+              where: $where
+              groupBy: ["version_full"]
+            ) {
+              meta { count }
+              groupedBy { value }
+            }
+          }
+        }
+      `;
+      const fullsData = await graphql<RunsResp>(fullsQuery, {
+        where: {
+          path: ["version_minor"],
+          operator: "Equal",
+          valueText: minor,
+        },
+      });
+      const fulls = (fullsData.Aggregate[COLLECTIONS.TEST_RUN] ?? [])
+        .map((g) => g.groupedBy.value)
+        .filter((v): v is string => Boolean(v))
+        .sort()
+        .reverse();
+
+      // TestCase counts for this minor — joined via the belongsToRun
+      // cross-ref. Weaviate supports cross-ref paths in `where`.
+      const casesQuery = /* GraphQL */ `
+        query CasesForMinor(
+          $whereAll: GetObjectsTestCaseWhereInpObj!
+          $wherePassed: GetObjectsTestCaseWhereInpObj!
+        ) {
+          all: Aggregate {
+            ${COLLECTIONS.TEST_CASE}(where: $whereAll) {
+              meta { count }
+            }
+          }
+          passed: Aggregate {
+            ${COLLECTIONS.TEST_CASE}(where: $wherePassed) {
+              meta { count }
+            }
+          }
+        }
+      `;
+      const refPath = ["belongsToRun", COLLECTIONS.TEST_RUN, "version_minor"];
+      const whereAll: WhereOperand = {
+        path: refPath,
+        operator: "Equal",
+        valueText: minor,
+      };
+      const wherePassed: WhereOperand = {
+        operator: "And",
+        operands: [
+          whereAll,
+          { path: ["status"], operator: "Equal", valueText: "passed" },
+        ],
+      };
+      type CasesResp = {
+        all: { Aggregate: { [k: string]: Array<{ meta: { count: number } }> } };
+        passed: {
+          Aggregate: { [k: string]: Array<{ meta: { count: number } }> };
+        };
+      };
+      const casesData = await graphql<CasesResp>(casesQuery, {
+        whereAll,
+        wherePassed,
+      });
+      const cases =
+        casesData.all.Aggregate[COLLECTIONS.TEST_CASE]?.[0]?.meta.count ?? 0;
+      const passed =
+        casesData.passed.Aggregate[COLLECTIONS.TEST_CASE]?.[0]?.meta.count ?? 0;
+      const passRate = cases > 0 ? passed / cases : null;
+
+      return { minor, fulls, runs, cases, passRate };
+    }),
+  );
+
+  // Newest minor first. Pure string sort works fine for 1.36 < 1.37
+  // < 1.38; switch to a proper semver comparator if/when double-digit
+  // minors ship.
+  return rollups.sort((a, b) => (a.minor < b.minor ? 1 : -1));
 }
 
 export async function fetchCasesForRun(
