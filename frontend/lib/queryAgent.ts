@@ -13,9 +13,12 @@
  *     causes preflight to fail. The SDK uses it for telemetry only, so
  *     omitting it is safe.
  *
- * Auth shape (from inspecting weaviate-agents@1.4.1
- * `dist/query/connection.js`): the `Authorization` header value is the
- * RAW API key — no "Bearer " prefix.
+ * Auth shape: `Authorization: Bearer <api-key>`. The SDK source uses a
+ * variable called `bearerToken` whose value is already the full
+ * `Bearer ...` string — easy to read as "raw token", but the agent
+ * service responds 401 with
+ *   {"detail":"... using Bearer auth (i.e. Authorization: Bearer YOUR_KEY)."}
+ * if you skip the prefix.
  *
  * Endpoint: POST https://api.agents.weaviate.io/query/ask (single-shot)
  *           POST https://api.agents.weaviate.io/query/stream_ask (SSE)
@@ -110,8 +113,7 @@ function ensureAvailable(): void {
 function headers(): HeadersInit {
   return {
     "Content-Type": "application/json",
-    // RAW token, NOT "Bearer ..." — see comment at top of file.
-    Authorization: env.weaviateApiKey,
+    Authorization: `Bearer ${env.weaviateApiKey}`,
     "X-Weaviate-Cluster-Url": env.weaviateUrl.replace(/\/$/, ""),
   };
 }
