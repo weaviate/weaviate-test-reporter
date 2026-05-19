@@ -1,8 +1,9 @@
 "use client";
 
-import { FlaskConical, Gauge, GitBranch, SearchCode } from "lucide-react";
+import { FlaskConical, Gauge, GitBranch, MessageSquareText, SearchCode } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { agentAvailable } from "@/lib/env";
 import { BrandMark } from "./BrandMark";
 
 type NavItem = {
@@ -18,6 +19,12 @@ const NAV: NavItem[] = [
   { href: "/dashboard", label: "Metrics", Icon: Gauge },
 ];
 
+const AGENT_NAV: NavItem = {
+  href: "/agent",
+  label: "Ask your tests",
+  Icon: MessageSquareText,
+};
+
 function isActive(pathname: string, href: string): boolean {
   if (href === "/") return pathname === "/" || pathname === "";
   return pathname.startsWith(href);
@@ -25,6 +32,10 @@ function isActive(pathname: string, href: string): boolean {
 
 export function Sidebar() {
   const pathname = usePathname() ?? "/";
+  // Agent nav is gated to WCD deployments. NEXT_PUBLIC_WEAVIATE_URL is
+  // inlined at build time so the server-rendered HTML and the client
+  // bundle agree — no hydration mismatch, no effect needed.
+  const nav = agentAvailable() ? [...NAV, AGENT_NAV] : NAV;
 
   return (
     <aside
@@ -48,7 +59,7 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 p-3 space-y-1" aria-label="Primary">
-        {NAV.map(({ href, label, Icon }, i) => {
+        {nav.map(({ href, label, Icon }, i) => {
           const active = isActive(pathname, href);
           return (
             <Link
