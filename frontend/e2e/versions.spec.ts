@@ -43,8 +43,13 @@ test.describe("Versions landing page", () => {
     );
 
     await firstCard.click();
-    await expect(page).toHaveURL(
-      new RegExp(`/\\?versionMinor=${minor.replace(/\./g, "\\.")}`),
+    // Predicate-based URL check rather than a regex built from a
+    // user-shaped string — avoids the CodeQL "incomplete string
+    // escaping" warning (we'd otherwise need to escape every regex
+    // metachar in `minor` defensively). Also more readable: the URL
+    // must carry the exact minor we clicked, regardless of param order.
+    await expect(page).toHaveURL((url) =>
+      url.searchParams.getAll("versionMinor").includes(minor),
     );
     await expect(
       page.getByRole("heading", { name: /recent test runs/i }),
