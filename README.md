@@ -9,7 +9,7 @@ Dogfooding project: we use Weaviate to make our own QA workflow faster, and the 
 | Path | Description |
 |---|---|
 | [`action/`](action/) | Python composite GitHub Action. Parses JUnit XML, batches into Weaviate using server-side streaming (`collection.batch.stream`), fail-safe by default. |
-| [`frontend/`](frontend/) | Next.js 16 static SPA with three tabs (Test Explorer, Semantic Search, Metrics Dashboard). |
+| [`frontend/`](frontend/) | Next.js 16 static SPA with five tabs: Test Explorer, Versions, Semantic Search, Metrics Dashboard, and "Ask your tests" (Query Agent chatbot — WCD-only; hidden on local clusters). |
 
 ## Usage — the action
 
