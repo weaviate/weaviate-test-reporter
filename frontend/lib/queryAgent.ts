@@ -73,16 +73,39 @@ export type ChatMessage = {
   content: string;
 };
 
+/**
+ * A collection the agent can search. Bare string for collections with at
+ * most one vector (e.g. `TestRun` has no vectors); the object form is
+ * required when the collection has multiple named vectors and the agent
+ * needs to be told which one to use — otherwise it 400s with
+ * `WEAVIATE_NAMED_VECTOR_ERROR`. `TestCase` has three named vectors so
+ * it MUST go through the object form.
+ */
+export type AgentCollection =
+  | string
+  | { name: string; target_vector?: string; view_properties?: string[] };
+
 export type AskOptions = {
   /** Multi-turn history; the agent has no server-side memory, so the caller
    *  must replay prior messages on every turn. The current question goes
    *  into `query`, NOT into the history. */
   history?: ChatMessage[];
-  /** Limit which TestRun/TestCase collections the agent searches. */
-  collections?: string[];
+  /** Limit which collections the agent searches. Defaults to a sensible
+   *  pair for this dashboard: `TestRun` (filterable/aggregatable) and
+   *  `TestCase` targeted at the `stack_trace` named vector — the same
+   *  default the rest of the dashboard uses for triage queries. */
+  collections?: AgentCollection[];
   /** Aborts the in-flight fetch. */
   signal?: AbortSignal;
 };
+
+/** Default the agent searches: TestRun bare, TestCase pointed at the
+ *  stack_trace named vector. Matches `DEFAULT_TARGET_VECTOR` in
+ *  `queries.ts`. */
+const DEFAULT_COLLECTIONS: AgentCollection[] = [
+  "TestRun",
+  { name: "TestCase", target_vector: "stack_trace" },
+];
 
 export class QueryAgentError extends Error {
   constructor(
@@ -136,7 +159,7 @@ function buildBody(query: string, opts: AskOptions = {}): string {
     // wired server-side on WCD.
     headers: {},
     query: askPayload,
-    collections: opts.collections ?? ["TestRun", "TestCase"],
+    collections: opts.collections ?? DEFAULT_COLLECTIONS,
     system_prompt: undefined,
     result_evaluation: "none",
   });
