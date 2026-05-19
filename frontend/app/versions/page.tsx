@@ -148,9 +148,9 @@ function VersionCard({
         <dd className="text-right text-wv-fog tabular-nums">
           {version.runs.toLocaleString()}
         </dd>
-        <dt>Cases</dt>
+        <dt>Passing</dt>
         <dd className="text-right text-wv-fog tabular-nums">
-          {version.cases.toLocaleString()}
+          {version.passingRuns.toLocaleString()}
         </dd>
         <dt>Patches</dt>
         <dd

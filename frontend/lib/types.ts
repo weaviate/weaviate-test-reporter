@@ -41,9 +41,9 @@ export type VersionRollup = {
   fulls: string[];
   /** TestRuns landed for this minor. */
   runs: number;
-  /** TestCases landed across those runs. */
-  cases: number;
-  /** Passed-case ratio in 0..1, or null when no cases ran. */
+  /** TestRuns where status == "success". */
+  passingRuns: number;
+  /** passingRuns / runs in 0..1, or null when no runs landed. */
   passRate: number | null;
 };
 
