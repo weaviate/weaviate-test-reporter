@@ -18,6 +18,9 @@ test.describe("Layout & navigation", () => {
       page.getByRole("link", { name: "Versions", exact: true })
     ).toBeVisible();
     await expect(
+      page.getByRole("link", { name: "Flakes", exact: true })
+    ).toBeVisible();
+    await expect(
       page.getByRole("link", { name: "Semantic Search", exact: true })
     ).toBeVisible();
     await expect(

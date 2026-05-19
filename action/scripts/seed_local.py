@@ -52,6 +52,38 @@ SUITES = [
     ("github.com/weaviate/weaviate/adapters/repos/db", "golang", "go-unit"),
 ]
 
+# Stable-name tests that intentionally FLIP status across runs. They
+# power the Flakes page's demo data on a freshly-seeded local cluster.
+# Each entry: (name, test_suite, framework, fail_probability). The
+# probability is independent per run, so a 0.4 entry will give an
+# expected flakiness score around 0.4–0.5 over ~10 runs.
+FLAKY_TESTS = [
+    (
+        "test_async_replication_under_load",
+        "tests.e2e.test_replication",
+        "pytest",
+        0.45,
+    ),
+    (
+        "test_tenant_offload_race_condition",
+        "tests.e2e.test_multitenancy",
+        "pytest",
+        0.35,
+    ),
+    (
+        "TestRaftLeaderElection_FlakyOnSlowDisk",
+        "github.com/weaviate/weaviate/usecases/cluster",
+        "golang",
+        0.3,
+    ),
+    (
+        "test_backup_resume_after_partial_failure",
+        "tests.e2e.test_backup",
+        "pytest",
+        0.5,
+    ),
+]
+
 # Pool of distinct failure modes, each with name/message/trace/type.
 FAILURE_TEMPLATES = [
     {
@@ -153,9 +185,51 @@ def _now_minus(days_back: int, jitter_minutes: int = 30) -> datetime:
     return base
 
 
+def _gen_flaky_cases() -> list[ParsedCase]:
+    """One ParsedCase per FLAKY_TESTS entry per run — each test FLIPS
+    status independently per call, so the Flakes page has real signal."""
+    out: list[ParsedCase] = []
+    for name, suite, framework, fail_p in FLAKY_TESTS:
+        is_failed = random.random() < fail_p
+        if is_failed:
+            # Pick a deterministic-looking but varied error message from
+            # the templates pool; keep failure_type stable per test so
+            # downstream filters group sensibly.
+            template = random.choice(FAILURE_TEMPLATES)
+            out.append(
+                ParsedCase(
+                    name=name,
+                    test_suite=suite,
+                    framework=framework,
+                    status="failed",
+                    duration_ms=random.randint(800, 6_000),
+                    error_message=template["message"],
+                    stack_trace=template["trace"],
+                    failure_type=template["failure_type"],
+                )
+            )
+        else:
+            out.append(
+                ParsedCase(
+                    name=name,
+                    test_suite=suite,
+                    framework=framework,
+                    status="passed",
+                    duration_ms=random.randint(120, 1_400),
+                    error_message=None,
+                    stack_trace=None,
+                    failure_type=None,
+                )
+            )
+    return out
+
+
 def _gen_cases_for_run(run_idx: int, run_failure_count: int) -> list[ParsedCase]:
     """Generate ~20 cases per run with a controlled number of failures."""
     cases: list[ParsedCase] = []
+    # The flaky tests always appear; their pass/fail status is what
+    # changes. They contribute the headline signal for /flakes.
+    cases.extend(_gen_flaky_cases())
     n_total = 18 + random.randint(-2, 4)
     fail_picks = random.sample(FAILURE_TEMPLATES, k=min(run_failure_count, len(FAILURE_TEMPLATES)))
     failed_indices = set(random.sample(range(n_total), k=run_failure_count))

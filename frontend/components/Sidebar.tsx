@@ -1,6 +1,13 @@
 "use client";
 
-import { FlaskConical, Gauge, GitBranch, MessageSquareText, SearchCode } from "lucide-react";
+import {
+  ActivitySquare,
+  FlaskConical,
+  Gauge,
+  GitBranch,
+  MessageSquareText,
+  SearchCode,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { agentAvailable } from "@/lib/env";
@@ -15,6 +22,7 @@ type NavItem = {
 const NAV: NavItem[] = [
   { href: "/", label: "Test Explorer", Icon: FlaskConical },
   { href: "/versions", label: "Versions", Icon: GitBranch },
+  { href: "/flakes", label: "Flakes", Icon: ActivitySquare },
   { href: "/search", label: "Semantic Search", Icon: SearchCode },
   { href: "/dashboard", label: "Metrics", Icon: Gauge },
 ];

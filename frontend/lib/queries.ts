@@ -637,3 +637,151 @@ export function isoDaysAgo(days: number): string {
   d.setUTCHours(0, 0, 0, 0);
   return d.toISOString();
 }
+
+// ---------- flakes ----------
+
+export type FlakesWindow = "7d" | "30d";
+
+/**
+ * Pull TestCase status timelines in the window and compute a per-test
+ * flakiness score client-side.
+ *
+ * Why not server-side groupBy: Weaviate's `Aggregate.groupBy` takes a
+ * single property path. To bucket by `(test_suite, name)` we'd need
+ * either nested aggregates (unsupported) or a join. Pulling raw rows
+ * inside a window and grouping in JS is bounded (the limit caps it
+ * deterministically) and avoids the cross-ref `where` fragility we
+ * already hit in `fetchVersionRollup`.
+ *
+ * `minRuns` filters out tests we haven't seen often enough to make a
+ * judgment about (default 3 — anything less is just noise).
+ */
+const FLAKES_FETCH_LIMIT = 5000;
+const FLAKES_RECENT_STATUSES = 20;
+
+export async function fetchFlakyTests(
+  window: FlakesWindow,
+  opts: { minRuns?: number } = {},
+): Promise<import("./types").FlakyTest[]> {
+  const days = window === "7d" ? 7 : 30;
+  const sinceIso = isoDaysAgo(days);
+  // `_creationTimeUnix` is indexed via inverted_index_config.index_timestamps;
+  // the comparator takes a stringified milliseconds-since-epoch.
+  const sinceMs = String(Date.parse(sinceIso));
+  const minRuns = opts.minRuns ?? 3;
+
+  const query = /* GraphQL */ `
+    query FlakeRows($where: GetObjectsTestCaseWhereInpObj!) {
+      Get {
+        ${COLLECTIONS.TEST_CASE}(
+          limit: ${FLAKES_FETCH_LIMIT}
+          where: $where
+          sort: [
+            { path: ["test_suite"], order: asc }
+            { path: ["name"], order: asc }
+            { path: ["_creationTimeUnix"], order: asc }
+          ]
+        ) {
+          name
+          test_suite
+          framework
+          status
+          _additional { id }
+        }
+      }
+    }
+  `;
+  const where: WhereOperand = {
+    operator: "And",
+    operands: [
+      {
+        path: ["_creationTimeUnix"],
+        operator: "GreaterThanEqual",
+        valueText: sinceMs,
+      },
+      // Skipped cases don't contribute to flakiness signal; filter them
+      // out at the server so the 5000-row budget is spent on passed/failed.
+      {
+        operator: "Or",
+        operands: [
+          { path: ["status"], operator: "Equal", valueText: "passed" },
+          { path: ["status"], operator: "Equal", valueText: "failed" },
+        ],
+      },
+    ],
+  };
+  type RawCase = {
+    name: string;
+    test_suite: string;
+    framework: string;
+    status: TestCaseStatus;
+    _additional: { id: string };
+  };
+  const data = await graphql<{ Get: Record<string, RawCase[]> }>(query, {
+    where,
+  });
+  const rows = data.Get[COLLECTIONS.TEST_CASE] ?? [];
+
+  // Group by (suite, name). Rows arrive sorted by suite, name, time —
+  // so a single linear scan is enough.
+  type Acc = {
+    test_suite: string;
+    name: string;
+    framework: string;
+    statuses: TestCaseStatus[];
+  };
+  const groups = new Map<string, Acc>();
+  for (const r of rows) {
+    const key = `${r.test_suite} ${r.name}`;
+    let acc = groups.get(key);
+    if (!acc) {
+      acc = {
+        test_suite: r.test_suite,
+        name: r.name,
+        framework: r.framework,
+        statuses: [],
+      };
+      groups.set(key, acc);
+    }
+    acc.statuses.push(r.status);
+  }
+
+  // Compute flakiness per group; filter out stable / under-observed.
+  const out: import("./types").FlakyTest[] = [];
+  for (const g of groups.values()) {
+    const total = g.statuses.length;
+    if (total < minRuns) continue;
+    let transitions = 0;
+    let passed = 0;
+    let failed = 0;
+    for (let i = 0; i < g.statuses.length; i++) {
+      if (g.statuses[i] === "passed") passed++;
+      if (g.statuses[i] === "failed") failed++;
+      if (i > 0 && g.statuses[i] !== g.statuses[i - 1]) transitions++;
+    }
+    // A test with all-passed or all-failed has zero transitions =>
+    // flakiness 0. Drop it from the list (uninteresting).
+    if (transitions === 0) continue;
+    const flakiness_score = transitions / Math.max(1, total - 1);
+    out.push({
+      test_suite: g.test_suite,
+      name: g.name,
+      framework: g.framework,
+      total_runs: total,
+      passed,
+      failed,
+      transitions,
+      flakiness_score,
+      // Most-recent N for the pixel strip; the timeline was oldest-first.
+      recent_statuses: g.statuses.slice(-FLAKES_RECENT_STATUSES),
+    });
+  }
+
+  // Default sort: flakiest first, ties broken by total_runs (more
+  // observations = more confidence).
+  out.sort(
+    (a, b) =>
+      b.flakiness_score - a.flakiness_score || b.total_runs - a.total_runs,
+  );
+  return out;
+}

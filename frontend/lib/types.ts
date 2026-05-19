@@ -71,3 +71,26 @@ export type DashboardKpis = {
   totalRuns: number;
   totalCases: number;
 };
+
+/**
+ * A test that flips between passed/failed over the analysis window.
+ *
+ * `flakiness_score` is `transitions / (total_runs - 1)`, clamped to
+ * `[0, 1]`. A score of 0 means the test is stable (all passed or all
+ * failed throughout); 0.5 means it flips state on every run; 1 means
+ * it flips on EVERY transition (perfect noise).
+ *
+ * `recent_statuses` is the chronological status sequence used for the
+ * "last N" pixel strip in the UI — oldest first.
+ */
+export type FlakyTest = {
+  test_suite: string;
+  name: string;
+  framework: string;
+  total_runs: number;
+  passed: number;
+  failed: number;
+  transitions: number;
+  flakiness_score: number;
+  recent_statuses: TestCaseStatus[];
+};
