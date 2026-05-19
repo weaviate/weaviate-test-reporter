@@ -277,10 +277,44 @@ def _gen_cases_for_run(run_idx: int, run_failure_count: int) -> list[ParsedCase]
     return cases
 
 
-def _insert_run(client: weaviate.WeaviateClient, run_idx: int, cases: list[ParsedCase]):
+def _flip_some_failures_to_pass(
+    cases: list[ParsedCase], flip_probability: float
+) -> list[ParsedCase]:
+    """Build a retry-attempt case list: every failed case in the input
+    has `flip_probability` chance of becoming a passing case (with the
+    error fields cleared). Non-failed cases are passed through untouched.
+
+    Mirrors the real-world behaviour of GH Actions re-runs — most retries
+    don't re-run everything; the test that flips pass-on-retry is the
+    canonical flake signal F3 surfaces."""
+    flipped: list[ParsedCase] = []
+    for c in cases:
+        if c.status == "failed" and random.random() < flip_probability:
+            flipped.append(
+                ParsedCase(
+                    name=c.name,
+                    test_suite=c.test_suite,
+                    framework=c.framework,
+                    status="passed",
+                    duration_ms=random.randint(40, 900),
+                    error_message=None,
+                    stack_trace=None,
+                    failure_type=None,
+                )
+            )
+        else:
+            flipped.append(c)
+    return flipped
+
+
+def _insert_run(
+    client: weaviate.WeaviateClient,
+    run_idx: int,
+    cases: list[ParsedCase],
+    attempt: int = 1,
+):
     timestamp = _now_minus(days_back=10 - run_idx).isoformat()
     workflow_run_id = str(40_000 + run_idx)
-    attempt = 1
     any_failed = any(c.status == "failed" for c in cases)
     status = "failure" if any_failed else "success"
     pr_number = (run_idx % 3) * 100 + 17 if run_idx % 2 == 0 else None
@@ -381,6 +415,7 @@ def main() -> int:
         # so the dashboard tells a story ("today is on fire").
         failure_curve = [0, 1, 0, 2, 1, 0, 1, 3, 2, 5]
         total_cases = 0
+        retry_count = 0
         for i, failures in enumerate(failure_curve):
             cases = _gen_cases_for_run(i, run_failure_count=failures)
             run_uuid, status, n = _insert_run(client, i, cases)
@@ -389,8 +424,29 @@ def main() -> int:
                 f"  • run {i:>2}: {status:<8} cases={n:<3} failures={failures} "
                 f"uuid={run_uuid[:8]}"
             )
+            # F3 demo data: ~15% of runs (skewed toward runs that
+            # actually had failures, since those are the only ones
+            # worth retrying in practice) get a 2nd attempt where
+            # roughly half the original failures pass on retry.
+            if failures > 0 and random.random() < 0.40:
+                retry_cases = _flip_some_failures_to_pass(
+                    cases, flip_probability=0.5
+                )
+                retry_uuid, retry_status, retry_n = _insert_run(
+                    client, i, retry_cases, attempt=2
+                )
+                total_cases += retry_n
+                retry_count += 1
+                print(
+                    f"    ↳ retry #2: {retry_status:<8} cases={retry_n:<3} "
+                    f"uuid={retry_uuid[:8]} (flake-recovery demo)"
+                )
 
-        print(f"\n✓ Seeded 10 TestRuns ({total_cases} TestCases) into Weaviate.")
+        print(
+            f"\n✓ Seeded {len(failure_curve)} TestRuns "
+            f"({retry_count} with a retry, {total_cases} total TestCases) "
+            "into Weaviate."
+        )
         print("  Open the dashboard at http://localhost:3000 once the dev server is up.")
         return 0
     finally:

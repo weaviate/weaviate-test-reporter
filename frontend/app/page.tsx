@@ -9,8 +9,13 @@ import { ErrorState, LoadingState } from "@/components/States";
 import { StatusBadge } from "@/components/StatusBadge";
 import { RunFilterBar } from "@/components/RunFilterBar";
 import { useAsync } from "@/lib/useAsync";
-import { fetchCasesForRun, fetchRecentRuns, type RunFilters } from "@/lib/queries";
-import type { TestRun } from "@/lib/types";
+import {
+  fetchAttemptsForRun,
+  fetchCasesForRun,
+  fetchRecentRuns,
+  type RunFilters,
+} from "@/lib/queries";
+import type { TestCase, TestCaseStatus, TestRun } from "@/lib/types";
 
 function formatTimestamp(iso: string): string {
   if (!iso) return "—";
@@ -36,8 +41,43 @@ function ExpandedRunBody({ run }: { run: TestRun }) {
     () => fetchCasesForRun(run.uuid, { failedOnly: true }),
     [run.uuid],
   );
+  // Sibling attempts (F3). Skip when the run looks like a one-shot to
+  // avoid a wasted fetch.
+  const attempts = useAsync(
+    () =>
+      fetchAttemptsForRun(run.repository, run.workflow_run_id, run.job_name),
+    [run.repository, run.workflow_run_id, run.job_name],
+  );
+  const siblings: TestRun[] = (attempts.data ?? []).filter(
+    (a) => a.uuid !== run.uuid,
+  );
+  // Fetch each sibling's TestCases so we can show per-test status.
+  // Parallel; small N (typically 1 retry, rarely > 3).
+  const siblingCases = useAsync<Map<string, Map<string, TestCaseStatus>>>(
+    async () => {
+      const map = new Map<string, Map<string, TestCaseStatus>>();
+      if (siblings.length === 0) return map;
+      const results = await Promise.all(
+        siblings.map(async (s) => {
+          const list = await fetchCasesForRun(s.uuid);
+          const byKey = new Map<string, TestCaseStatus>();
+          for (const c of list) {
+            byKey.set(`${c.test_suite}|${c.name}`, c.status);
+          }
+          return [s.uuid, byKey] as const;
+        }),
+      );
+      for (const [uuid, byKey] of results) map.set(uuid, byKey);
+      return map;
+    },
+    // Re-fetch only when the actual sibling-uuid SET changes.
+    [siblings.map((s) => s.uuid).sort().join("|")],
+  );
   return (
     <div className="bg-wv-ink/30 border-t border-wv-navy-3/40 px-5 py-4">
+      {attempts.data && attempts.data.length > 1 ? (
+        <AttemptStrip attempts={attempts.data} currentUuid={run.uuid} />
+      ) : null}
       {cases.loading ? (
         <LoadingState label="Loading failed cases…" />
       ) : cases.error ? (
@@ -45,32 +85,12 @@ function ExpandedRunBody({ run }: { run: TestRun }) {
       ) : cases.data && cases.data.length > 0 ? (
         <ul className="space-y-2">
           {cases.data.map((c) => (
-            <li
+            <FailedCaseRow
               key={c.uuid}
-              className="rounded-md border border-wv-navy-3/40 px-4 py-3 bg-wv-navy/60"
-            >
-              <div className="flex items-center justify-between gap-3 mb-1.5">
-                <p className="font-mono text-[13px] text-wv-fog truncate">
-                  {c.name}
-                </p>
-                <span className="text-[11px] font-mono text-wv-fog-muted shrink-0">
-                  {c.test_suite}
-                </span>
-              </div>
-              {c.failure_type ? (
-                <p className="text-[12px] text-wv-danger font-mono mb-1">
-                  {c.failure_type}
-                </p>
-              ) : null}
-              {c.error_message ? (
-                <p className="text-[13px] text-wv-fog/90">{c.error_message}</p>
-              ) : null}
-              {c.stack_trace ? (
-                <pre className="mt-2 font-mono text-[11px] leading-relaxed text-wv-fog-muted whitespace-pre-wrap max-h-40 overflow-y-auto">
-                  {c.stack_trace}
-                </pre>
-              ) : null}
-            </li>
+              testCase={c}
+              siblings={siblings}
+              siblingCases={siblingCases.data ?? null}
+            />
           ))}
         </ul>
       ) : (
@@ -78,6 +98,158 @@ function ExpandedRunBody({ run }: { run: TestRun }) {
           No failed cases — every test in this run passed or was skipped.
         </p>
       )}
+    </div>
+  );
+}
+
+function AttemptStrip({
+  attempts,
+  currentUuid,
+}: {
+  attempts: TestRun[];
+  currentUuid: string;
+}) {
+  return (
+    <div
+      className="mb-3 flex items-center gap-2 text-[11px]"
+      data-testid="attempt-strip"
+    >
+      <span className="font-mono uppercase tracking-[0.18em] text-wv-fog-muted">
+        Attempts
+      </span>
+      {attempts.map((a) => {
+        const isCurrent = a.uuid === currentUuid;
+        const isFailure = a.status === "failure";
+        return (
+          <span
+            key={a.uuid}
+            data-testid={`attempt-chip-${a.workflow_run_attempt}`}
+            data-current={isCurrent || undefined}
+            className={[
+              "inline-flex items-center gap-1 px-2 py-0.5 rounded font-mono",
+              isCurrent
+                ? "border border-wv-green/50 bg-wv-green/10 text-wv-fog"
+                : "border border-wv-navy-3/50 bg-wv-navy/40 text-wv-fog-muted",
+            ].join(" ")}
+            title={`Attempt ${a.workflow_run_attempt} — ${a.status}`}
+          >
+            <span
+              aria-hidden="true"
+              className={[
+                "w-1.5 h-1.5 rounded-full",
+                isFailure ? "bg-wv-danger" : "bg-wv-green",
+              ].join(" ")}
+            />
+            #{a.workflow_run_attempt}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function FailedCaseRow({
+  testCase: c,
+  siblings,
+  siblingCases,
+}: {
+  testCase: TestCase;
+  siblings: TestRun[];
+  siblingCases: Map<string, Map<string, TestCaseStatus>> | null;
+}) {
+  const key = `${c.test_suite}|${c.name}`;
+  const recovered = siblingCases
+    ? siblings.some(
+        (s) => siblingCases.get(s.uuid)?.get(key) === "passed",
+      )
+    : false;
+  return (
+    <li
+      className="rounded-md border border-wv-navy-3/40 px-4 py-3 bg-wv-navy/60"
+      data-testid="failed-case-row"
+      data-flake-suspect={recovered || undefined}
+    >
+      <div className="flex items-center justify-between gap-3 mb-1.5">
+        <p className="font-mono text-[13px] text-wv-fog truncate">
+          {c.name}
+        </p>
+        <span className="text-[11px] font-mono text-wv-fog-muted shrink-0">
+          {c.test_suite}
+        </span>
+      </div>
+      {siblingCases && siblings.length > 0 ? (
+        <AttemptStatusChips
+          siblings={siblings}
+          siblingCases={siblingCases}
+          caseKey={key}
+        />
+      ) : null}
+      {c.failure_type ? (
+        <p className="text-[12px] text-wv-danger font-mono mb-1">
+          {c.failure_type}
+        </p>
+      ) : null}
+      {c.error_message ? (
+        <p className="text-[13px] text-wv-fog/90">{c.error_message}</p>
+      ) : null}
+      {c.stack_trace ? (
+        <pre className="mt-2 font-mono text-[11px] leading-relaxed text-wv-fog-muted whitespace-pre-wrap max-h-40 overflow-y-auto">
+          {c.stack_trace}
+        </pre>
+      ) : null}
+    </li>
+  );
+}
+
+function AttemptStatusChips({
+  siblings,
+  siblingCases,
+  caseKey,
+}: {
+  siblings: TestRun[];
+  siblingCases: Map<string, Map<string, TestCaseStatus>>;
+  caseKey: string;
+}) {
+  return (
+    <div
+      className="mb-2 flex items-center gap-1.5 text-[10px] font-mono"
+      data-testid="attempt-status-chips"
+    >
+      <span className="uppercase tracking-[0.16em] text-wv-fog-muted">
+        Other attempts:
+      </span>
+      {siblings.map((s) => {
+        const status = siblingCases.get(s.uuid)?.get(caseKey);
+        const tone =
+          status === "passed"
+            ? "border-wv-green/50 bg-wv-green/10 text-wv-green"
+            : status === "failed"
+              ? "border-wv-danger/40 bg-wv-danger/10 text-wv-danger"
+              : "border-wv-navy-3/50 bg-wv-navy/40 text-wv-fog-muted";
+        const label =
+          status === "passed"
+            ? `🟢 attempt #${s.workflow_run_attempt} passed`
+            : status === "failed"
+              ? `🔴 attempt #${s.workflow_run_attempt} failed`
+              : `· attempt #${s.workflow_run_attempt} no data`;
+        return (
+          <span
+            key={s.uuid}
+            data-testid={`attempt-status-${s.workflow_run_attempt}`}
+            data-attempt-status={status ?? "unknown"}
+            title={
+              status === "passed"
+                ? `Passed in attempt #${s.workflow_run_attempt} — flake suspect`
+                : status === "failed"
+                  ? `Also failed in attempt #${s.workflow_run_attempt}`
+                  : `Not present in attempt #${s.workflow_run_attempt}`
+            }
+            className={`inline-flex items-center px-1.5 py-0.5 rounded border ${tone}`}
+          >
+            {label}
+          </span>
+        );
+      })}
     </div>
   );
 }

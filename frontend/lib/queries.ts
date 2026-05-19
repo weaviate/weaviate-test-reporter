@@ -814,3 +814,60 @@ export async function fetchFlakyTests(
   );
   return out;
 }
+
+// ---------- retry attempts (F3) ----------
+
+/**
+ * Find every TestRun row that shares this run's
+ * `(repository, workflow_run_id, job_name)` triple. Useful for surfacing
+ * GitHub Actions re-runs: a test that failed in attempt 1 and passed in
+ * attempt 2 is a confirmed flake suspect.
+ *
+ * `job_name` participates in the TestRun UUID (per the matrix-collision
+ * fix in PR #2), so a single matrix cell's retries are the rows we want.
+ * Different matrix cells of the same workflow have their own retry
+ * lineages and are NOT siblings.
+ *
+ * Returned rows are sorted by `workflow_run_attempt` ascending so the
+ * UI's chip strip renders `[1] [2] [3]` in natural order.
+ */
+export async function fetchAttemptsForRun(
+  repository: string,
+  workflowRunId: string,
+  jobName: string,
+): Promise<TestRun[]> {
+  const where: WhereOperand = {
+    operator: "And",
+    operands: [
+      { path: ["repository"], operator: "Equal", valueText: repository },
+      {
+        path: ["workflow_run_id"],
+        operator: "Equal",
+        valueText: workflowRunId,
+      },
+      { path: ["job_name"], operator: "Equal", valueText: jobName },
+    ],
+  };
+  const query = /* GraphQL */ `
+    query AttemptsForRun($where: GetObjectsTestRunWhereInpObj!) {
+      Get {
+        ${COLLECTIONS.TEST_RUN}(
+          limit: 50
+          where: $where
+          sort: [{ path: ["workflow_run_attempt"], order: asc }]
+        ) {
+          run_id repository branch commit_hash trigger_type status
+          total_duration_ms timestamp workflow_run_id workflow_run_attempt
+          workflow_name job_name pr_number actor run_url
+          version_full version_minor
+          _additional { id }
+        }
+      }
+    }
+  `;
+  const data = await graphql<{ Get: Record<string, GraphQLTestRun[]> }>(
+    query,
+    { where },
+  );
+  return (data.Get[COLLECTIONS.TEST_RUN] ?? []).map(asTestRun);
+}
