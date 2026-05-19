@@ -105,14 +105,29 @@ export function AgentMessage({ msg }: { msg: StoredMessage }) {
           <SearchesDetail searches={msg.final.searches} />
         ) : null}
 
-        {msg.final?.usage ? (
-          <p className="mt-2 text-[11px] font-mono text-wv-fog-muted/80">
-            {msg.final.usage.remaining_plan_requests.toLocaleString()} agent
-            requests left this month · {Math.round(msg.final.total_time)}s
-          </p>
-        ) : null}
+        {msg.final ? <UsageFooter answer={msg.final} /> : null}
       </div>
     </article>
+  );
+}
+
+function UsageFooter({ answer }: { answer: AgentAnswer }) {
+  // The agent uses -1 (and sometimes other negatives) as a sentinel for
+  // "quota not tracked / unlimited / unknown". Only render the count
+  // when it's a real plan figure; timing info is always meaningful.
+  const remaining = answer.usage?.remaining_plan_requests;
+  const hasQuota = typeof remaining === "number" && remaining >= 0;
+  const seconds = Math.round(answer.total_time);
+  return (
+    <p className="mt-2 text-[11px] font-mono text-wv-fog-muted/80">
+      {hasQuota ? (
+        <>
+          {remaining.toLocaleString()} agent requests left this month
+          {" · "}
+        </>
+      ) : null}
+      {seconds}s
+    </p>
   );
 }
 
