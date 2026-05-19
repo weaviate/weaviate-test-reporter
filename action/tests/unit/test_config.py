@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from weaviate_test_reporter.config import Config, ConfigError
+from weaviate_test_reporter.config import Config, ConfigError, parse_version
 
 
 def _base_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -148,3 +148,67 @@ def test_verbose_flag(monkeypatch: pytest.MonkeyPatch):
     _base_env(monkeypatch)
     monkeypatch.setenv("VERBOSE", "true")
     assert Config.from_env().verbose is True
+
+
+# ---------- version_under_test + parse_version ----------
+
+
+def test_version_under_test_defaults_to_empty(monkeypatch: pytest.MonkeyPatch):
+    _base_env(monkeypatch)
+    monkeypatch.delenv("VERSION_UNDER_TEST", raising=False)
+    assert Config.from_env().version_under_test == ""
+
+
+def test_version_under_test_is_stored_raw(monkeypatch: pytest.MonkeyPatch):
+    """Validation deferred to ingest-time so the structlog warning lands
+    with a properly configured logger. Config just stores the raw value."""
+    _base_env(monkeypatch)
+    monkeypatch.setenv("VERSION_UNDER_TEST", "1.37.5")
+    assert Config.from_env().version_under_test == "1.37.5"
+
+
+def test_version_under_test_keeps_malformed_raw(monkeypatch: pytest.MonkeyPatch):
+    """Even malformed values are stored as-is; from_env never raises on
+    version handling (warn-and-skip semantics)."""
+    _base_env(monkeypatch)
+    monkeypatch.setenv("VERSION_UNDER_TEST", "latest_release")
+    cfg = Config.from_env()
+    assert cfg.version_under_test == "latest_release"
+    # The downstream parser is the one that surfaces (None, None) and
+    # the warning — covered in test_parse_version_* below.
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("1.37.5", ("1.37.5", "1.37")),
+        ("v1.37.5", ("1.37.5", "1.37")),
+        ("V1.37.5", ("1.37.5", "1.37")),
+        (" 1.37.5\n", ("1.37.5", "1.37")),
+        ("1.37.5-rc1", ("1.37.5-rc1", "1.37")),
+        ("1.37.5+build.42", ("1.37.5+build.42", "1.37")),
+        ("1.37.5-rc1+build.42", ("1.37.5-rc1+build.42", "1.37")),
+        ("0.0.1", ("0.0.1", "0.0")),
+        ("10.20.30", ("10.20.30", "10.20")),
+    ],
+)
+def test_parse_version_accepts_valid_semver(raw: str, expected: tuple[str, str]):
+    assert parse_version(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "",
+        "1.37",  # missing patch — not valid SemVer 2.0
+        "1",  # major only
+        "01.37.5",  # leading zero forbidden by spec
+        "latest_release",  # the literal GH-Actions placeholder
+        "v",  # only the optional prefix
+        "abc",
+        "1.37.5.6",  # 4 segments
+        "1.37.5-",  # trailing hyphen / empty prerelease
+    ],
+)
+def test_parse_version_returns_none_pair_on_invalid_input(raw: str):
+    assert parse_version(raw) == (None, None)

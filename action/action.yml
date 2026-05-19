@@ -44,6 +44,17 @@ inputs:
     description: If "true", emit verbose pip and runtime logs. Default false.
     required: false
     default: "false"
+  version_under_test:
+    description: |
+      Optional semver `MAJOR.MINOR.PATCH` of the artifact under test
+      (e.g. `1.37.5`, optionally with a `v` prefix or pre-release
+      / build-metadata suffix). When set, the action populates
+      `version_full` and `version_minor` on the `TestRun` so the
+      dashboard can aggregate per Weaviate version. Empty or non-semver
+      values are warned-and-skipped — the action never fails on this
+      input alone.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -105,6 +116,7 @@ runs:
         VECTORIZER: ${{ inputs.vectorizer }}
         MODEL2VEC_INFERENCE_URL: ${{ inputs.model2vec_inference_url }}
         VERBOSE: ${{ inputs.verbose }}
+        VERSION_UNDER_TEST: ${{ inputs.version_under_test }}
         # GitHub Actions context (auto-populated; never set by the caller).
         GH_REPOSITORY: ${{ github.repository }}
         GH_RUN_ID: ${{ github.run_id }}

@@ -58,9 +58,10 @@ def test_main_returns_zero_on_happy_path(monkeypatch: pytest.MonkeyPatch):
         rc = main()
 
     assert rc == 0
-    # ensure_test_run_collection + ensure_test_case_collection both called
-    # (idempotent — but they always check exists first)
-    assert fake_client.collections.exists.call_count == 2
+    # exists() is called four times: twice by ensure_*_collection
+    # (creation guard) and twice by ensure_*_properties (additive
+    # migration guard). See schema.py — both pairs are intentional.
+    assert fake_client.collections.exists.call_count == 4
     # TestRun insert called once; TestCase batch.stream() called once
     fake_client.collections.get.assert_any_call("TestRun")
     fake_client.collections.get.assert_any_call("TestCase")
@@ -98,8 +99,13 @@ def test_main_warns_and_exits_zero_on_no_xml_files(monkeypatch: pytest.MonkeyPat
     with patch("weaviate_test_reporter.__main__.connect_to_weaviate", return_value=fake_client):
         rc = main()
     assert rc == 0
-    # Should not have attempted to insert anything
-    fake_client.collections.get.assert_not_called()
+    # Should not have attempted to ingest anything. Schema setup +
+    # additive migration WILL touch the client (collections.get for
+    # the migration property scan), so we assert specifically on the
+    # ingest call sites instead of `get.assert_not_called()`.
+    fake_client.collections.get.return_value.data.insert.assert_not_called()
+    fake_client.collections.get.return_value.data.replace.assert_not_called()
+    fake_client.collections.get.return_value.batch.stream.assert_not_called()
 
 
 def test_main_returns_zero_on_weaviate_connect_failure_when_failsafe(
@@ -185,6 +191,7 @@ def _make_cfg(**overrides):
         vectorizer="text2vec-weaviate",
         model2vec_inference_url="",
         verbose=False,
+        version_under_test="",
     )
     defaults.update(overrides)
     return Config(**defaults)

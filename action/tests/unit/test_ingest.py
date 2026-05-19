@@ -58,6 +58,7 @@ def _cfg(**overrides) -> Config:
         "vectorizer": "text2vec-weaviate",
         "model2vec_inference_url": "",
         "verbose": False,
+        "version_under_test": "",
     }
     kwargs.update(overrides)
     return Config(**kwargs)
@@ -168,6 +169,55 @@ def test_aggregate_carries_github_metadata():
     assert props["repository"] == "weaviate/weaviate"
     assert props["workflow_run_attempt"] == 2
     assert props["pr_number"] is None
+
+
+def test_aggregate_populates_version_when_semver():
+    """A valid semver `version_under_test` lands on both version_full
+    and version_minor — and emits no warning."""
+    fake_logger = MagicMock()
+    with patch("weaviate_test_reporter.ingest.get_logger", return_value=fake_logger):
+        props = aggregate_run_properties([_case()], _meta(), _cfg(version_under_test="1.37.5"))
+    assert props["version_full"] == "1.37.5"
+    assert props["version_minor"] == "1.37"
+    fake_logger.warning.assert_not_called()
+
+
+def test_aggregate_populates_version_with_prerelease():
+    props = aggregate_run_properties([_case()], _meta(), _cfg(version_under_test="1.37.5-rc1"))
+    assert props["version_full"] == "1.37.5-rc1"
+    assert props["version_minor"] == "1.37"
+
+
+def test_aggregate_omits_version_keys_when_unset():
+    """Empty `version_under_test` -> neither key in the dict. Weaviate
+    accepts missing optional properties; keeps the contract clean for
+    non-version-aware callers."""
+    props = aggregate_run_properties([_case()], _meta(), _cfg(version_under_test=""))
+    assert "version_full" not in props
+    assert "version_minor" not in props
+
+
+def test_aggregate_warns_and_skips_on_malformed_version():
+    """Non-empty + non-semver -> structured warning logged, version
+    keys NOT populated, function does NOT raise. The colleague's
+    'latest_release' case lands here in particular.
+
+    We mock `get_logger` rather than relying on caplog because the
+    project uses structlog with `PrintLoggerFactory()`, which writes
+    to stdout — caplog only sees stdlib logging.
+    """
+    fake_logger = MagicMock()
+    with patch("weaviate_test_reporter.ingest.get_logger", return_value=fake_logger):
+        props = aggregate_run_properties(
+            [_case()], _meta(), _cfg(version_under_test="latest_release")
+        )
+    assert "version_full" not in props
+    assert "version_minor" not in props
+    fake_logger.warning.assert_called_once()
+    # Event name + the offending value should both be on the call.
+    call = fake_logger.warning.call_args
+    assert call.args == ("malformed_version_under_test",)
+    assert call.kwargs["value"] == "latest_release"
 
 
 def test_aggregate_timestamp_is_iso_utc():

@@ -40,6 +40,7 @@ Add this step to any GitHub Actions workflow that produces JUnit XML:
 | `vectorizer` | no | `"text2vec-weaviate"` | One of `text2vec-weaviate`, `text2vec-model2vec`, `none`. Only applied on first-time collection creation |
 | `model2vec_inference_url` | no | `""` | Required when `vectorizer = text2vec-model2vec`. URL from Weaviate's perspective (e.g., `http://model2vec:8080` in-cluster) |
 | `verbose` | no | `"false"` | If `true`, emit verbose pip + structlog DEBUG output |
+| `version_under_test` | no | `""` | Semver of the artifact under test (e.g. `1.37.5`, `v1.37.5`, `1.37.5-rc1`). When set, populates `version_full` and `version_minor` on the `TestRun` so the dashboard can aggregate per Weaviate version. Empty or non-semver values are warned-and-skipped — the action never fails on this input alone |
 
 GitHub Actions context (`repository`, `run_id`, `run_attempt`, `workflow`, `ref`, `sha`, `event_name`, `pull_request.number`, `actor`, `server_url`) is auto-populated as `GH_*` env vars by `action.yml`.
 

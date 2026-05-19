@@ -2,9 +2,9 @@
 
 Reads the user-controlled inputs the composite action.yml declares
 (WEAVIATE_URL, WEAVIATE_API_KEY, JUNIT_PATH, JOB_NAME, FAIL_ON_ERROR,
-VECTORIZER, MODEL2VEC_INFERENCE_URL, VERBOSE). GitHub-context vars (GH_*)
-live in github_meta — the split keeps the two failure modes
-addressable independently:
+VECTORIZER, MODEL2VEC_INFERENCE_URL, VERBOSE, VERSION_UNDER_TEST).
+GitHub-context vars (GH_*) live in github_meta — the split keeps the
+two failure modes addressable independently:
 
 - ConfigError -> user wired the action wrong (always exit non-zero).
 - GithubMetadataError -> the action context is malformed (always exit
@@ -17,7 +17,44 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+import semver
+
 VALID_VECTORIZERS: frozenset[str] = frozenset({"text2vec-weaviate", "text2vec-model2vec", "none"})
+
+
+def parse_version(raw: str) -> tuple[str | None, str | None]:
+    """Parse `version_under_test` into (full, minor) semver components.
+
+    Uses `python-semver` (SemVer 2.0) so pre-release tags, build
+    metadata, and leading-zero rejection all behave per spec — a regex
+    would miss enough real-world cases (e.g. `1.37.5-rc1`,
+    `1.37.5+build.42`) that the colleague-feedback feature would
+    silently drop them.
+
+    Tolerates an optional `v`/`V` prefix and surrounding whitespace.
+    Returns `(None, None)` for empty input OR anything not valid
+    SemVer 2.0 — the caller decides whether that's a warning or a
+    silent skip.
+
+    Examples:
+        "1.37.5"           -> ("1.37.5", "1.37")
+        "v1.37.5"          -> ("1.37.5", "1.37")
+        " 1.37.5\\n"        -> ("1.37.5", "1.37")
+        "1.37.5-rc1"       -> ("1.37.5-rc1", "1.37")
+        "1.37.5+build.42"  -> ("1.37.5+build.42", "1.37")
+        "1.37"             -> (None, None)   # missing patch
+        "01.37.5"          -> (None, None)   # leading zero (spec)
+        "latest_release"   -> (None, None)
+        ""                 -> (None, None)
+    """
+    if not raw:
+        return None, None
+    cleaned = raw.strip().lstrip("vV")
+    try:
+        v = semver.Version.parse(cleaned)
+    except (ValueError, TypeError):
+        return None, None
+    return str(v), f"{v.major}.{v.minor}"
 
 
 class ConfigError(ValueError):
@@ -55,6 +92,10 @@ class Config:
     vectorizer: str
     model2vec_inference_url: str
     verbose: bool
+    # Raw string from the action input. Parsed via `parse_version` at
+    # ingest time so the malformed-warning is emitted with a properly
+    # configured structlog logger. Empty when not set.
+    version_under_test: str
 
     @classmethod
     def from_env(cls) -> Config:
@@ -81,4 +122,5 @@ class Config:
             vectorizer=vectorizer,
             model2vec_inference_url=model2vec_url,
             verbose=_bool_optional("VERBOSE", default=False),
+            version_under_test=_str_optional("VERSION_UNDER_TEST"),
         )
