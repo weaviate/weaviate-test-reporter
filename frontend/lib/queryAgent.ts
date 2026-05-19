@@ -77,13 +77,24 @@ export type ChatMessage = {
  * A collection the agent can search. Bare string for collections with at
  * most one vector (e.g. `TestRun` has no vectors); the object form is
  * required when the collection has multiple named vectors and the agent
- * needs to be told which one to use — otherwise it 400s with
+ * needs to be told which one(s) to use — otherwise it 400s with
  * `WEAVIATE_NAMED_VECTOR_ERROR`. `TestCase` has three named vectors so
  * it MUST go through the object form.
+ *
+ * `target_vector` is an array — the documented TS SDK form is
+ * `targetVector: ["my_vector"]` (camelCase, plural-shaped) and that
+ * pluralizes to `target_vector: [...]` on the wire. The agent can
+ * target one or several named vectors per query.
+ *
+ * Future enhancement: the SDK also accepts `additionalFilters` here
+ * (built via `collection.filter.byProperty(...)`) to scope the
+ * agent's search — e.g. only consider runs from a specific version.
+ * Not wired into the chatbot yet, but the slot is on the agent
+ * server-side if we want to expose a version dropdown later.
  */
 export type AgentCollection =
   | string
-  | { name: string; target_vector?: string; view_properties?: string[] };
+  | { name: string; target_vector?: string[]; view_properties?: string[] };
 
 export type AskOptions = {
   /** Multi-turn history; the agent has no server-side memory, so the caller
@@ -104,7 +115,7 @@ export type AskOptions = {
  *  `queries.ts`. */
 const DEFAULT_COLLECTIONS: AgentCollection[] = [
   "TestRun",
-  { name: "TestCase", target_vector: "stack_trace" },
+  { name: "TestCase", target_vector: ["stack_trace"] },
 ];
 
 export class QueryAgentError extends Error {
