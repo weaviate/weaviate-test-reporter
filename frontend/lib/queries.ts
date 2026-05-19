@@ -637,3 +637,180 @@ export function isoDaysAgo(days: number): string {
   d.setUTCHours(0, 0, 0, 0);
   return d.toISOString();
 }
+
+// ---------- flakes ----------
+
+export type FlakesWindow = "7d" | "30d";
+
+/**
+ * Per-test flakiness over the time window. Pulls every passed/failed
+ * observation in the window, groups by `(suite, name)`, and counts
+ * adjacent status transitions ⇒ `flakiness_score = transitions /
+ * (runs - 1)`.
+ *
+ * Scaling strategy: Weaviate's `Aggregate.groupBy` accepts only one
+ * property path, so we can't group by `(suite, name)` server-side.
+ * Instead we paginate the raw rows in chunks of FLAKES_PAGE_SIZE
+ * (sorted deterministically) and stop once Weaviate returns a partial
+ * page (signaling end of data) OR once we've pulled the hard ceiling
+ * `FLAKES_MAX_ROWS`. The ceiling exists so a runaway query can't OOM
+ * the browser tab; if you genuinely have > 200k rows in a 30d window
+ * you should split the query by suite or add a version filter.
+ *
+ * An earlier two-phase attempt used `Aggregate(groupBy: name) {
+ * status { topOccurrences } }` to pre-filter candidates server-side.
+ * Weaviate's `topOccurrences` has an undocumented minimum-occurrences
+ * floor that silently drops small-occurrence statuses, so tests with
+ * just a few observations would disappear from the candidate list and
+ * the page would under-report flakes — sometimes with refresh-to-
+ * refresh jitter when active ingest pushed counts across the
+ * threshold. The simpler pagination approach is deterministic and
+ * correct at any reasonable scale.
+ */
+const FLAKES_PAGE_SIZE = 5000;
+const FLAKES_MAX_ROWS = 200_000;
+const FLAKES_RECENT_STATUSES = 20;
+// `__SEP__` cannot appear in a JUnit `name` / `classname` (those are
+// XML attribute values; NUL is invalid XML), so this is a guaranteed
+// collision-free delimiter. A space would NOT be safe — pytest
+// parametrize ids like `test_x[a, b]` legitimately contain them.
+const FLAKES_KEY_SEP = "__SEP__";
+
+export async function fetchFlakyTests(
+  window: FlakesWindow,
+  opts: { minRuns?: number } = {},
+): Promise<import("./types").FlakyTest[]> {
+  const days = window === "7d" ? 7 : 30;
+  const sinceIso = isoDaysAgo(days);
+  const sinceMs = String(Date.parse(sinceIso));
+  const minRuns = opts.minRuns ?? 3;
+
+  const windowFilter: WhereOperand = {
+    operator: "And",
+    operands: [
+      {
+        path: ["_creationTimeUnix"],
+        operator: "GreaterThanEqual",
+        valueText: sinceMs,
+      },
+      // Skipped cases don't contribute to flakiness signal; filter them
+      // out at the server so each page's budget is spent on pass/fail.
+      {
+        operator: "Or",
+        operands: [
+          { path: ["status"], operator: "Equal", valueText: "passed" },
+          { path: ["status"], operator: "Equal", valueText: "failed" },
+        ],
+      },
+    ],
+  };
+
+  // Page through the raw rows. Sort key (suite, name, time) is stable
+  // across pages, so concatenating pages preserves the contiguous-per-
+  // (suite, name) property the grouping loop below relies on.
+  type RawCase = {
+    name: string;
+    test_suite: string;
+    framework: string;
+    status: TestCaseStatus;
+    _additional: { id: string };
+  };
+  const rows: RawCase[] = [];
+  let offset = 0;
+  while (rows.length < FLAKES_MAX_ROWS) {
+    const remaining = FLAKES_MAX_ROWS - rows.length;
+    const pageSize = Math.min(FLAKES_PAGE_SIZE, remaining);
+    const query = /* GraphQL */ `
+      query FlakeRows($where: GetObjectsTestCaseWhereInpObj!) {
+        Get {
+          ${COLLECTIONS.TEST_CASE}(
+            limit: ${pageSize}
+            offset: ${offset}
+            where: $where
+            sort: [
+              { path: ["test_suite"], order: asc }
+              { path: ["name"], order: asc }
+              { path: ["_creationTimeUnix"], order: asc }
+            ]
+          ) {
+            name
+            test_suite
+            framework
+            status
+            _additional { id }
+          }
+        }
+      }
+    `;
+    const data = await graphql<{ Get: Record<string, RawCase[]> }>(query, {
+      where: windowFilter,
+    });
+    const page = data.Get[COLLECTIONS.TEST_CASE] ?? [];
+    rows.push(...page);
+    if (page.length < pageSize) break;
+    offset += page.length;
+  }
+
+  // Group by (suite, name). Rows arrive sorted by suite, name, time
+  // (preserved across page boundaries) — so per-test status sequences
+  // are in chronological order.
+  type Acc = {
+    test_suite: string;
+    name: string;
+    framework: string;
+    statuses: TestCaseStatus[];
+  };
+  const groups = new Map<string, Acc>();
+  for (const r of rows) {
+    const key = `${r.test_suite}${FLAKES_KEY_SEP}${r.name}`;
+    let acc = groups.get(key);
+    if (!acc) {
+      acc = {
+        test_suite: r.test_suite,
+        name: r.name,
+        framework: r.framework,
+        statuses: [],
+      };
+      groups.set(key, acc);
+    }
+    acc.statuses.push(r.status);
+  }
+
+  // Compute flakiness per group; filter out stable / under-observed.
+  const out: import("./types").FlakyTest[] = [];
+  for (const g of groups.values()) {
+    const total = g.statuses.length;
+    if (total < minRuns) continue;
+    let transitions = 0;
+    let passed = 0;
+    let failed = 0;
+    for (let i = 0; i < g.statuses.length; i++) {
+      if (g.statuses[i] === "passed") passed++;
+      if (g.statuses[i] === "failed") failed++;
+      if (i > 0 && g.statuses[i] !== g.statuses[i - 1]) transitions++;
+    }
+    // A test with all-passed or all-failed has zero transitions =>
+    // flakiness 0. Drop it from the list (uninteresting).
+    if (transitions === 0) continue;
+    const flakiness_score = transitions / Math.max(1, total - 1);
+    out.push({
+      test_suite: g.test_suite,
+      name: g.name,
+      framework: g.framework,
+      total_runs: total,
+      passed,
+      failed,
+      transitions,
+      flakiness_score,
+      recent_statuses: g.statuses.slice(-FLAKES_RECENT_STATUSES),
+    });
+  }
+
+  // Default sort: flakiest first, ties broken by total_runs (more
+  // observations = more confidence).
+  out.sort(
+    (a, b) =>
+      b.flakiness_score - a.flakiness_score || b.total_runs - a.total_runs,
+  );
+  return out;
+}
