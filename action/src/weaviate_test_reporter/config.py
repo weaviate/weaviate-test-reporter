@@ -22,39 +22,50 @@ import semver
 VALID_VECTORIZERS: frozenset[str] = frozenset({"text2vec-weaviate", "text2vec-model2vec", "none"})
 
 
-def parse_version(raw: str) -> tuple[str | None, str | None]:
-    """Parse `version_under_test` into (full, minor) semver components.
+def parse_version(raw: str) -> tuple[str | None, str | None, str | None]:
+    """Parse `version_under_test` into `(full, patch, minor)` slots.
+
+    `full`  — canonical SemVer 2.0 string including any pre-release /
+              build metadata. The build-unique identifier ("did we
+              already test this exact build?").
+    `patch` — canonical release form, `MAJOR.MINOR.PATCH`, with the
+              pre-release suffix dropped. The dashboard's per-release
+              rollup key.
+    `minor` — `MAJOR.MINOR`. The primary grouping key on the Versions
+              page.
 
     Uses `python-semver` (SemVer 2.0) so pre-release tags, build
-    metadata, and leading-zero rejection all behave per spec — a regex
-    would miss enough real-world cases (e.g. `1.37.5-rc1`,
-    `1.37.5+build.42`) that the colleague-feedback feature would
-    silently drop them.
-
+    metadata, and leading-zero rejection all behave per spec.
     Tolerates an optional `v`/`V` prefix and surrounding whitespace.
-    Returns `(None, None)` for empty input OR anything not valid
+
+    Returns `(None, None, None)` for empty input OR anything not valid
     SemVer 2.0 — the caller decides whether that's a warning or a
-    silent skip.
+    hard error.
 
     Examples:
-        "1.37.5"           -> ("1.37.5", "1.37")
-        "v1.37.5"          -> ("1.37.5", "1.37")
-        " 1.37.5\\n"        -> ("1.37.5", "1.37")
-        "1.37.5-rc1"       -> ("1.37.5-rc1", "1.37")
-        "1.37.5+build.42"  -> ("1.37.5+build.42", "1.37")
-        "1.37"             -> (None, None)   # missing patch
-        "01.37.5"          -> (None, None)   # leading zero (spec)
-        "latest_release"   -> (None, None)
-        ""                 -> (None, None)
+        "1.38.1-rfea1de"   -> ("1.38.1-rfea1de", "1.38.1", "1.38")
+        "1.37.5"           -> ("1.37.5",         "1.37.5", "1.37")
+        "v1.37.5"          -> ("1.37.5",         "1.37.5", "1.37")
+        " 1.37.5\\n"        -> ("1.37.5",         "1.37.5", "1.37")
+        "1.37.5-rc1"       -> ("1.37.5-rc1",     "1.37.5", "1.37")
+        "1.37.5+build.42"  -> ("1.37.5+build.42", "1.37.5", "1.37")
+        "1.37"             -> (None, None, None)   # missing patch
+        "01.37.5"          -> (None, None, None)   # leading zero (spec)
+        "latest_release"   -> (None, None, None)
+        ""                 -> (None, None, None)
     """
     if not raw:
-        return None, None
+        return None, None, None
     cleaned = raw.strip().lstrip("vV")
     try:
         v = semver.Version.parse(cleaned)
     except (ValueError, TypeError):
-        return None, None
-    return str(v), f"{v.major}.{v.minor}"
+        return None, None, None
+    return (
+        str(v),
+        f"{v.major}.{v.minor}.{v.patch}",
+        f"{v.major}.{v.minor}",
+    )
 
 
 class ConfigError(ValueError):
@@ -113,6 +124,26 @@ class Config:
                 "(e.g., http://model2vec-inference:8080 reachable from Weaviate)"
             )
 
+        # Strict parse at startup. Empty is OK (non-version-aware
+        # callers still work); non-empty MUST be valid SemVer 2.0 —
+        # `parse_version` returning all-None signals failure. We raise
+        # rather than warn-and-skip because the original tolerant
+        # behaviour silently swallowed misconfigured CI runs (e.g. a
+        # branch name accidentally fed in place of a version) and
+        # produced version-less TestRuns that the dashboard couldn't
+        # group. Hard-fail surfaces the mistake immediately.
+        version_under_test = _str_optional("VERSION_UNDER_TEST")
+        if version_under_test:
+            full, _patch, _minor = parse_version(version_under_test)
+            if full is None:
+                raise ConfigError(
+                    f"VERSION_UNDER_TEST={version_under_test!r} is not valid "
+                    "SemVer 2.0. Expected a `MAJOR.MINOR.PATCH` string with "
+                    "optional pre-release / build metadata, e.g. `1.38.1` or "
+                    "`1.38.1-rfea1de`. Got something the SemVer 2.0 grammar "
+                    "rejects (an arbitrary branch / image tag is NOT valid)."
+                )
+
         return cls(
             weaviate_url=_str_required("WEAVIATE_URL"),
             weaviate_api_key=_str_optional("WEAVIATE_API_KEY"),
@@ -122,5 +153,5 @@ class Config:
             vectorizer=vectorizer,
             model2vec_inference_url=model2vec_url,
             verbose=_bool_optional("VERBOSE", default=False),
-            version_under_test=_str_optional("VERSION_UNDER_TEST"),
+            version_under_test=version_under_test,
         )

@@ -40,7 +40,7 @@ Add this step to any GitHub Actions workflow that produces JUnit XML:
 | `vectorizer` | no | `"text2vec-weaviate"` | One of `text2vec-weaviate`, `text2vec-model2vec`, `none`. Only applied on first-time collection creation |
 | `model2vec_inference_url` | no | `""` | Required when `vectorizer = text2vec-model2vec`. URL from Weaviate's perspective (e.g., `http://model2vec:8080` in-cluster) |
 | `verbose` | no | `"false"` | If `true`, emit verbose pip + structlog DEBUG output |
-| `version_under_test` | no | `""` | Semver of the artifact under test (e.g. `1.37.5`, `v1.37.5`, `1.37.5-rc1`). When set, populates `version_full` and `version_minor` on the `TestRun` so the dashboard can aggregate per Weaviate version. Empty or non-semver values are warned-and-skipped — the action never fails on this input alone |
+| `version_under_test` | no | `""` | SemVer 2.0 string identifying the artifact under test (e.g. `1.38.1-rfea1de`, `1.36.14-3b58915`, `1.38.0-dev-9479337`, plain `1.37.5`). Accepts an optional `v`/`V` prefix. Populates THREE derived properties on `TestRun`: `version_full` (verbatim build-unique identifier for dedup), `version_patch` (canonical `MAJOR.MINOR.PATCH`, pre-release dropped), `version_minor` (`MAJOR.MINOR`). **A non-empty value MUST be valid SemVer 2.0** — anything else (branch name, `latest_release` placeholder) causes the action to exit non-zero at startup |
 
 GitHub Actions context (`repository`, `run_id`, `run_attempt`, `workflow`, `ref`, `sha`, `event_name`, `pull_request.number`, `actor`, `server_url`) is auto-populated as `GH_*` env vars by `action.yml`.
 

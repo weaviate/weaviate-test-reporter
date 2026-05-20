@@ -160,39 +160,58 @@ def test_version_under_test_defaults_to_empty(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_version_under_test_is_stored_raw(monkeypatch: pytest.MonkeyPatch):
-    """Validation deferred to ingest-time so the structlog warning lands
-    with a properly configured logger. Config just stores the raw value."""
+    """A valid SemVer `VERSION_UNDER_TEST` is stored as-is on the
+    Config; the three derived slots are computed at ingest time via
+    `parse_version`."""
     _base_env(monkeypatch)
-    monkeypatch.setenv("VERSION_UNDER_TEST", "1.37.5")
-    assert Config.from_env().version_under_test == "1.37.5"
+    monkeypatch.setenv("VERSION_UNDER_TEST", "1.38.1-rfea1de")
+    assert Config.from_env().version_under_test == "1.38.1-rfea1de"
 
 
-def test_version_under_test_keeps_malformed_raw(monkeypatch: pytest.MonkeyPatch):
-    """Even malformed values are stored as-is; from_env never raises on
-    version handling (warn-and-skip semantics)."""
+def test_version_under_test_raises_on_malformed(monkeypatch: pytest.MonkeyPatch):
+    """Non-empty + non-SemVer fails fast at config-load. The action's
+    `__main__` catches ConfigError and exits non-zero unconditionally,
+    so the caller's CI job goes red — exactly the behaviour we want
+    when someone passes a branch name or arbitrary tag by mistake."""
+    _base_env(monkeypatch)
+    monkeypatch.setenv("VERSION_UNDER_TEST", "preview-correct-raft-replication-531de22")
+    with pytest.raises(ConfigError) as exc:
+        Config.from_env()
+    assert "VERSION_UNDER_TEST" in str(exc.value)
+    assert "SemVer" in str(exc.value)
+
+
+def test_version_under_test_raises_on_latest_release_placeholder(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The GitHub-Actions `latest_release` placeholder is a common
+    mistake (caller forgot to resolve it upstream). Hard-fail with a
+    clear message so it surfaces immediately."""
     _base_env(monkeypatch)
     monkeypatch.setenv("VERSION_UNDER_TEST", "latest_release")
-    cfg = Config.from_env()
-    assert cfg.version_under_test == "latest_release"
-    # The downstream parser is the one that surfaces (None, None) and
-    # the warning — covered in test_parse_version_* below.
+    with pytest.raises(ConfigError) as exc:
+        Config.from_env()
+    assert "latest_release" in str(exc.value)
 
 
 @pytest.mark.parametrize(
     "raw,expected",
     [
-        ("1.37.5", ("1.37.5", "1.37")),
-        ("v1.37.5", ("1.37.5", "1.37")),
-        ("V1.37.5", ("1.37.5", "1.37")),
-        (" 1.37.5\n", ("1.37.5", "1.37")),
-        ("1.37.5-rc1", ("1.37.5-rc1", "1.37")),
-        ("1.37.5+build.42", ("1.37.5+build.42", "1.37")),
-        ("1.37.5-rc1+build.42", ("1.37.5-rc1+build.42", "1.37")),
-        ("0.0.1", ("0.0.1", "0.0")),
-        ("10.20.30", ("10.20.30", "10.20")),
+        ("1.38.1-rfea1de", ("1.38.1-rfea1de", "1.38.1", "1.38")),
+        ("1.36.14-3b58915", ("1.36.14-3b58915", "1.36.14", "1.36")),
+        ("1.38.0-dev-9479337", ("1.38.0-dev-9479337", "1.38.0", "1.38")),
+        ("1.37.5", ("1.37.5", "1.37.5", "1.37")),
+        ("v1.37.5", ("1.37.5", "1.37.5", "1.37")),
+        ("V1.37.5", ("1.37.5", "1.37.5", "1.37")),
+        (" 1.37.5\n", ("1.37.5", "1.37.5", "1.37")),
+        ("1.37.5-rc1", ("1.37.5-rc1", "1.37.5", "1.37")),
+        ("1.37.5+build.42", ("1.37.5+build.42", "1.37.5", "1.37")),
+        ("1.37.5-rc1+build.42", ("1.37.5-rc1+build.42", "1.37.5", "1.37")),
+        ("0.0.1", ("0.0.1", "0.0.1", "0.0")),
+        ("10.20.30", ("10.20.30", "10.20.30", "10.20")),
     ],
 )
-def test_parse_version_accepts_valid_semver(raw: str, expected: tuple[str, str]):
+def test_parse_version_accepts_valid_semver(raw: str, expected: tuple[str, str, str]):
     assert parse_version(raw) == expected
 
 
@@ -208,7 +227,8 @@ def test_parse_version_accepts_valid_semver(raw: str, expected: tuple[str, str])
         "abc",
         "1.37.5.6",  # 4 segments
         "1.37.5-",  # trailing hyphen / empty prerelease
+        "preview-correct-raft-replication-531de22",  # branch name
     ],
 )
-def test_parse_version_returns_none_pair_on_invalid_input(raw: str):
-    assert parse_version(raw) == (None, None)
+def test_parse_version_returns_none_triple_on_invalid_input(raw: str):
+    assert parse_version(raw) == (None, None, None)

@@ -130,6 +130,7 @@ type GraphQLTestRun = {
   actor: string;
   run_url: string;
   version_full: string | null;
+  version_patch: string | null;
   version_minor: string | null;
   _additional: { id: string };
 };
@@ -169,6 +170,7 @@ function asTestRun(r: GraphQLTestRun): TestRun {
     actor: r.actor ?? "",
     run_url: r.run_url ?? "",
     version_full: r.version_full ?? null,
+    version_patch: r.version_patch ?? null,
     version_minor: r.version_minor ?? null,
   };
 }
@@ -217,7 +219,7 @@ export async function fetchRecentRuns(
               run_id repository branch commit_hash trigger_type status
               total_duration_ms timestamp workflow_run_id workflow_run_attempt
               workflow_name job_name pr_number actor run_url
-              version_full version_minor
+              version_full version_patch version_minor
               _additional { id }
             }
           }
@@ -233,7 +235,7 @@ export async function fetchRecentRuns(
               run_id repository branch commit_hash trigger_type status
               total_duration_ms timestamp workflow_run_id workflow_run_attempt
               workflow_name job_name pr_number actor run_url
-              version_full version_minor
+              version_full version_patch version_minor
               _additional { id }
             }
           }
@@ -303,8 +305,16 @@ export async function fetchDistinctRunValues(
  *
  * Query shape: one TestRun groupBy(version_minor) for the universe of
  * minors, then per-minor a single GraphQL call with two aliased
- * Aggregate selections (status + version_full groupBys). This mirrors
+ * Aggregate selections (status + version_patch groupBys). This mirrors
  * the pattern that already works in `fetchDashboardKpis`.
+ *
+ * Why version_patch (not version_full) for the per-card list: with
+ * build-hash-bearing inputs like `1.38.0-dev-9479337`, `version_full`
+ * fragments into one row per build — noisy in the UI. `version_patch`
+ * collapses prereleases ("dev-9479337") back to the canonical release
+ * form ("1.38.0"), giving the user a clean "what patches did we test
+ * on this minor?" view. The build-unique form is still available on
+ * the underlying TestRun for dedup queries.
  */
 export async function fetchVersionRollup(): Promise<
   import("./types").VersionRollup[]
@@ -341,7 +351,7 @@ export async function fetchVersionRollup(): Promise<
     .map((g) => ({ minor: g.groupedBy.value, runs: g.meta.count }))
     .filter((g): g is { minor: string; runs: number } => Boolean(g.minor));
 
-  // 2. Per-minor: status pass-rate + distinct full versions, in ONE
+  // 2. Per-minor: status pass-rate + distinct release patches, in ONE
   // GraphQL call (two aliased Aggregate selections — same pattern that
   // `fetchDashboardKpis` uses successfully in CI).
   const rollups: import("./types").VersionRollup[] = await Promise.all(
@@ -354,8 +364,8 @@ export async function fetchVersionRollup(): Promise<
               groupedBy { value }
             }
           }
-          byFull: Aggregate {
-            ${COLLECTIONS.TEST_RUN}(where: $where, groupBy: ["version_full"]) {
+          byPatch: Aggregate {
+            ${COLLECTIONS.TEST_RUN}(where: $where, groupBy: ["version_patch"]) {
               meta { count }
               groupedBy { value }
             }
@@ -369,7 +379,7 @@ export async function fetchVersionRollup(): Promise<
       };
       const detailData = await graphql<GroupResp>(detailQuery, { where });
 
-      const fulls = (detailData.byFull[COLLECTIONS.TEST_RUN] ?? [])
+      const patches = (detailData.byPatch[COLLECTIONS.TEST_RUN] ?? [])
         .map((g) => g.groupedBy.value)
         .filter((v): v is string => Boolean(v))
         .sort()
@@ -381,7 +391,7 @@ export async function fetchVersionRollup(): Promise<
       }
       const passRate = runs > 0 ? passingRuns / runs : null;
 
-      return { minor, fulls, runs, passingRuns, passRate };
+      return { minor, patches, runs, passingRuns, passRate };
     }),
   );
 

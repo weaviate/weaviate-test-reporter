@@ -81,10 +81,10 @@ function formatPct(rate: number | null): string {
   return `${(rate * 100).toFixed(1)}%`;
 }
 
-function summarizeFulls(fulls: string[]): string {
-  if (fulls.length === 0) return "—";
-  if (fulls.length <= 3) return fulls.join(", ");
-  return `${fulls.slice(0, 3).join(", ")} · +${fulls.length - 3} more`;
+function summarizePatches(patches: string[]): string {
+  if (patches.length === 0) return "—";
+  if (patches.length <= 3) return patches.join(", ");
+  return `${patches.slice(0, 3).join(", ")} · +${patches.length - 3} more`;
 }
 
 function VersionCard({
@@ -155,9 +155,9 @@ function VersionCard({
         <dt>Patches</dt>
         <dd
           className="text-right text-wv-fog tabular-nums"
-          title={version.fulls.join("\n")}
+          title={version.patches.join("\n")}
         >
-          {version.fulls.length}
+          {version.patches.length}
         </dd>
       </dl>
       <p className="mt-3 text-[11px] text-wv-fog-muted leading-relaxed font-mono break-words">
@@ -166,7 +166,7 @@ function VersionCard({
           strokeWidth={1.6}
           className="inline-block -mt-0.5 mr-1 text-wv-fog-muted"
         />
-        {summarizeFulls(version.fulls)}
+        {summarizePatches(version.patches)}
       </p>
     </Link>
   );

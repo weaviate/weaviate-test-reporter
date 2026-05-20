@@ -32,7 +32,6 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt
 from weaviate.exceptions import WeaviateConnectionError
 
 from .config import Config, parse_version
-from .logging import get_logger
 from .parser import ParsedCase
 from .schema import TEST_CASE, TEST_RUN
 
@@ -96,18 +95,12 @@ def aggregate_run_properties(
         f"{workflow}/{cfg.job_name}#{meta['workflow_run_id']}" f".{meta['workflow_run_attempt']}"
     )
 
-    # Optional artifact version: parsed once here. If the caller fed a
-    # non-empty value that's not valid SemVer 2.0, emit one structured
-    # warning so the misconfiguration is visible in CI logs — but
-    # never raise. Non-version-aware callers stay supported.
-    version_full, version_minor = parse_version(cfg.version_under_test)
-    if cfg.version_under_test and version_full is None:
-        get_logger().warning(
-            "malformed_version_under_test",
-            value=cfg.version_under_test,
-            hint="must be SemVer 2.0 (e.g. 1.37.5, 1.37.5-rc1); "
-            "skipping version_full/version_minor population",
-        )
+    # Optional artifact version. `Config.from_env` already raised if a
+    # non-empty `version_under_test` failed to parse, so by the time we
+    # land here either (a) the input was empty (all-None) or (b) all
+    # three slots are populated. No warn path; the misconfiguration
+    # case fails fast at config-load.
+    version_full, version_patch, version_minor = parse_version(cfg.version_under_test)
 
     properties: dict[str, Any] = {
         "run_id": run_id_friendly,
@@ -132,6 +125,7 @@ def aggregate_run_properties(
     # from rows where the caller deliberately omitted the input.
     if version_full is not None:
         properties["version_full"] = version_full
+        properties["version_patch"] = version_patch
         properties["version_minor"] = version_minor
     return properties
 
