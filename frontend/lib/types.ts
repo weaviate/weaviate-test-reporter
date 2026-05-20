@@ -26,10 +26,21 @@ export type TestRun = {
   pr_number: number | null;
   actor: string;
   run_url: string;
-  // Version of the artifact under test (e.g. Weaviate). Null when the
-  // action was invoked without `version_under_test` or when the value
-  // failed semver validation. See `.project/02-weaviate-schema.md` §1.
+  // Three version slots, all derived from a single `version_under_test`
+  // action input via SemVer 2.0 parsing. All three are null when the
+  // action was invoked without `version_under_test` — a non-empty
+  // invalid value now causes the action to fail at config-load, so
+  // these properties are either all populated or all null.
+  // See `.project/02-weaviate-schema.md` §1 for the property contract.
+  //
+  // version_full  — verbatim build-unique identifier (e.g.
+  //                 `1.38.1-rfea1de`). Primary key for dedup queries.
+  // version_patch — canonical `MAJOR.MINOR.PATCH` with pre-release
+  //                 dropped (e.g. `1.38.1`). Per-release grouping.
+  // version_minor — `MAJOR.MINOR` lineage (e.g. `1.38`). The
+  //                 dashboard's primary grouping key on /versions.
   version_full: string | null;
+  version_patch: string | null;
   version_minor: string | null;
 };
 
@@ -37,8 +48,14 @@ export type TestRun = {
 export type VersionRollup = {
   /** e.g. "1.37" */
   minor: string;
-  /** Distinct full versions seen for this minor (e.g. ["1.37.5", "1.37.4"]). */
-  fulls: string[];
+  /** Distinct canonical release versions seen for this minor — drawn
+   *  from `version_patch`, NOT `version_full`. Pre-release / build-hash
+   *  suffixes are folded back to the canonical release, so e.g.
+   *  `1.38.0-dev-9479337` and `1.38.0-dev-aaaaaaa` both surface here
+   *  as `1.38.0` (giving the user a clean "what patches did we test
+   *  on this minor" view). The build-unique form is still available
+   *  on the underlying TestRun for dedup queries. */
+  patches: string[];
   /** TestRuns landed for this minor. */
   runs: number;
   /** TestRuns where status == "success". */

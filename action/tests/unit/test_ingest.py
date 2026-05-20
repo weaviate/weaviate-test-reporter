@@ -171,53 +171,44 @@ def test_aggregate_carries_github_metadata():
     assert props["pr_number"] is None
 
 
-def test_aggregate_populates_version_when_semver():
-    """A valid semver `version_under_test` lands on both version_full
-    and version_minor — and emits no warning."""
-    fake_logger = MagicMock()
-    with patch("weaviate_test_reporter.ingest.get_logger", return_value=fake_logger):
-        props = aggregate_run_properties([_case()], _meta(), _cfg(version_under_test="1.37.5"))
+def test_aggregate_populates_three_version_slots_from_semver():
+    """A valid semver `version_under_test` lands on all three
+    derived slots: version_full (full build identifier), version_patch
+    (canonical MAJOR.MINOR.PATCH), version_minor (MAJOR.MINOR)."""
+    props = aggregate_run_properties([_case()], _meta(), _cfg(version_under_test="1.38.1-rfea1de"))
+    assert props["version_full"] == "1.38.1-rfea1de"
+    assert props["version_patch"] == "1.38.1"
+    assert props["version_minor"] == "1.38"
+
+
+def test_aggregate_populates_three_version_slots_plain_release():
+    """A plain release like `1.37.5` — version_patch equals version_full
+    (no prerelease to drop)."""
+    props = aggregate_run_properties([_case()], _meta(), _cfg(version_under_test="1.37.5"))
     assert props["version_full"] == "1.37.5"
-    assert props["version_minor"] == "1.37"
-    fake_logger.warning.assert_not_called()
-
-
-def test_aggregate_populates_version_with_prerelease():
-    props = aggregate_run_properties([_case()], _meta(), _cfg(version_under_test="1.37.5-rc1"))
-    assert props["version_full"] == "1.37.5-rc1"
+    assert props["version_patch"] == "1.37.5"
     assert props["version_minor"] == "1.37"
 
 
-def test_aggregate_omits_version_keys_when_unset():
-    """Empty `version_under_test` -> neither key in the dict. Weaviate
-    accepts missing optional properties; keeps the contract clean for
-    non-version-aware callers."""
+def test_aggregate_populates_with_dev_marker_and_hash():
+    """`1.38.0-dev-9479337` — semver treats `dev-9479337` as a
+    pre-release; version_patch drops the whole suffix to `1.38.0`."""
+    props = aggregate_run_properties(
+        [_case()], _meta(), _cfg(version_under_test="1.38.0-dev-9479337")
+    )
+    assert props["version_full"] == "1.38.0-dev-9479337"
+    assert props["version_patch"] == "1.38.0"
+    assert props["version_minor"] == "1.38"
+
+
+def test_aggregate_omits_all_version_keys_when_unset():
+    """Empty `version_under_test` -> none of the three keys in the dict.
+    Weaviate accepts missing optional properties; non-version-aware
+    callers keep working unchanged."""
     props = aggregate_run_properties([_case()], _meta(), _cfg(version_under_test=""))
     assert "version_full" not in props
+    assert "version_patch" not in props
     assert "version_minor" not in props
-
-
-def test_aggregate_warns_and_skips_on_malformed_version():
-    """Non-empty + non-semver -> structured warning logged, version
-    keys NOT populated, function does NOT raise. The colleague's
-    'latest_release' case lands here in particular.
-
-    We mock `get_logger` rather than relying on caplog because the
-    project uses structlog with `PrintLoggerFactory()`, which writes
-    to stdout — caplog only sees stdlib logging.
-    """
-    fake_logger = MagicMock()
-    with patch("weaviate_test_reporter.ingest.get_logger", return_value=fake_logger):
-        props = aggregate_run_properties(
-            [_case()], _meta(), _cfg(version_under_test="latest_release")
-        )
-    assert "version_full" not in props
-    assert "version_minor" not in props
-    fake_logger.warning.assert_called_once()
-    # Event name + the offending value should both be on the call.
-    call = fake_logger.warning.call_args
-    assert call.args == ("malformed_version_under_test",)
-    assert call.kwargs["value"] == "latest_release"
 
 
 def test_aggregate_timestamp_is_iso_utc():

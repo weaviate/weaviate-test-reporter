@@ -207,73 +207,112 @@ def test_different_job_names_in_same_run_produce_separate_test_runs(weaviate_cli
 
 
 def test_version_under_test_lands_on_test_run(weaviate_client):
-    """A valid semver `version_under_test` is split into version_full
-    (canonical semver) and version_minor ("MAJOR.MINOR"), both
-    populated on the TestRun."""
+    """A valid semver `version_under_test` is split into three slots:
+    version_full (build-unique), version_patch (canonical release),
+    version_minor (MAJOR.MINOR). The headline build-identifier case."""
     run_uuid, _, _, _ = _ingest_pipeline(
-        weaviate_client, _meta(), _cfg(version_under_test="1.37.5")
+        weaviate_client, _meta(), _cfg(version_under_test="1.38.1-rfea1de")
+    )
+    run = weaviate_client.collections.get(TEST_RUN).query.fetch_object_by_id(run_uuid)
+    assert run is not None
+    assert run.properties["version_full"] == "1.38.1-rfea1de"
+    assert run.properties["version_patch"] == "1.38.1"
+    assert run.properties["version_minor"] == "1.38"
+
+
+def test_version_under_test_plain_release_collapses_full_and_patch(weaviate_client):
+    """A plain release like `1.37.5` — version_patch equals
+    version_full because there's no prerelease to drop."""
+    run_uuid, _, _, _ = _ingest_pipeline(
+        weaviate_client, _meta(workflow_run_id="800"), _cfg(version_under_test="1.37.5")
     )
     run = weaviate_client.collections.get(TEST_RUN).query.fetch_object_by_id(run_uuid)
     assert run is not None
     assert run.properties["version_full"] == "1.37.5"
+    assert run.properties["version_patch"] == "1.37.5"
     assert run.properties["version_minor"] == "1.37"
 
 
 def test_version_under_test_omitted_when_not_provided(weaviate_client):
-    """No `version_under_test` -> version_full/version_minor stay null
-    on the TestRun. Confirms non-version-aware callers keep working."""
+    """No `version_under_test` -> none of the three slots populated.
+    Confirms non-version-aware callers keep working."""
     run_uuid, _, _, _ = _ingest_pipeline(weaviate_client, _meta(), _cfg())
     run = weaviate_client.collections.get(TEST_RUN).query.fetch_object_by_id(run_uuid)
     assert run is not None
     assert run.properties.get("version_full") is None
+    assert run.properties.get("version_patch") is None
     assert run.properties.get("version_minor") is None
 
 
-def test_additive_migration_adds_missing_version_properties(weaviate_client):
-    """Simulates the live-migration path: existing TestRun collection
-    that pre-dates `version_full` / `version_minor`. Calling
-    `ensure_test_run_properties` must add them via `add_property` and
-    leave existing rows unaffected (read back as null).
+def test_version_full_supports_build_dedup_query(weaviate_client):
+    """Primary dedup use case: filter `TestRun` by `version_full` to
+    answer "did we already report this build?". Two builds that share
+    a `version_patch` / `version_minor` must surface separately."""
+    from weaviate.classes.query import Filter
 
-    Trick: we'd need to recreate the collection without those props to
-    truly exercise add_property. Instead we delete the collection,
-    monkey-patch the spec to exclude the new properties, run
-    ensure_test_run_collection, restore the spec, then call
-    ensure_test_run_properties — that mirrors the real migration order.
+    _ingest_pipeline(
+        weaviate_client,
+        _meta(workflow_run_id="900"),
+        _cfg(version_under_test="1.38.0-dev-9479337"),
+    )
+    _ingest_pipeline(
+        weaviate_client,
+        _meta(workflow_run_id="901"),
+        _cfg(version_under_test="1.38.0-dev-aaaaaaa"),
+    )
+
+    hits = weaviate_client.collections.get(TEST_RUN).query.fetch_objects(
+        filters=Filter.by_property("version_full").equal("1.38.0-dev-9479337"),
+        limit=10,
+    )
+    assert len(hits.objects) == 1
+    assert hits.objects[0].properties["version_full"] == "1.38.0-dev-9479337"
+    # Both share the same minor / patch — confirms dedup needs the
+    # full slot, not the more-aggregated ones.
+    assert hits.objects[0].properties["version_minor"] == "1.38"
+    assert hits.objects[0].properties["version_patch"] == "1.38.0"
+
+
+def test_additive_migration_adds_missing_version_properties(weaviate_client):
+    """Simulates the live-migration path: an existing TestRun
+    collection that pre-dates the version-* property family. Calling
+    `ensure_test_run_properties` must add all three via `add_property`
+    and leave existing rows unaffected (read back as null).
+
+    We delete the collection, monkey-patch the spec to exclude the
+    version-* properties, run `ensure_test_run_collection`, restore
+    the spec, then call `ensure_test_run_properties` — that mirrors
+    the real migration order.
     """
     from weaviate_test_reporter import schema as schema_mod
 
-    # Snapshot + strip the version entries from the spec.
+    version_props = {"version_full", "version_patch", "version_minor"}
     original_spec = list(schema_mod._TEST_RUN_PROPERTY_SPEC)
-    pre_migration_spec = [s for s in original_spec if s[0] not in {"version_full", "version_minor"}]
+    pre_migration_spec = [s for s in original_spec if s[0] not in version_props]
 
-    # Force a clean rebuild — the fixture's collection already includes
-    # the new properties, so drop it and recreate via the stripped spec.
     weaviate_client.collections.delete(TEST_RUN)
     try:
         schema_mod._TEST_RUN_PROPERTY_SPEC.clear()
         schema_mod._TEST_RUN_PROPERTY_SPEC.extend(pre_migration_spec)
         schema_mod.ensure_test_run_collection(weaviate_client)
-        # Verify the pre-migration state: properties don't include versions.
         names_before = {
             p.name for p in weaviate_client.collections.get(TEST_RUN).config.get().properties
         }
-        assert "version_full" not in names_before
-        assert "version_minor" not in names_before
+        for prop in version_props:
+            assert prop not in names_before
     finally:
         schema_mod._TEST_RUN_PROPERTY_SPEC.clear()
         schema_mod._TEST_RUN_PROPERTY_SPEC.extend(original_spec)
 
-    # Now run the additive migration against the live collection.
     schema_mod.ensure_test_run_properties(weaviate_client)
 
     names_after = {
         p.name for p in weaviate_client.collections.get(TEST_RUN).config.get().properties
     }
-    assert "version_full" in names_after
-    assert "version_minor" in names_after
+    for prop in version_props:
+        assert prop in names_after
 
-    # Second call must be idempotent (no error, no duplicate).
+    # Idempotent on second call.
     schema_mod.ensure_test_run_properties(weaviate_client)
 
 

@@ -46,13 +46,23 @@ inputs:
     default: "false"
   version_under_test:
     description: |
-      Optional semver `MAJOR.MINOR.PATCH` of the artifact under test
-      (e.g. `1.37.5`, optionally with a `v` prefix or pre-release
-      / build-metadata suffix). When set, the action populates
-      `version_full` and `version_minor` on the `TestRun` so the
-      dashboard can aggregate per Weaviate version. Empty or non-semver
-      values are warned-and-skipped — the action never fails on this
-      input alone.
+      Optional SemVer 2.0 string identifying the artifact under test —
+      typically the raw image tag including any pre-release / build
+      metadata (e.g. `1.38.1-rfea1de`, `1.36.14-3b58915`,
+      `1.38.0-dev-9479337`). Accepts an optional `v`/`V` prefix.
+      When set, the action populates THREE derived slots on `TestRun`:
+        - `version_full` — verbatim SemVer string (the build-unique
+          identifier used for dedup queries: "did we already report
+          this build?")
+        - `version_patch` — canonical `MAJOR.MINOR.PATCH` with the
+          pre-release suffix dropped (e.g. `1.38.1`)
+        - `version_minor` — `MAJOR.MINOR` (e.g. `1.38`)
+      A non-empty value MUST parse as SemVer 2.0. If it doesn't (e.g.
+      a branch name like `preview-correct-raft-replication-531de22`
+      or the unresolved `latest_release` placeholder), the action
+      exits non-zero at startup with a clear ConfigError —
+      strict-by-default so misconfigured callers fail loudly instead
+      of producing version-less TestRuns.
     required: false
     default: ""
 

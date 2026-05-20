@@ -50,14 +50,28 @@ _TEST_RUN_PROPERTY_SPEC: list[tuple[str, wvcc.DataType, bool, bool, bool]] = [
     ("actor", wvcc.DataType.TEXT, True, False, False),
     # Display-only — no need to index.
     ("run_url", wvcc.DataType.TEXT, False, False, False),
-    # Version of the artifact under test (e.g., Weaviate version). Both
-    # are populated by the action when `version_under_test` is provided
-    # and parses as semver; null on older rows or non-version-aware
-    # callers. Filterable so the dashboard can group/aggregate per
-    # version lineage. See `.project/02-weaviate-schema.md` §6 for the
-    # additive-schema migration policy that makes adding these safe on
-    # an existing TestRun collection.
+    # Three version slots, all derived from the single `version_under_test`
+    # action input via `config.parse_version`. The slots progress from
+    # most-specific to most-aggregable:
+    #
+    #   - `version_full`  = the build identifier including pre-release /
+    #     build-metadata suffix (e.g., "1.38.1-rfea1de"). Use this for
+    #     exact-build deduplication ("did we already test this build?").
+    #   - `version_patch` = canonical SemVer release with pre-release
+    #     dropped (e.g., "1.38.1"). Dashboard's "Patches" rollup.
+    #   - `version_minor` = MAJOR.MINOR lineage (e.g., "1.38"). The
+    #     primary grouping key on the Versions page.
+    #
+    # All three are populated when `version_under_test` parses as SemVer
+    # 2.0; null on rows from non-version-aware callers. The action
+    # raises a hard ConfigError if a non-empty `version_under_test`
+    # fails to parse — strict-by-default, no silent skip. Filterable
+    # so the dashboard can group / aggregate per slot. See
+    # `.project/02-weaviate-schema.md` §6 for the additive-schema
+    # migration policy that makes adding these safe on existing
+    # TestRun collections.
     ("version_full", wvcc.DataType.TEXT, True, False, False),
+    ("version_patch", wvcc.DataType.TEXT, True, False, False),
     ("version_minor", wvcc.DataType.TEXT, True, False, False),
 ]
 

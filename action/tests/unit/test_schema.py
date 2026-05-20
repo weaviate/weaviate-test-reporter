@@ -66,6 +66,7 @@ def test_ensure_test_run_creates_when_missing():
         "actor",
         "run_url",
         "version_full",
+        "version_patch",
         "version_minor",
     }
     assert prop_names == expected
@@ -276,9 +277,8 @@ def _mock_existing_collection(existing_property_names: set[str]):
 
 
 def test_ensure_test_run_properties_adds_missing_version_props():
-    """The TestRun collection pre-dates `version_full` / `version_minor`
-    on the live WCD instance — calling `ensure_test_run_properties`
-    must add exactly those two via `collection.config.add_property`."""
+    """The TestRun collection pre-dates the version-* properties — the
+    migration must add all three via `collection.config.add_property`."""
     pre_migration = {
         "run_id",
         "repository",
@@ -300,9 +300,42 @@ def test_ensure_test_run_properties_adds_missing_version_props():
 
     ensure_test_run_properties(client)
 
-    assert collection.config.add_property.call_count == 2
+    assert collection.config.add_property.call_count == 3
     added_names = {call.args[0].name for call in collection.config.add_property.call_args_list}
-    assert added_names == {"version_full", "version_minor"}
+    assert added_names == {"version_full", "version_patch", "version_minor"}
+
+
+def test_ensure_test_run_properties_adds_only_version_patch_when_others_present():
+    """Simulates the migration path on clusters that shipped the
+    earlier `version_full` / `version_minor` schema (PR #5) but not
+    `version_patch` — only the new slot is added, the existing two
+    are left untouched."""
+    pre_patch = {
+        "run_id",
+        "repository",
+        "branch",
+        "commit_hash",
+        "trigger_type",
+        "status",
+        "total_duration_ms",
+        "timestamp",
+        "workflow_run_id",
+        "workflow_run_attempt",
+        "workflow_name",
+        "job_name",
+        "pr_number",
+        "actor",
+        "run_url",
+        "version_full",
+        "version_minor",
+    }
+    client, collection = _mock_existing_collection(pre_patch)
+
+    ensure_test_run_properties(client)
+
+    assert collection.config.add_property.call_count == 1
+    added_names = {call.args[0].name for call in collection.config.add_property.call_args_list}
+    assert added_names == {"version_patch"}
 
 
 def test_ensure_test_run_properties_is_idempotent():
@@ -325,6 +358,7 @@ def test_ensure_test_run_properties_is_idempotent():
         "actor",
         "run_url",
         "version_full",
+        "version_patch",
         "version_minor",
     }
     client, collection = _mock_existing_collection(full_spec_names)
