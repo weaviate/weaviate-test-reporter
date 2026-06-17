@@ -64,6 +64,22 @@ export type VersionRollup = {
   passRate: number | null;
 };
 
+/** Filter set for the Test Explorer run list. Empty/undefined fields mean
+ *  "no filter on that dimension". */
+export type RunFilters = {
+  /** Free-text fragment matched (case-insensitive) against run_id, branch,
+   *  actor, commit_hash. */
+  search?: string;
+  /** Repository property — multi-select. */
+  repositories?: string[];
+  /** Status property — multi-select. */
+  statuses?: string[];
+  /** Minor version (e.g. "1.37") — multi-select. */
+  versionMinors?: string[];
+  /** Full version (e.g. "1.37.5") — multi-select. */
+  versionFulls?: string[];
+};
+
 export type TestCaseStatus = "passed" | "failed" | "skipped";
 
 export type TestCase = {

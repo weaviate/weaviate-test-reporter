@@ -10,7 +10,6 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { agentAvailable } from "@/lib/env";
 import { BrandMark } from "./BrandMark";
 
 type NavItem = {
@@ -38,12 +37,13 @@ function isActive(pathname: string, href: string): boolean {
   return pathname.startsWith(href);
 }
 
-export function Sidebar() {
+export function Sidebar({ agentAvailable }: { agentAvailable: boolean }) {
   const pathname = usePathname() ?? "/";
-  // Agent nav is gated to WCD deployments. NEXT_PUBLIC_WEAVIATE_URL is
-  // inlined at build time so the server-rendered HTML and the client
-  // bundle agree — no hydration mismatch, no effect needed.
-  const nav = agentAvailable() ? [...NAV, AGENT_NAV] : NAV;
+  // Agent nav is gated to WCD deployments. `agentAvailable` is computed
+  // server-side (from WEAVIATE_URL) and passed down from the root layout, so
+  // the cluster URL never reaches the browser and there's no hydration
+  // mismatch.
+  const nav = agentAvailable ? [...NAV, AGENT_NAV] : NAV;
 
   return (
     <aside

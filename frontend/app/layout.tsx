@@ -2,6 +2,11 @@ import type { Metadata } from "next";
 import { Inter, Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "@/components/Sidebar";
+import { getAgentAvailable } from "@/lib/server-env";
+
+// Rendered per-request so `getAgentAvailable()` reads the runtime WEAVIATE_URL
+// (not a build-time value) — the Agent nav must reflect the deployed cluster.
+export const dynamic = "force-dynamic";
 
 const display = Plus_Jakarta_Sans({
   variable: "--font-display",
@@ -36,7 +41,7 @@ export default function RootLayout({
     >
       <body className="min-h-full">
         <div className="flex min-h-screen">
-          <Sidebar />
+          <Sidebar agentAvailable={getAgentAvailable()} />
           <main className="flex-1 min-w-0">{children}</main>
         </div>
       </body>

@@ -33,22 +33,31 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Build static export
+      - name: Build
         run: npm run build
         env:
           NEXT_TELEMETRY_DISABLED: "1"
-          # Empty at build time — the static bundle is configured to
-          # consume NEXT_PUBLIC_WEAVIATE_URL from whatever environment
-          # serves it. Playwright tests below provide their own URL.
-          NEXT_PUBLIC_WEAVIATE_URL: ""
-          NEXT_PUBLIC_WEAVIATE_API_KEY: ""
 
-      - name: Upload static export artifact
-        uses: actions/upload-artifact@v4
+  # Unit tests (Vitest/Jest). Pure Node — no Weaviate or browser needed.
+  unit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
         with:
-          name: frontend-static
-          path: frontend/out/
-          retention-days: 7
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm run test:unit
 
   # Playwright E2E suite. Spins up Weaviate + model2vec via docker compose,
   # seeds the cluster with the same script developers use locally, then
@@ -136,8 +145,8 @@ jobs:
         working-directory: frontend
         env:
           NEXT_TELEMETRY_DISABLED: "1"
-          NEXT_PUBLIC_WEAVIATE_URL: http://localhost:8080
-          NEXT_PUBLIC_WEAVIATE_API_KEY: ""
+          WEAVIATE_URL: http://localhost:8080
+          WEAVIATE_API_KEY: ""
         run: npm run test:e2e
 
       - name: Upload Playwright report on failure
