@@ -35,7 +35,6 @@ export async function POST(req: Request): Promise<Response> {
   const body = (await req.json().catch(() => null)) as {
     query?: string;
     history?: ChatMessage[];
-    collections?: unknown[];
   } | null;
   if (!body || typeof body.query !== "string" || !body.query.trim()) {
     return Response.json({ error: "query (string) is required" }, { status: 400 });
@@ -59,7 +58,7 @@ export async function POST(req: Request): Promise<Response> {
     body: JSON.stringify({
       headers: {},
       query: askPayload,
-      collections: body.collections ?? DEFAULT_COLLECTIONS,
+      collections: DEFAULT_COLLECTIONS,
       system_prompt: undefined,
       result_evaluation: "none",
       include_progress: true,

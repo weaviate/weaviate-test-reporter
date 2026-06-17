@@ -64,7 +64,9 @@ async function connect(): Promise<WeaviateClient> {
       ? 443
       : 80;
   const grpcHost = serverEnv.grpcHost || httpHost;
-  const grpcPort = serverEnv.grpcPort ? Number(serverEnv.grpcPort) : 50051;
+  const parsedGrpcPort = Number(serverEnv.grpcPort);
+  const grpcPort =
+    serverEnv.grpcPort && Number.isFinite(parsedGrpcPort) ? parsedGrpcPort : 50051;
 
   return weaviate.connectToCustom({
     httpHost,
