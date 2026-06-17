@@ -1,4 +1,4 @@
-import { handle, badRequest } from "@/lib/server-respond";
+import { handle, badRequest, parseFiniteInt } from "@/lib/server-respond";
 import { fetchCasesForRun } from "@/lib/weaviate/queries.server";
 
 export const runtime = "nodejs";
@@ -9,7 +9,6 @@ export async function GET(req: Request): Promise<Response> {
   const runUuid = sp.get("runUuid");
   if (!runUuid) return badRequest("runUuid is required");
   const failedOnly = sp.get("failedOnly") === "true";
-  const limitRaw = sp.get("limit");
-  const limit = limitRaw ? Number(limitRaw) : undefined;
+  const limit = parseFiniteInt(sp.get("limit"));
   return handle(() => fetchCasesForRun(runUuid, { failedOnly, limit }));
 }

@@ -1,4 +1,4 @@
-import { handle } from "@/lib/server-respond";
+import { handle, parseFiniteInt } from "@/lib/server-respond";
 import { fetchRecentRuns } from "@/lib/weaviate/queries.server";
 import { RECENT_RUNS_LIMIT } from "@/lib/constants";
 import type { RunFilters } from "@/lib/types";
@@ -15,7 +15,6 @@ export async function GET(req: Request): Promise<Response> {
     versionMinors: sp.getAll("versionMinor"),
     versionFulls: sp.getAll("versionFull"),
   };
-  const limitRaw = sp.get("limit");
-  const limit = limitRaw ? Number(limitRaw) : RECENT_RUNS_LIMIT;
+  const limit = parseFiniteInt(sp.get("limit")) ?? RECENT_RUNS_LIMIT;
   return handle(() => fetchRecentRuns(filters, limit));
 }

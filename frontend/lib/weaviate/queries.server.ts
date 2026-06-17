@@ -97,6 +97,9 @@ const VERSION_PAGE_SIZE = 1000;
 const VERSION_MAX_ROWS = 100_000;
 
 function clamp(n: number, lo: number, hi: number): number {
+  // Non-finite input (NaN/Infinity from a bad query param) falls back to the
+  // lower bound rather than propagating NaN into the query.
+  if (!Number.isFinite(n)) return lo;
   return Math.max(lo, Math.min(Math.floor(n), hi));
 }
 
@@ -403,7 +406,8 @@ export async function fetchFlakyTests(
   const cases = casesCol(client);
   const days = window === "7d" ? 7 : 30;
   const since = new Date(isoDaysAgo(days));
-  const minRuns = opts.minRuns ?? 3;
+  // `?? 3` wouldn't catch NaN (only null/undefined), so guard for finiteness.
+  const minRuns = Number.isFinite(opts.minRuns) ? (opts.minRuns as number) : 3;
 
   const windowFilter = Filters.and(
     cases.filter.byCreationTime().greaterOrEqual(since),

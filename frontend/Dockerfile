@@ -21,4 +21,10 @@ COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
 COPY --from=build /app/public ./public
 EXPOSE 8080
+# Run as the unprivileged `node` user shipped in the base image (port 8080 is
+# non-privileged, so no root needed).
+USER node
+# Liveness probe; /api/meta is lightweight and does not touch Weaviate.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:8080/api/meta || exit 1
 CMD ["node", "server.js"]

@@ -17,3 +17,14 @@ export async function handle<T>(fn: () => Promise<T>): Promise<Response> {
 export function badRequest(message: string): Response {
   return Response.json({ error: message }, { status: 400 });
 }
+
+/**
+ * Parse an optional integer query param. Returns a finite number, or
+ * `undefined` for missing/empty/non-finite input (`"abc"`, `Infinity`, …) so
+ * callers fall back to their default rather than propagating `NaN`.
+ */
+export function parseFiniteInt(raw: string | null): number | undefined {
+  if (raw == null || raw === "") return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}

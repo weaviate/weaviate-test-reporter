@@ -98,7 +98,9 @@ async function readErrorDetail(res: Response): Promise<string> {
   const text = await res.text().catch(() => "");
   try {
     const j = JSON.parse(text) as { error?: string; detail?: string };
-    return j?.error ?? j?.detail ?? text;
+    // Prefer `detail` — it carries the actionable upstream payload; `error`
+    // is usually just the status-line summary already in the thrown message.
+    return j?.detail ?? j?.error ?? text;
   } catch {
     return text;
   }
@@ -111,15 +113,22 @@ export async function askAgent(
   opts: AskOptions = {},
 ): Promise<AgentAnswer> {
   let final: AgentAnswer | undefined;
+  let streamError: Error | undefined;
   await streamAskAgent(
     query,
     {
       onFinal: (a) => {
         final = a;
       },
+      // Capture an `error` SSE event so its cause propagates instead of being
+      // masked by the generic "closed without a final answer" below.
+      onError: (e) => {
+        streamError = e;
+      },
     },
     opts,
   );
+  if (streamError) throw streamError;
   if (!final) {
     throw new QueryAgentError("Agent stream closed without a final answer");
   }

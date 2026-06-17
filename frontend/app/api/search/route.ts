@@ -26,7 +26,9 @@ export async function POST(req: Request): Promise<Response> {
   ).includes(body.targetVector as string)
     ? (body.targetVector as TargetVector)
     : DEFAULT_TARGET_VECTOR;
-  const limit = typeof body.limit === "number" ? body.limit : undefined;
+  const limit = Number.isFinite(body.limit as number)
+    ? (body.limit as number)
+    : undefined;
   const failedOnly = Boolean(body.failedOnly);
   return handle(() =>
     semanticSearch(body.query as string, { limit, failedOnly, targetVector }),
