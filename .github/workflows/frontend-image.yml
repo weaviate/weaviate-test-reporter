@@ -8,7 +8,8 @@ name: Build & publish frontend image
 # There is NO deploy step here — only image publishing. The image reads its
 # config (WEAVIATE_URL / WEAVIATE_API_KEY) from runtime env, so it bakes no
 # secrets. Where/how the image is deployed is handled separately, outside
-# this repo.
+# this repo. The image is built for linux/amd64 — Cloud Run and most x86
+# hosts can't run an arm64 image (it fails with "exec format error").
 #
 # Required repo config for the Artifact Registry push:
 #   vars:    GCP_REGION, GCP_PROJECT_ID, AR_REPOSITORY
@@ -39,11 +40,15 @@ jobs:
     env:
       # ghcr.io/weaviate/weaviate-test-reporter/frontend
       GHCR_IMAGE: ghcr.io/${{ github.repository }}/frontend
-      # <region>-docker.pkg.dev/<project>/<repo>/frontend
-      AR_IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.AR_REPOSITORY }}/frontend
+      # <region>-docker.pkg.dev/<project>/<repo>/weaviate-test-reporter-frontend
+      # (distinct name because AR_REPOSITORY may be a shared repo, e.g. gcr.io)
+      AR_IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.AR_REPOSITORY }}/weaviate-test-reporter-frontend
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -77,6 +82,12 @@ jobs:
         with:
           context: frontend
           push: true
+          # Cloud Run / x86 hosts need amd64. Build a clean single-arch image:
+          # provenance/sbom attestations would create a manifest index (with an
+          # "unknown/unknown" entry) that some runtimes mis-handle.
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
           # One build, pushed to every tag above (both registries).
           tags: ${{ steps.tags.outputs.tags }}
           # Connects the GHCR package to this repository.
