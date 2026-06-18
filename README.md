@@ -150,7 +150,7 @@ WEAVIATE_URL=http://localhost:8080
 WEAVIATE_API_KEY=
 ```
 
-**Production (Cloud Run).** CI publishes the container image to GHCR (`.github/workflows/frontend-image.yml`); the Cloud Run service is created manually and pulls it via an Artifact Registry remote repository. `WEAVIATE_URL` is set as a Cloud Run env var and `WEAVIATE_API_KEY` is bound from **GCP Secret Manager** — the key lives only there, never in the image, the repo, or CI. The service runs with internal ingress and is reached through Twingate.
+**Production.** CI publishes the container image to GHCR (`.github/workflows/frontend-image.yml`). The deployment environment (managed separately, outside this repo) supplies `WEAVIATE_URL` and `WEAVIATE_API_KEY` to the container as **runtime env vars** — the key is never baked into the image, the repo, or CI.
 
 ### Run the production container locally
 
@@ -175,14 +175,14 @@ docker stop reporter-ui        # stop  (docker start reporter-ui to resume)
 docker rm -f reporter-ui       # remove when done
 ```
 
-The key is injected at **runtime** (never baked into the image), exactly as Cloud Run does
-— in production `WEAVIATE_API_KEY` simply comes from Secret Manager instead of
-`--env-file`, which the app can't tell apart.
+The key is injected at **runtime** (never baked into the image) — in production the
+deployment environment supplies it the same way (from its own secret store instead of
+`--env-file`), which the app can't tell apart.
 
 ### Dashboard architecture notes
 
 - The browser never talks to Weaviate. It calls same-origin `/api/*` route handlers that run the official `weaviate-client` v3 (REST/gRPC) server-side — so the cluster URL and key stay on the server. (This replaced the earlier browser-side GraphQL approach, which is being deprecated.)
-- The app requires JS (like any SPA). Acceptable for an internal Twingate-gated tool.
+- The app requires JS (like any SPA). Acceptable for an internal tool.
 
 ## CI
 
