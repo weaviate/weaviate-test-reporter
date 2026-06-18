@@ -126,8 +126,8 @@ npm install
 npm run dev                       # default port 3000
 npm run dev -- --port 3030        # different port (e.g., when local-k8s reserves 3000 for Grafana)
 
-# Production-shape static export (output: "export").
-npm run build                     # outputs to ./out
+# Production build (output: "standalone") — a Node server, not a static export.
+npm run build                     # emits .next/standalone (run: node .next/standalone/server.js)
 
 # E2E tests against the dev server + a seeded Weaviate.
 npm run test:e2e
@@ -135,29 +135,54 @@ npm run test:e2e
 
 ### Environment variables (frontend)
 
-The dashboard reads two `NEXT_PUBLIC_*` env vars at build time. They are baked into the static bundle, so a different Weaviate target means a rebuild.
+The dashboard is a Next.js **server** (not a static export). It reads two **server-only** env vars at **runtime** — they are never shipped to the browser. The browser talks only to same-origin `/api/*` routes, which query Weaviate server-side via the TypeScript client.
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `NEXT_PUBLIC_WEAVIATE_URL` | yes | URL the browser uses to reach Weaviate (e.g., `http://localhost:8080` or your WCD cluster URL). Must serve `Access-Control-Allow-Origin: *` or equivalent for the dashboard's origin. |
-| `NEXT_PUBLIC_WEAVIATE_API_KEY` | no | Read-only API key. Leave empty for anonymous Weaviate instances (local dev). |
+| `WEAVIATE_URL` | yes | Cluster URL the **server** uses to reach Weaviate (e.g., `http://localhost:8080` or your WCD cluster URL). |
+| `WEAVIATE_API_KEY` | no | Read-only API key. Server-side only. Leave empty for anonymous Weaviate (local dev). |
 
-Put them in `frontend/.env.local` for local dev:
+For local dev, put them in `frontend/.env.local` (gitignored):
 
 ```bash
 # frontend/.env.local  (gitignored)
-NEXT_PUBLIC_WEAVIATE_URL=http://localhost:8080
-NEXT_PUBLIC_WEAVIATE_API_KEY=
+WEAVIATE_URL=http://localhost:8080
+WEAVIATE_API_KEY=
 ```
 
-For production deployment behind Nginx/Twingate, set the env vars at **build time** (in CI) before `npm run build`. The resulting `frontend/out/` directory is a fully static site.
+**Production.** CI publishes the container image to GHCR (`.github/workflows/frontend-image.yml`). The deployment environment (managed separately, outside this repo) supplies `WEAVIATE_URL` and `WEAVIATE_API_KEY` to the container as **runtime env vars** — the key is never baked into the image, the repo, or CI.
 
-> The browser-exposed API key is documented in [`frontend/lib/env.ts`](frontend/lib/env.ts) — acceptable given the Twingate-gated deployment target. For public deployments, replace with a Cloudflare Worker / edge proxy.
+### Run the production container locally
+
+To exercise the exact image that gets deployed (the standalone Node server, not the dev
+server), build the container and run it with the server-side creds from
+`frontend/.env.local`. **Run these from the repository root** (the paths reference
+`frontend/...`):
+
+```bash
+# Build the standalone image (the same one CI publishes to GHCR).
+docker build -t weaviate-test-reporter-frontend frontend
+
+# Run it, injecting WEAVIATE_URL + WEAVIATE_API_KEY at runtime from .env.local.
+docker run -d --name reporter-ui \
+  --env-file frontend/.env.local \
+  -p 3030:8080 \
+  weaviate-test-reporter-frontend
+
+# → open http://localhost:3030
+docker logs -f reporter-ui     # follow logs
+docker stop reporter-ui        # stop  (docker start reporter-ui to resume)
+docker rm -f reporter-ui       # remove when done
+```
+
+The key is injected at **runtime** (never baked into the image) — in production the
+deployment environment supplies it the same way (from its own secret store instead of
+`--env-file`), which the app can't tell apart.
 
 ### Dashboard architecture notes
 
-- The browser uses Weaviate's GraphQL endpoint (`/v1/graphql`) because the official `weaviate-client` TS package depends on `@grpc/grpc-js` and can't bundle for a browser-only static SPA. Queries are parameterized via GraphQL variables (no string concatenation of user input).
-- The dashboard has a JS-dependency requirement (static export ships an empty shell to no-JS clients). Acceptable for an internal Twingate-gated deployment.
+- The browser never talks to Weaviate. It calls same-origin `/api/*` route handlers that run the official `weaviate-client` v3 (REST/gRPC) server-side — so the cluster URL and key stay on the server. (This replaced the earlier browser-side GraphQL approach, which is being deprecated.)
+- The app requires JS (like any SPA). Acceptable for an internal tool.
 
 ## CI
 
@@ -167,8 +192,10 @@ For production deployment behind Nginx/Twingate, set the env vars at **build tim
 | `unit (3.11 / 3.12)` | `pytest tests/unit/` matrix |
 | `integration` | testcontainers-backed end-to-end against Weaviate + model2vec |
 | `action-smoke` | invokes `uses: ./action` end-to-end against service-container Weaviate + model2vec; catches issues that unit / integration tests can't (action.yml contract, GH context wiring) |
-| `frontend.build` | lint + static export, uploads `out/` artifact |
-| `frontend.e2e` | builds + runs Playwright against ephemeral Weaviate + model2vec services |
+| `frontend.build` | lint + production build (compile check) |
+| `frontend.unit` | Vitest unit tests (server query logic, route mapping) |
+| `frontend.e2e` | runs Playwright against ephemeral Weaviate + model2vec services |
+| `frontend-image` | builds the frontend container and publishes it to GHCR (the deploy image) |
 
 ## License
 

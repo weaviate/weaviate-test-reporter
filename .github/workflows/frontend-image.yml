@@ -1,0 +1,66 @@
+name: Build & publish frontend image
+
+# Builds the dashboard container and publishes it to GHCR. That is ALL this
+# workflow does — there is no deploy step here. The image reads its config
+# (WEAVIATE_URL / WEAVIATE_API_KEY) from runtime env, so it bakes no secrets
+# and is published public. Where/how the image is deployed is handled
+# separately, outside this repo.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-image.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write # push to GHCR via the built-in GITHUB_TOKEN
+
+concurrency:
+  group: frontend-image
+  # Don't cancel in-flight builds: every commit's immutable <sha> image must
+  # publish (deploys pin a specific image by <sha>).
+  cancel-in-progress: false
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    env:
+      # ghcr.io/weaviate/weaviate-test-reporter/frontend
+      IMAGE: ghcr.io/${{ github.repository }}/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: tags
+        run: |
+          # Always publish an immutable <sha> tag (lets a deploy pin an exact
+          # commit). Move :latest (the deploy pointer) ONLY for main, so a
+          # workflow_dispatch from a feature branch can't overwrite it with
+          # unmerged code.
+          tags="${IMAGE}:${GITHUB_SHA}"
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            tags="${tags},${IMAGE}:latest"
+          fi
+          echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: frontend
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          # Connects the GHCR package to this repository (so it appears under
+          # the repo's Packages and inherits its access).
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
