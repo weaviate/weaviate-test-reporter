@@ -21,7 +21,9 @@ permissions:
 
 concurrency:
   group: frontend-image
-  cancel-in-progress: true
+  # Don't cancel in-flight builds: every commit's immutable <sha> image must
+  # publish (the platform pins Cloud Run revisions by <sha>).
+  cancel-in-progress: false
 
 jobs:
   build-push:
@@ -40,13 +42,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Compute image tags
+        id: tags
+        run: |
+          # Always publish an immutable <sha> tag (used to pin a Cloud Run
+          # revision). Move :latest (the deploy pointer) ONLY for main, so a
+          # workflow_dispatch from a feature branch can't overwrite it with
+          # unmerged code.
+          tags="${IMAGE}:${GITHUB_SHA}"
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            tags="${tags},${IMAGE}:latest"
+          fi
+          echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: frontend
           push: true
-          # <sha> tag lets the platform pin an exact commit when creating a
-          # Cloud Run revision; :latest is a convenience pointer.
-          tags: |
-            ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:${{ github.sha }}
+          tags: ${{ steps.tags.outputs.tags }}

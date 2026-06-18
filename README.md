@@ -156,7 +156,8 @@ WEAVIATE_API_KEY=
 
 To exercise the exact image that gets deployed (the standalone Node server, not the dev
 server), build the container and run it with the server-side creds from
-`frontend/.env.local`:
+`frontend/.env.local`. **Run these from the repository root** (the paths reference
+`frontend/...`):
 
 ```bash
 # Build the standalone image (the same one CI publishes to GHCR).
