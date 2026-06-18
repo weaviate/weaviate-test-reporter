@@ -60,3 +60,7 @@ jobs:
           context: frontend
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+          # Connects the GHCR package to this repository (so it appears under
+          # the repo's Packages and inherits its access).
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
