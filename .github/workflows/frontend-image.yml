@@ -1,0 +1,52 @@
+name: Build & publish frontend image
+
+# Builds the dashboard container and publishes it to GHCR. That is ALL this
+# workflow does — there is no deploy step and no GCP credentials here. The
+# Cloud Run service is created/updated manually in the GCP Console from this
+# image (via an Artifact Registry remote repository that proxies ghcr.io),
+# where the runtime env vars and the Secret Manager binding for
+# WEAVIATE_API_KEY are configured. The image bakes no secrets, so it is public.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-image.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write # push to GHCR via the built-in GITHUB_TOKEN
+
+concurrency:
+  group: frontend-image
+  cancel-in-progress: true
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    env:
+      # ghcr.io/weaviate/weaviate-test-reporter/frontend
+      IMAGE: ghcr.io/${{ github.repository }}/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: frontend
+          push: true
+          # <sha> tag lets the platform pin an exact commit when creating a
+          # Cloud Run revision; :latest is a convenience pointer.
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
