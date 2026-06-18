@@ -150,7 +150,7 @@ WEAVIATE_URL=http://localhost:8080
 WEAVIATE_API_KEY=
 ```
 
-**Production.** CI publishes the container image to GHCR (`.github/workflows/frontend-image.yml`). The deployment environment (managed separately, outside this repo) supplies `WEAVIATE_URL` and `WEAVIATE_API_KEY` to the container as **runtime env vars** — the key is never baked into the image, the repo, or CI.
+**Production.** CI publishes the container image to **GHCR and Google Artifact Registry** (`.github/workflows/frontend-image.yml`). The deployment environment (managed separately, outside this repo) supplies `WEAVIATE_URL` and `WEAVIATE_API_KEY` to the container as **runtime env vars** — the key is never baked into the image, the repo, or CI.
 
 ### Run the production container locally
 
@@ -195,7 +195,7 @@ deployment environment supplies it the same way (from its own secret store inste
 | `frontend.build` | lint + production build (compile check) |
 | `frontend.unit` | Vitest unit tests (server query logic, route mapping) |
 | `frontend.e2e` | runs Playwright against ephemeral Weaviate + model2vec services |
-| `frontend-image` | builds the frontend container and publishes it to GHCR (the deploy image) |
+| `frontend-image` | builds the frontend container and publishes it to GHCR + Artifact Registry (the deploy image) |
 
 ## License
 
