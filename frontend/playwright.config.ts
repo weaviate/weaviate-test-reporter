@@ -49,10 +49,8 @@ export default defineConfig({
     env: {
       NEXT_TELEMETRY_DISABLED: "1",
       // Default to the local cluster the seed script targets.
-      NEXT_PUBLIC_WEAVIATE_URL:
-        process.env.NEXT_PUBLIC_WEAVIATE_URL ?? "http://localhost:8080",
-      NEXT_PUBLIC_WEAVIATE_API_KEY:
-        process.env.NEXT_PUBLIC_WEAVIATE_API_KEY ?? "",
+      WEAVIATE_URL: process.env.WEAVIATE_URL ?? "http://localhost:8080",
+      WEAVIATE_API_KEY: process.env.WEAVIATE_API_KEY ?? "",
     },
   },
 });

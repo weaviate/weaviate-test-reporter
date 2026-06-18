@@ -1,34 +1,14 @@
 /**
- * Browser-side client for the Weaviate Query Agent.
+ * Client-side wrapper for the Weaviate Query Agent.
  *
- * The official `weaviate-agents` npm package can't bundle for the
- * browser — it depends on `weaviate-client` v3 which pulls in
- * `@grpc/grpc-js` and `node:http2`. We hit the agent's HTTP API
- * directly instead.
- *
- * CORS notes (verified empirically against api.agents.weaviate.io):
- *   - Preflight allows: `content-type`, `authorization`,
- *     `x-weaviate-cluster-url`
- *   - It DOES NOT allow `x-agent-request-origin`; sending that header
- *     causes preflight to fail. The SDK uses it for telemetry only, so
- *     omitting it is safe.
- *
- * Auth shape: `Authorization: Bearer <api-key>`. The SDK source uses a
- * variable called `bearerToken` whose value is already the full
- * `Bearer ...` string — easy to read as "raw token", but the agent
- * service responds 401 with
- *   {"detail":"... using Bearer auth (i.e. Authorization: Bearer YOUR_KEY)."}
- * if you skip the prefix.
- *
- * Endpoint: POST https://api.agents.weaviate.io/query/ask (single-shot)
- *           POST https://api.agents.weaviate.io/query/stream_ask (SSE)
- *
- * The agent is a separate hosted service; the cluster URL is forwarded
- * via `X-Weaviate-Cluster-Url` so it knows which Weaviate to query.
+ * The browser no longer calls api.agents.weaviate.io directly — that exposed
+ * the cluster URL + key. Instead it POSTs to the same-origin `/api/agent`
+ * route handler, which attaches the server-held key and streams the agent's
+ * SSE response back. This module keeps the SSE-parsing UX identical; only the
+ * transport (now same-origin, no auth headers, simpler body) changed.
  */
-import { env, agentAvailable } from "./env";
 
-const AGENT_BASE_URL = "https://api.agents.weaviate.io";
+const AGENT_ENDPOINT = "/api/agent";
 
 export type AgentSource = {
   /** UUID of the matching object. */
@@ -56,7 +36,7 @@ export type AgentUsage = {
   remaining_plan_requests: number;
 };
 
-/** Final agent answer, as returned by `/query/ask` (or `final_state` in SSE). */
+/** Final agent answer, as returned by the agent's `final_state` SSE event. */
 export type AgentAnswer = {
   final_answer: string;
   searches: AgentSearch[];
@@ -74,23 +54,10 @@ export type ChatMessage = {
 };
 
 /**
- * A collection the agent can search. Bare string for collections with at
- * most one vector (e.g. `TestRun` has no vectors); the object form is
- * required when the collection has multiple named vectors and the agent
- * needs to be told which one(s) to use — otherwise it 400s with
- * `WEAVIATE_NAMED_VECTOR_ERROR`. `TestCase` has three named vectors so
- * it MUST go through the object form.
- *
- * `target_vector` is an array — the documented TS SDK form is
- * `targetVector: ["my_vector"]` (camelCase, plural-shaped) and that
- * pluralizes to `target_vector: [...]` on the wire. The agent can
- * target one or several named vectors per query.
- *
- * Future enhancement: the SDK also accepts `additionalFilters` here
- * (built via `collection.filter.byProperty(...)`) to scope the
- * agent's search — e.g. only consider runs from a specific version.
- * Not wired into the chatbot yet, but the slot is on the agent
- * server-side if we want to expose a version dropdown later.
+ * A collection the agent can search. Bare string for single-vector
+ * collections (e.g. `TestRun`); the object form names which vector(s) to use
+ * for a multi-vector collection (`TestCase`). When omitted, the server applies
+ * a sensible default (TestRun + TestCase across all three vectors).
  */
 export type AgentCollection =
   | string
@@ -98,38 +65,15 @@ export type AgentCollection =
 
 export type AskOptions = {
   /** Multi-turn history; the agent has no server-side memory, so the caller
-   *  must replay prior messages on every turn. The current question goes
-   *  into `query`, NOT into the history. */
+   *  replays prior messages each turn. The current question goes into
+   *  `query`, NOT into the history. */
   history?: ChatMessage[];
-  /** Limit which collections the agent searches. Defaults to a sensible
-   *  pair for this dashboard: `TestRun` (filterable/aggregatable) and
-   *  `TestCase` targeted at the `stack_trace` named vector — the same
-   *  default the rest of the dashboard uses for triage queries. */
+  /** Limit which collections the agent searches. Omit to use the server
+   *  default. */
   collections?: AgentCollection[];
   /** Aborts the in-flight fetch. */
   signal?: AbortSignal;
 };
-
-/** Default the agent searches: TestRun bare, TestCase across ALL three
- *  named vectors. Safe to combine here because every TestCase vector
- *  uses the same embedder (`text2vec-weaviate` on WCD by default), so
- *  the distance scales are comparable and Weaviate's multi-target
- *  ranking can merge them sensibly.
- *
- *  Per https://docs.weaviate.io/agents/query/usage#configure-collections-in-detail
- *  the agent explicitly supports passing multiple vectors per
- *  collection. This gives broader recall for the open-ended prompts
- *  a chatbot tends to receive (`name` matches a specific test, the
- *  other two carry the failure-shape signal). The rest of the
- *  dashboard still defaults to `stack_trace` alone — that's the right
- *  call for triage queries where precision matters more. */
-const DEFAULT_COLLECTIONS: AgentCollection[] = [
-  "TestRun",
-  {
-    name: "TestCase",
-    target_vector: ["stack_trace", "error_message", "name"],
-  },
-];
 
 export class QueryAgentError extends Error {
   constructor(
@@ -142,83 +86,59 @@ export class QueryAgentError extends Error {
   }
 }
 
-function ensureAvailable(): void {
-  if (!agentAvailable()) {
-    throw new QueryAgentError(
-      "Query Agent requires a Weaviate Cloud instance — configure " +
-        "NEXT_PUBLIC_WEAVIATE_URL to a *.weaviate.cloud cluster.",
-    );
-  }
-  if (!env.weaviateApiKey) {
-    throw new QueryAgentError(
-      "Query Agent requires NEXT_PUBLIC_WEAVIATE_API_KEY (read-only key " +
-        "is fine — the agent forwards it to your cluster).",
-    );
-  }
-}
-
-function headers(): HeadersInit {
-  return {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${env.weaviateApiKey}`,
-    "X-Weaviate-Cluster-Url": env.weaviateUrl.replace(/\/$/, ""),
-  };
-}
-
-function buildBody(query: string, opts: AskOptions = {}): string {
-  // Multi-turn: send `{messages: [...]}` shape where the trailing user
-  // message is the current question. Single-shot: just the bare string.
-  const askPayload: string | { messages: ChatMessage[] } = opts.history?.length
-    ? {
-        messages: [
-          ...opts.history,
-          { role: "user", content: query },
-        ],
-      }
-    : query;
+function buildBody(query: string, opts: AskOptions): string {
   return JSON.stringify({
-    // `headers` here are vectorizer / inference-provider keys forwarded
-    // by the agent to the user's cluster (X-OpenAI-Api-Key, etc.). The
-    // dashboard doesn't need any of them — `text2vec-weaviate` is
-    // wired server-side on WCD.
-    headers: {},
-    query: askPayload,
-    collections: opts.collections ?? DEFAULT_COLLECTIONS,
-    system_prompt: undefined,
-    result_evaluation: "none",
+    query,
+    history: opts.history,
+    collections: opts.collections,
   });
 }
 
-/** Single-shot `ask` — returns the full answer at once. Use for testing
- *  or contexts where streaming UX isn't needed. ~5–15s latency is normal. */
+async function readErrorDetail(res: Response): Promise<string> {
+  const text = await res.text().catch(() => "");
+  try {
+    const j = JSON.parse(text) as { error?: string; detail?: string };
+    // Prefer `detail` — it carries the actionable upstream payload; `error`
+    // is usually just the status-line summary already in the thrown message.
+    return j?.detail ?? j?.error ?? text;
+  } catch {
+    return text;
+  }
+}
+
+/** Single-shot ask — drives the streaming endpoint and resolves with the final
+ *  answer. (The UI uses streaming directly; this is kept for completeness.) */
 export async function askAgent(
   query: string,
   opts: AskOptions = {},
 ): Promise<AgentAnswer> {
-  ensureAvailable();
-  const res = await fetch(`${AGENT_BASE_URL}/query/ask`, {
-    method: "POST",
-    headers: headers(),
-    body: buildBody(query, opts),
-    signal: opts.signal,
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new QueryAgentError(
-      `Query Agent returned ${res.status} ${res.statusText}`,
-      res.status,
-      text,
-    );
+  let final: AgentAnswer | undefined;
+  let streamError: Error | undefined;
+  await streamAskAgent(
+    query,
+    {
+      onFinal: (a) => {
+        final = a;
+      },
+      // Capture an `error` SSE event so its cause propagates instead of being
+      // masked by the generic "closed without a final answer" below.
+      onError: (e) => {
+        streamError = e;
+      },
+    },
+    opts,
+  );
+  if (streamError) throw streamError;
+  if (!final) {
+    throw new QueryAgentError("Agent stream closed without a final answer");
   }
-  return (await res.json()) as AgentAnswer;
+  return final;
 }
 
 // ---------- SSE streaming ----------
 
 export type AgentStreamProgress = {
-  /** Short status string the agent emits as it works ("searching TestRun…",
-   *  "running aggregation…"). Surfacing this in the UI explains the
-   *  10-second wait. */
+  /** Short status string the agent emits as it works ("searching TestRun…"). */
   message: string;
 };
 
@@ -228,54 +148,37 @@ export type AgentStreamTokens = {
 };
 
 export type StreamAskCallbacks = {
-  /** Fired on every `progress_message` SSE event. */
   onProgress?: (p: AgentStreamProgress) => void;
-  /** Fired on every `streamed_tokens` SSE event — UI appends `delta` to the
-   *  current assistant message. */
   onTokens?: (t: AgentStreamTokens) => void;
-  /** Fired exactly once when the agent sends `final_state` — the complete
-   *  AgentAnswer (sources, searches, usage, etc.). */
   onFinal?: (a: AgentAnswer) => void;
-  /** Fired on any `error` SSE event or non-SSE failure. */
   onError?: (e: Error) => void;
 };
 
 /**
- * Streaming variant. Returns a promise that resolves when the stream is
- * closed cleanly (after `onFinal`) or rejects on transport error.
- *
- * SSE format (per `weaviate-agents` source):
- *   event: <name>\n
- *   data: <json>\n
- *   \n
- *
- * Multi-line `data:` is joined with `\n`. Unknown event types are
- * ignored rather than throwing — keeps the UI resilient if the server
- * adds new event types later.
+ * Streaming variant. Resolves when the stream closes cleanly (after
+ * `onFinal`) or rejects on transport error. SSE events are blank-line
+ * delimited; unknown event types are ignored for forward-compat.
  */
 export async function streamAskAgent(
   query: string,
   callbacks: StreamAskCallbacks,
   opts: AskOptions = {},
 ): Promise<void> {
-  ensureAvailable();
-  const body = JSON.stringify({
-    ...JSON.parse(buildBody(query, opts)),
-    include_progress: true,
-    include_final_state: true,
-  });
-  const res = await fetch(`${AGENT_BASE_URL}/query/stream_ask`, {
+  const res = await fetch(AGENT_ENDPOINT, {
     method: "POST",
-    headers: { ...headers(), Accept: "text/event-stream" },
-    body,
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+    },
+    body: buildBody(query, opts),
     signal: opts.signal,
   });
   if (!res.ok || !res.body) {
-    const text = await res.text().catch(() => "");
+    const detail = await readErrorDetail(res);
     throw new QueryAgentError(
       `Query Agent returned ${res.status} ${res.statusText}`,
       res.status,
-      text,
+      detail,
     );
   }
 
@@ -287,8 +190,6 @@ export async function streamAskAgent(
       const { value, done } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      // SSE events are blank-line delimited. Loop because a single
-      // chunk can contain multiple full events.
       let sep: number;
       while ((sep = buffer.search(/\r?\n\r?\n/)) >= 0) {
         const rawEvent = buffer.slice(0, sep);
@@ -296,8 +197,6 @@ export async function streamAskAgent(
         dispatchEvent(rawEvent, callbacks);
       }
     }
-    // Flush a trailing partial event if any (shouldn't happen on a
-    // well-behaved server, but harmless to attempt).
     if (buffer.trim()) dispatchEvent(buffer, callbacks);
   } finally {
     try {
@@ -314,7 +213,6 @@ function dispatchEvent(raw: string, callbacks: StreamAskCallbacks): void {
   for (const line of raw.split(/\r?\n/)) {
     if (line.startsWith("event:")) event = line.slice(6).trim();
     else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
-    // Other SSE field types (`id:`, `retry:`, comments) ignored.
   }
   if (dataLines.length === 0) return;
   const data = dataLines.join("\n");
@@ -322,18 +220,15 @@ function dispatchEvent(raw: string, callbacks: StreamAskCallbacks): void {
   try {
     switch (event) {
       case "progress_message": {
-        const parsed = JSON.parse(data) as AgentStreamProgress;
-        callbacks.onProgress?.(parsed);
+        callbacks.onProgress?.(JSON.parse(data) as AgentStreamProgress);
         return;
       }
       case "streamed_tokens": {
-        const parsed = JSON.parse(data) as AgentStreamTokens;
-        callbacks.onTokens?.(parsed);
+        callbacks.onTokens?.(JSON.parse(data) as AgentStreamTokens);
         return;
       }
       case "final_state": {
-        const parsed = JSON.parse(data) as AgentAnswer;
-        callbacks.onFinal?.(parsed);
+        callbacks.onFinal?.(JSON.parse(data) as AgentAnswer);
         return;
       }
       case "error": {
@@ -341,7 +236,6 @@ function dispatchEvent(raw: string, callbacks: StreamAskCallbacks): void {
         return;
       }
       default:
-        // Unknown event: ignore. Forward-compat with new event types.
         return;
     }
   } catch (e) {

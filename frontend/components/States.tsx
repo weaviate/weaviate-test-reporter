@@ -26,8 +26,10 @@ export function ErrorState({ error }: { error: Error }) {
             {error.message}
           </p>
           <p className="mt-3 text-[12px] text-wv-fog-muted">
-            Check that <code className="text-wv-fog">NEXT_PUBLIC_WEAVIATE_URL</code>{" "}
-            points at a reachable cluster and that the collections{" "}
+            Check that the server is configured with{" "}
+            <code className="text-wv-fog">WEAVIATE_URL</code> (and{" "}
+            <code className="text-wv-fog">WEAVIATE_API_KEY</code>) pointing at a
+            reachable cluster, and that the collections{" "}
             <code className="text-wv-fog">TestRun</code> +{" "}
             <code className="text-wv-fog">TestCase</code> exist.
           </p>

@@ -1,10 +1,11 @@
-"use client";
-
 import { CloudOff } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { EmptyState } from "@/components/EmptyState";
 import { AgentChat } from "@/components/AgentChat";
-import { agentAvailable } from "@/lib/env";
+import { getAgentAvailable } from "@/lib/server-env";
+
+// Server-rendered per request so availability reflects the runtime cluster.
+export const dynamic = "force-dynamic";
 
 /**
  * "Ask your tests" — Weaviate Query Agent chatbot.
@@ -14,12 +15,11 @@ import { agentAvailable } from "@/lib/env";
  * the user lands here by URL we render a friendly "not available"
  * state instead of letting the agent fetch fail.
  *
- * `agentAvailable()` reads `process.env.NEXT_PUBLIC_WEAVIATE_URL` which
- * is inlined at build time, so the server-rendered HTML and the client
- * bundle agree — no hydration mismatch.
+ * `getAgentAvailable()` reads the server-only WEAVIATE_URL at request time,
+ * so the cluster URL never reaches the browser.
  */
 export default function AgentPage() {
-  const available = agentAvailable();
+  const available = getAgentAvailable();
 
   return (
     <>
@@ -36,7 +36,7 @@ export default function AgentPage() {
           <EmptyState
             Icon={CloudOff}
             title="Query Agent requires a Weaviate Cloud instance"
-            description="The Agent runs on api.agents.weaviate.io and is exclusive to Weaviate Cloud. Point NEXT_PUBLIC_WEAVIATE_URL at a `*.weaviate.cloud` cluster (with a read-only API key) to enable this tab."
+            description="The Agent runs on api.agents.weaviate.io and is exclusive to Weaviate Cloud. Point WEAVIATE_URL at a `*.weaviate.cloud` cluster (with a read-only API key, configured server-side) to enable this tab."
           />
         )}
       </section>
