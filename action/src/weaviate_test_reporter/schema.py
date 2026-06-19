@@ -31,6 +31,74 @@ import weaviate.classes.config as wvcc
 TEST_RUN = "TestRun"
 TEST_CASE = "TestCase"
 
+# ---------------------------------------------------------------------------
+# Descriptions.
+#
+# The Weaviate Query Agent reads collection + property descriptions from the
+# schema to decide which collection/property to search, filter, or aggregate.
+# Without them it has to guess, which produces flaky / incomplete answers
+# (e.g. failing to filter by `status` or group by `name`). Keep these concise
+# but explicit about VALUES (the exact `status` strings) and intended use.
+#
+# NB: these are applied on CREATE and when a NEW property is added. They are
+# NOT back-filled onto properties that already exist on a live collection —
+# update those in the Weaviate console (see .project/02-weaviate-schema.md).
+# ---------------------------------------------------------------------------
+
+_TEST_RUN_DESCRIPTION = (
+    "A single CI test-run execution (one GitHub Actions job run) of a test "
+    "suite against a specific Weaviate version. Use for run-level questions: "
+    "pass/fail rates, durations, which versions / repositories / branches were "
+    "tested, and trends over time. Each TestCase links to its run via the "
+    "belongsToRun reference."
+)
+
+_TEST_RUN_DESCRIPTIONS: dict[str, str] = {
+    "run_id": "Unique id of the CI run (composite of workflow, job and run number), e.g. 'ci/e2e-backup#12345.1'.",
+    "repository": "GitHub repository the run belongs to, e.g. 'weaviate/weaviate'.",
+    "branch": "Git branch the run executed against, e.g. 'main'.",
+    "commit_hash": "Full git commit SHA the run tested.",
+    "trigger_type": "How the run was triggered: one of 'pull_request', 'push', 'schedule', 'workflow_dispatch'.",
+    "status": "Outcome of the whole run. One of 'success' or 'failure'. Filter status='failure' for failed runs; run-level pass rate = success runs / total runs.",
+    "total_duration_ms": "Total wall-clock duration of the run, in milliseconds.",
+    "timestamp": "When the run started (RFC3339 date-time). Use for time-window filters like 'last 7 days' and for chronological ordering.",
+    "workflow_run_id": "GitHub Actions workflow run id.",
+    "workflow_run_attempt": "Attempt number of the workflow run; increments on re-runs / retries.",
+    "workflow_name": "Name of the GitHub Actions workflow.",
+    "job_name": "Logical job name within the workflow.",
+    "pr_number": "Pull-request number when the run was triggered by a pull_request, otherwise null.",
+    "actor": "GitHub username that triggered the run.",
+    "run_url": "Link to the run on GitHub (display only).",
+    "version_full": "Exact Weaviate build under test incl. pre-release/build suffix, e.g. '1.38.1-rfea1de'. Use for exact-build dedup. Null when no version was supplied.",
+    "version_patch": "Canonical Weaviate release MAJOR.MINOR.PATCH, e.g. '1.38.1'. Group by this for per-release rollups. Null when no version was supplied.",
+    "version_minor": "Weaviate MAJOR.MINOR lineage, e.g. '1.38'. Primary key for grouping runs by version line. Null when no version was supplied.",
+}
+
+_TEST_CASE_DESCRIPTION = (
+    "An individual test-case result within a CI run (one test function / "
+    "assertion). Captures whether a single test passed, failed, or was "
+    "skipped, plus its error output. Linked to its parent run via the "
+    "belongsToRun reference. Use for test-level questions: which tests fail "
+    "most often, flaky tests, failures by suite, and semantic search over "
+    "errors / stack traces (vectorized on name, error_message, stack_trace)."
+)
+
+_TEST_CASE_DESCRIPTIONS: dict[str, str] = {
+    "name": "The test's name / identifier (function or parametrized id), e.g. 'test_backup_restore[s3]'. Group by this to find which tests fail most often.",
+    "test_suite": "Module / suite / package the test belongs to, e.g. 'tests.e2e.test_backup'.",
+    "framework": "Testing framework that produced the result: 'pytest', 'golang' or 'unknown'.",
+    "status": "Outcome of this test. One of 'passed', 'failed' or 'skipped'. Filter status='failed' to find failures.",
+    "duration_ms": "Test execution time, in milliseconds.",
+    "error_message": "One-line failure summary / assertion message; empty when the test passed. Vectorized for semantic search.",
+    "stack_trace": "Full failure traceback; empty when the test passed. Vectorized for semantic search — best for matching failure shapes.",
+    "failure_type": "Category of the failure, e.g. 'AssertionError', 'TimeoutError'; null when the test passed.",
+}
+
+_BELONGS_TO_RUN_DESCRIPTION = (
+    "Reference to the parent TestRun this case belongs to. Follow it to relate "
+    "a test case to its run's version, branch, repository and timestamp."
+)
+
 # (name, data_type, filterable, searchable, range_filters)
 # searchable is meaningful for TEXT only — NB tracks per-property indexes.
 _TEST_RUN_PROPERTY_SPEC: list[tuple[str, wvcc.DataType, bool, bool, bool]] = [
@@ -97,6 +165,7 @@ def _build_property(
     searchable: bool,
     range_filters: bool,
     skip_vectorization: bool | None = None,
+    description: str | None = None,
 ) -> wvcc.Property:
     kwargs: dict[str, Any] = {
         "name": name,
@@ -104,6 +173,8 @@ def _build_property(
         "index_filterable": filterable,
         "index_range_filters": range_filters if range_filters else None,
     }
+    if description:
+        kwargs["description"] = description
     # Only TEXT properties have a searchable inverted index.
     if data_type == wvcc.DataType.TEXT:
         kwargs["index_searchable"] = searchable
@@ -116,14 +187,20 @@ def _build_property(
 
 def _test_run_properties() -> list[wvcc.Property]:
     return [
-        _build_property(name, dt, filt, search, rng)
+        _build_property(
+            name, dt, filt, search, rng,
+            description=_TEST_RUN_DESCRIPTIONS.get(name),
+        )
         for (name, dt, filt, search, rng) in _TEST_RUN_PROPERTY_SPEC
     ]
 
 
 def _test_case_properties() -> list[wvcc.Property]:
     return [
-        _build_property(name, dt, filt, search, rng, skip_vec)
+        _build_property(
+            name, dt, filt, search, rng, skip_vec,
+            description=_TEST_CASE_DESCRIPTIONS.get(name),
+        )
         for (name, dt, filt, search, rng, skip_vec) in _TEST_CASE_PROPERTY_SPEC
     ]
 
@@ -137,6 +214,7 @@ def ensure_test_run_collection(client: weaviate.WeaviateClient) -> None:
         return
     client.collections.create(
         name=TEST_RUN,
+        description=_TEST_RUN_DESCRIPTION,
         inverted_index_config=wvcc.Configure.inverted_index(index_timestamps=True),
         properties=_test_run_properties(),
     )
@@ -157,11 +235,16 @@ def ensure_test_case_collection(
         return
     client.collections.create(
         name=TEST_CASE,
+        description=_TEST_CASE_DESCRIPTION,
         vector_config=vector_config,
         inverted_index_config=wvcc.Configure.inverted_index(index_timestamps=True),
         properties=_test_case_properties(),
         references=[
-            wvcc.ReferenceProperty(name="belongsToRun", target_collection=TEST_RUN),
+            wvcc.ReferenceProperty(
+                name="belongsToRun",
+                target_collection=TEST_RUN,
+                description=_BELONGS_TO_RUN_DESCRIPTION,
+            ),
         ],
     )
 
@@ -188,7 +271,9 @@ def ensure_test_run_properties(client: weaviate.WeaviateClient) -> None:
         name = spec[0]
         if name in existing:
             continue
-        collection.config.add_property(_build_property(*spec))
+        collection.config.add_property(
+            _build_property(*spec, description=_TEST_RUN_DESCRIPTIONS.get(name))
+        )
 
 
 def ensure_test_case_properties(client: weaviate.WeaviateClient) -> None:
@@ -204,4 +289,6 @@ def ensure_test_case_properties(client: weaviate.WeaviateClient) -> None:
         name = spec[0]
         if name in existing:
             continue
-        collection.config.add_property(_build_property(*spec))
+        collection.config.add_property(
+            _build_property(*spec, description=_TEST_CASE_DESCRIPTIONS.get(name))
+        )
