@@ -54,24 +54,49 @@ _TEST_RUN_DESCRIPTION = (
 )
 
 _TEST_RUN_DESCRIPTIONS: dict[str, str] = {
-    "run_id": "Unique id of the CI run (composite of workflow, job and run number), e.g. 'ci/e2e-backup#12345.1'.",
+    "run_id": (
+        "Unique id of the CI run (composite of workflow, job and run number), "
+        "e.g. 'ci/e2e-backup#12345.1'."
+    ),
     "repository": "GitHub repository the run belongs to, e.g. 'weaviate/weaviate'.",
     "branch": "Git branch the run executed against, e.g. 'main'.",
     "commit_hash": "Full git commit SHA the run tested.",
-    "trigger_type": "How the run was triggered: one of 'pull_request', 'push', 'schedule', 'workflow_dispatch'.",
-    "status": "Outcome of the whole run. One of 'success' or 'failure'. Filter status='failure' for failed runs; run-level pass rate = success runs / total runs.",
+    "trigger_type": (
+        "How the run was triggered: one of 'pull_request', 'push', 'schedule', "
+        "'workflow_dispatch'."
+    ),
+    "status": (
+        "Outcome of the whole run. One of 'success' or 'failure'. Filter "
+        "status='failure' for failed runs; run-level pass rate = success runs "
+        "/ total runs."
+    ),
     "total_duration_ms": "Total wall-clock duration of the run, in milliseconds.",
-    "timestamp": "When the run started (RFC3339 date-time). Use for time-window filters like 'last 7 days' and for chronological ordering.",
+    "timestamp": (
+        "When the run started (RFC3339 date-time). Use for time-window filters "
+        "like 'last 7 days' and for chronological ordering."
+    ),
     "workflow_run_id": "GitHub Actions workflow run id.",
     "workflow_run_attempt": "Attempt number of the workflow run; increments on re-runs / retries.",
     "workflow_name": "Name of the GitHub Actions workflow.",
     "job_name": "Logical job name within the workflow.",
-    "pr_number": "Pull-request number when the run was triggered by a pull_request, otherwise null.",
+    "pr_number": (
+        "Pull-request number when the run was triggered by a pull_request, " "otherwise null."
+    ),
     "actor": "GitHub username that triggered the run.",
     "run_url": "Link to the run on GitHub (display only).",
-    "version_full": "Exact Weaviate build under test incl. pre-release/build suffix, e.g. '1.38.1-rfea1de'. Use for exact-build dedup. Null when no version was supplied.",
-    "version_patch": "Canonical Weaviate release MAJOR.MINOR.PATCH, e.g. '1.38.1'. Group by this for per-release rollups. Null when no version was supplied.",
-    "version_minor": "Weaviate MAJOR.MINOR lineage, e.g. '1.38'. Primary key for grouping runs by version line. Null when no version was supplied.",
+    "version_full": (
+        "Exact Weaviate build under test incl. pre-release/build suffix, e.g. "
+        "'1.38.1-rfea1de'. Use for exact-build dedup. Null when no version was "
+        "supplied."
+    ),
+    "version_patch": (
+        "Canonical Weaviate release MAJOR.MINOR.PATCH, e.g. '1.38.1'. Group by "
+        "this for per-release rollups. Null when no version was supplied."
+    ),
+    "version_minor": (
+        "Weaviate MAJOR.MINOR lineage, e.g. '1.38'. Primary key for grouping "
+        "runs by version line. Null when no version was supplied."
+    ),
 }
 
 _TEST_CASE_DESCRIPTION = (
@@ -84,14 +109,29 @@ _TEST_CASE_DESCRIPTION = (
 )
 
 _TEST_CASE_DESCRIPTIONS: dict[str, str] = {
-    "name": "The test's name / identifier (function or parametrized id), e.g. 'test_backup_restore[s3]'. Group by this to find which tests fail most often.",
+    "name": (
+        "The test's name / identifier (function or parametrized id), e.g. "
+        "'test_backup_restore[s3]'. Group by this to find which tests fail most often."
+    ),
     "test_suite": "Module / suite / package the test belongs to, e.g. 'tests.e2e.test_backup'.",
     "framework": "Testing framework that produced the result: 'pytest', 'golang' or 'unknown'.",
-    "status": "Outcome of this test. One of 'passed', 'failed' or 'skipped'. Filter status='failed' to find failures.",
+    "status": (
+        "Outcome of this test. One of 'passed', 'failed' or 'skipped'. "
+        "Filter status='failed' to find failures."
+    ),
     "duration_ms": "Test execution time, in milliseconds.",
-    "error_message": "One-line failure summary / assertion message; empty when the test passed. Vectorized for semantic search.",
-    "stack_trace": "Full failure traceback; empty when the test passed. Vectorized for semantic search — best for matching failure shapes.",
-    "failure_type": "Category of the failure, e.g. 'AssertionError', 'TimeoutError'; null when the test passed.",
+    "error_message": (
+        "One-line failure summary / assertion message; empty when the test "
+        "passed. Vectorized for semantic search."
+    ),
+    "stack_trace": (
+        "Full failure traceback; empty when the test passed. Vectorized for "
+        "semantic search — best for matching failure shapes."
+    ),
+    "failure_type": (
+        "Category of the failure, e.g. 'AssertionError', 'TimeoutError'; null "
+        "when the test passed."
+    ),
 }
 
 _BELONGS_TO_RUN_DESCRIPTION = (
@@ -188,7 +228,11 @@ def _build_property(
 def _test_run_properties() -> list[wvcc.Property]:
     return [
         _build_property(
-            name, dt, filt, search, rng,
+            name,
+            dt,
+            filt,
+            search,
+            rng,
             description=_TEST_RUN_DESCRIPTIONS.get(name),
         )
         for (name, dt, filt, search, rng) in _TEST_RUN_PROPERTY_SPEC
@@ -198,7 +242,12 @@ def _test_run_properties() -> list[wvcc.Property]:
 def _test_case_properties() -> list[wvcc.Property]:
     return [
         _build_property(
-            name, dt, filt, search, rng, skip_vec,
+            name,
+            dt,
+            filt,
+            search,
+            rng,
+            skip_vec,
             description=_TEST_CASE_DESCRIPTIONS.get(name),
         )
         for (name, dt, filt, search, rng, skip_vec) in _TEST_CASE_PROPERTY_SPEC
