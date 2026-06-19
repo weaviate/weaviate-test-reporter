@@ -15,6 +15,26 @@ const DEFAULT_COLLECTIONS = [
 ];
 
 /**
+ * Generic orientation for the Query Agent. It is deliberately NOT a per-query
+ * playbook (no "if asked X, do Y") — that wouldn't scale. It gives the agent:
+ *   1. the two collections + each field's meaning and VALID VALUES,
+ *   2. the belongsToRun cross-reference and how to correlate across it
+ *      (TestCase has no date/version/branch of its own — those live on the
+ *      run), and
+ *   3. generic methodology (answer from the data; finish multi-step calcs).
+ * Without this the agent reliably flakes on filters/aggregations and even
+ * mislabels the `status` value as a result.
+ */
+const SYSTEM_PROMPT = `You answer questions about CI/CD test results stored in this Weaviate instance, using only its data. There are two collections:
+
+- TestRun: one CI test-run execution. Fields: status (values 'success' or 'failure'), timestamp (when the run ran), repository, branch, version_minor / version_patch / version_full (the Weaviate version under test), total_duration_ms, actor, trigger_type, run_id.
+- TestCase: one individual test result within a run. Fields: name (the test's identifier), test_suite, framework, status (values 'passed', 'failed' or 'skipped'), error_message, stack_trace, failure_type.
+
+Relationship: each TestCase has a cross-reference 'belongsToRun' pointing to its parent TestRun. TestCase has NO date, version, branch or repository fields of its own — those live on the TestRun. To scope or group test cases by a run-level attribute (a time window via the run's timestamp, or by version_minor / version_patch / branch / repository), filter or aggregate TestCase through its belongsToRun reference to TestRun. Conversely, to count or list the tests within a run, traverse from TestRun to its TestCases.
+
+Answer directly from this data: run the searches and aggregations you need, and finish multi-step calculations (a pass rate is successful runs divided by total runs; a 'most frequent' ranking is a grouped count ordered by count). Never ask the user to supply data.`;
+
+/**
  * Server-side proxy to the Weaviate Query Agent (Cloud-only). The browser
  * POSTs `{ query, history?, collections? }`; we attach the server-held key +
  * cluster URL and stream the SSE response straight back. This keeps the key
@@ -59,7 +79,7 @@ export async function POST(req: Request): Promise<Response> {
       headers: {},
       query: askPayload,
       collections: DEFAULT_COLLECTIONS,
-      system_prompt: undefined,
+      system_prompt: SYSTEM_PROMPT,
       result_evaluation: "none",
       include_progress: true,
       include_final_state: true,
