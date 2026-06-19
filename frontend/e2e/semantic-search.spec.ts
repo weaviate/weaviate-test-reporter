@@ -25,6 +25,12 @@ test.describe("Semantic Search", () => {
 
   test("empty query disables the submit button", async ({ page }) => {
     await page.goto("/search/");
+    // The textarea is pre-populated with EXAMPLE, so the button starts enabled.
+    // Wait for that before clearing: it confirms the page has hydrated, so the
+    // controlled-input onChange is wired and clearing actually updates `draft`.
+    // Without this the fill races hydration and React reconciles the field back
+    // to EXAMPLE, leaving the button enabled (a flaky failure).
+    await expect(page.getByTestId("search-submit")).toBeEnabled();
     await page.getByTestId("search-textarea").fill("");
     await expect(page.getByTestId("search-submit")).toBeDisabled();
   });
