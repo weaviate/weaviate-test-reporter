@@ -31,9 +31,9 @@ from weaviate.classes.init import Auth
 
 from .config import Config, ConfigError
 from .github_meta import GithubMetadataError, resolve_github_metadata
-from .ingest import ingest_test_cases, insert_test_run
+from .ingest import ingest_test_cases, insert_test_run, resolve_run_started_at
 from .logging import configure_logging, get_logger, group
-from .parser import parse_junit_file
+from .parser import merge_summaries, parse_junit_file, parse_junit_summary
 from .schema import (
     ensure_test_case_collection,
     ensure_test_case_properties,
@@ -138,15 +138,33 @@ def main() -> int:
                 log.warning("no_xml_files_found", pattern=cfg.junit_path)
                 return 0
             cases: list = []
+            summaries = []
             for f in files:
                 file_cases = list(parse_junit_file(Path(f)))
                 cases.extend(file_cases)
+                summaries.append(parse_junit_summary(Path(f)))
                 log.info("parsed_file", path=f, cases=len(file_cases))
-            log.info("cases_parsed_total", count=len(cases))
+            # WS1 D1/D2: real run-start timestamp + run-level counts, merged
+            # across every matched report.
+            run_summary = merge_summaries(summaries)
+            run_started_at = resolve_run_started_at(run_summary)
+            log.info(
+                "cases_parsed_total",
+                count=len(cases),
+                started_at=run_started_at,
+                tests_total=run_summary.tests_total,
+            )
 
         # 4. Insert TestRun and batch TestCase.
         with group("Ingest into Weaviate"):
-            run_uuid = insert_test_run(client, cases, meta, cfg)
+            run_uuid = insert_test_run(
+                client,
+                cases,
+                meta,
+                cfg,
+                summary=run_summary,
+                run_started_at=run_started_at,
+            )
             log.info("test_run_inserted", uuid=run_uuid)
 
             successful, failed = ingest_test_cases(
@@ -157,6 +175,7 @@ def main() -> int:
                 workflow_run_id=meta["workflow_run_id"],
                 workflow_run_attempt=meta["workflow_run_attempt"],
                 job_name=cfg.job_name,
+                run_started_at=run_started_at,
             )
             log.info("test_cases_ingested", successful=successful, failed=failed)
 

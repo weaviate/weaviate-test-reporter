@@ -32,7 +32,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt
 from weaviate.exceptions import WeaviateConnectionError
 
 from .config import Config, parse_version
-from .parser import ParsedCase
+from .parser import ParsedCase, RunSummary
 from .schema import TEST_CASE, TEST_RUN
 
 # ---------- UUID derivation ----------
@@ -71,10 +71,51 @@ def _case_uuid(
 # ---------- TestRun aggregation ----------
 
 
+def resolve_run_started_at(summary: RunSummary | None) -> str:
+    """The run's real start time (WS1 D1) as an ISO string.
+
+    Prefers the earliest `<testsuite timestamp>` captured in the parsed
+    summary; falls back to ingest time (UTC) when no suite emitted one — the
+    same value the existing `timestamp` uses. Computed once per run so the
+    TestRun.started_at and every denormalized TestCase.run_started_at agree.
+    """
+    if summary is not None and summary.started_at is not None:
+        return summary.started_at.isoformat()
+    return datetime.now(UTC).isoformat()
+
+
+def _resolve_counts(cases: list[ParsedCase], summary: RunSummary | None) -> dict[str, int]:
+    """Run-level counts (WS1 D2). Prefers the <testsuite> summary attributes;
+    falls back to counting parsed cases by status so the fields are always
+    populated. `tests_passed` is derived and floored at 0."""
+    if summary is not None:
+        total = summary.tests_total
+        failed = summary.tests_failed
+        errors = summary.tests_errors
+        skipped = summary.tests_skipped
+    else:
+        total = len(cases)
+        # At parse time <error> is folded into "failed"; without the suite
+        # attributes we can't split it back out, so errors stays 0.
+        failed = sum(1 for c in cases if c.status == "failed")
+        errors = 0
+        skipped = sum(1 for c in cases if c.status == "skipped")
+    passed = max(0, total - failed - errors - skipped)
+    return {
+        "tests_total": total,
+        "tests_passed": passed,
+        "tests_failed": failed,
+        "tests_skipped": skipped,
+        "tests_errors": errors,
+    }
+
+
 def aggregate_run_properties(
     cases: list[ParsedCase],
     meta: dict[str, Any],
     cfg: Config,
+    summary: RunSummary | None = None,
+    run_started_at: str | None = None,
 ) -> dict[str, Any]:
     """Build the TestRun property bag from parsed cases + GH metadata.
 
@@ -82,7 +123,11 @@ def aggregate_run_properties(
       and passed both count as non-failures). Empty runs are "success" — a
       missing XML report is signaled separately in __main__.
     - total_duration_ms: sum across all cases.
-    - timestamp: ingest-time UTC (RFC3339-compatible ISO format).
+    - timestamp: ingest-time UTC (RFC3339-compatible ISO format). Kept as
+      ingest time for backward compatibility — NOT repurposed to run-start.
+    - started_at (WS1 D1): real run start from the JUnit summary, falling
+      back to ingest time when no suite emitted a timestamp.
+    - tests_* (WS1 D2): run-level counts from the JUnit summary attributes.
     - run_id: human-readable identifier composed of workflow name, job
       name, run id, and attempt — surfaced in the dashboard.
     """
@@ -90,6 +135,14 @@ def aggregate_run_properties(
     status = "failure" if any_failed else "success"
     total_duration = sum(c.duration_ms for c in cases)
     now_iso = datetime.now(UTC).isoformat()
+    if run_started_at is not None:
+        started_at = run_started_at
+    elif summary is not None and summary.started_at is not None:
+        started_at = summary.started_at.isoformat()
+    else:
+        # No caller-supplied start and no suite timestamp: started_at mirrors
+        # the ingest timestamp exactly (3-arg back-compat / dateless dialect).
+        started_at = now_iso
     workflow = meta["workflow_name"]
     run_id_friendly = (
         f"{workflow}/{cfg.job_name}#{meta['workflow_run_id']}" f".{meta['workflow_run_attempt']}"
@@ -111,6 +164,7 @@ def aggregate_run_properties(
         "status": status,
         "total_duration_ms": total_duration,
         "timestamp": now_iso,
+        "started_at": started_at,
         "workflow_run_id": meta["workflow_run_id"],
         "workflow_run_attempt": meta["workflow_run_attempt"],
         "workflow_name": workflow,
@@ -118,6 +172,7 @@ def aggregate_run_properties(
         "pr_number": meta.get("pr_number"),
         "actor": meta["actor"],
         "run_url": meta["run_url"],
+        **_resolve_counts(cases, summary),
     }
     # Only populate the version slots when parsing succeeded. Weaviate
     # accepts missing optional properties on insert/replace; this
@@ -138,6 +193,8 @@ def insert_test_run(
     cases: list[ParsedCase],
     meta: dict[str, Any],
     cfg: Config,
+    summary: RunSummary | None = None,
+    run_started_at: str | None = None,
 ) -> str:
     """Upsert a single TestRun object. Returns the run UUID.
 
@@ -145,8 +202,14 @@ def insert_test_run(
     duplicate UUID, replace requires the UUID to already exist. The
     idempotent ingestion contract demands true upsert, so we check
     exists() and dispatch.
+
+    `summary` (WS1 D1/D2) supplies the real run-start timestamp and the
+    run-level counts; `run_started_at` lets the caller pin the exact ISO
+    value it also denormalizes onto every TestCase.
     """
-    properties = aggregate_run_properties(cases, meta, cfg)
+    properties = aggregate_run_properties(
+        cases, meta, cfg, summary=summary, run_started_at=run_started_at
+    )
     run_uuid = _run_uuid(
         meta["repository"],
         meta["workflow_run_id"],
@@ -171,8 +234,8 @@ def _retry_wait(retry_state: Any) -> float:
     return min(2**attempt, 8)
 
 
-def _case_properties(c: ParsedCase) -> dict[str, Any]:
-    return {
+def _case_properties(c: ParsedCase, run_started_at: str | None = None) -> dict[str, Any]:
+    props: dict[str, Any] = {
         "name": c.name,
         "test_suite": c.test_suite,
         "framework": c.framework,
@@ -181,7 +244,19 @@ def _case_properties(c: ParsedCase) -> dict[str, Any]:
         "error_message": c.error_message,
         "stack_trace": c.stack_trace,
         "failure_type": c.failure_type,
+        # WS1 D3 (retry / rerun capture).
+        "retry_count": c.retry_count,
+        "passed_on_retry": c.passed_on_retry,
+        "initial_status": c.initial_status,
+        # WS1 D4 (stack-trace fingerprint; None for passed/skipped).
+        "failure_fingerprint": c.failure_fingerprint,
     }
+    # WS1 D1: denormalize the run's start onto every case so time-window
+    # queries filter directly on TestCase. Omit (leave null) when the caller
+    # didn't resolve it, keeping the property optional on legacy rows.
+    if run_started_at is not None:
+        props["run_started_at"] = run_started_at
+    return props
 
 
 @retry(
@@ -198,12 +273,13 @@ def ingest_test_cases(
     workflow_run_id: str,
     workflow_run_attempt: int,
     job_name: str,
+    run_started_at: str | None = None,
 ) -> tuple[int, int]:
     """Server-side streaming batch insert. Returns (successful, failed).
 
     Re-uses the parent run UUID as the belongsToRun cross-reference for
     every TestCase so downstream queries can fetch all cases of a run in
-    a single hop.
+    a single hop. `run_started_at` (WS1 D1) is denormalized onto each case.
     """
     collection = client.collections.get(TEST_CASE)
     submitted = 0
@@ -218,7 +294,7 @@ def ingest_test_cases(
                 c.name,
             )
             batch.add_object(
-                properties=_case_properties(c),
+                properties=_case_properties(c, run_started_at=run_started_at),
                 uuid=uid,
                 references={"belongsToRun": run_uuid},
             )

@@ -97,6 +97,25 @@ _TEST_RUN_DESCRIPTIONS: dict[str, str] = {
         "Weaviate MAJOR.MINOR lineage, e.g. '1.38'. Primary key for grouping "
         "runs by version line. Null when no version was supplied."
     ),
+    "started_at": (
+        "Real run start (RFC3339 date-time) from the JUnit <testsuite "
+        "timestamp>; falls back to ingest time when no suite emitted one. "
+        "Prefer this over 'timestamp' for 'last N days' windows and trends."
+    ),
+    "tests_total": (
+        "Total tests executed in the run (sum of <testsuite tests>). Baseline "
+        "for pass rate and 'expected vs executed' checks."
+    ),
+    "tests_passed": (
+        "Tests that passed: total - failed - errors - skipped (floored at 0). "
+        "Run pass rate = tests_passed / tests_total."
+    ),
+    "tests_failed": "Tests that failed assertions (sum of <testsuite failures>).",
+    "tests_skipped": "Tests skipped / not run (sum of <testsuite skipped>).",
+    "tests_errors": (
+        "Tests that errored out (setup / runtime errors, sum of <testsuite "
+        "errors>); distinct from assertion failures."
+    ),
 }
 
 _TEST_CASE_DESCRIPTION = (
@@ -131,6 +150,28 @@ _TEST_CASE_DESCRIPTIONS: dict[str, str] = {
     "failure_type": (
         "Category of the failure, e.g. 'AssertionError', 'TimeoutError'; null "
         "when the test passed."
+    ),
+    "run_started_at": (
+        "Real start time of the parent run (RFC3339), denormalized from "
+        "TestRun.started_at. Filter time windows ('last 7 days') directly on "
+        "TestCase — no need to hop through belongsToRun."
+    ),
+    "retry_count": (
+        "Number of rerun / flaky attempts recorded for this test in the run "
+        "(0 when the framework reported no retries)."
+    ),
+    "passed_on_retry": (
+        "True when the test failed at least once then passed within the same "
+        "run — the authoritative single-run flake signal. False otherwise."
+    ),
+    "initial_status": (
+        "First-attempt outcome: 'failed' when the test was retried, otherwise "
+        "equal to 'status'. Compare with 'status' to spot recovered flakes."
+    ),
+    "failure_fingerprint": (
+        "Stable hash of the normalized stack trace (line numbers / addresses / "
+        "timestamps / temp paths stripped). Group by it to cluster identical "
+        "failures; null for passed / skipped tests."
     ),
 }
 
@@ -181,6 +222,18 @@ _TEST_RUN_PROPERTY_SPEC: list[tuple[str, wvcc.DataType, bool, bool, bool]] = [
     ("version_full", wvcc.DataType.TEXT, True, False, False),
     ("version_patch", wvcc.DataType.TEXT, True, False, False),
     ("version_minor", wvcc.DataType.TEXT, True, False, False),
+    # WS1 D1/D2 additions (see .project/06-product-roadmap.md §2 and the
+    # additive-migration policy in .project/02-weaviate-schema.md §6).
+    #   - started_at (DATE): real run start from <testsuite timestamp>;
+    #     range-filterable so "last 7 days" windows sort/filter correctly.
+    #   - tests_* (INT): run-level counts from the <testsuite> summary
+    #     attributes; range-filterable for pass-rate / threshold queries.
+    ("started_at", wvcc.DataType.DATE, True, False, True),
+    ("tests_total", wvcc.DataType.INT, True, False, True),
+    ("tests_passed", wvcc.DataType.INT, True, False, True),
+    ("tests_failed", wvcc.DataType.INT, True, False, True),
+    ("tests_skipped", wvcc.DataType.INT, True, False, True),
+    ("tests_errors", wvcc.DataType.INT, True, False, True),
 ]
 
 # TestCase: (name, data_type, filterable, searchable, range_filters, skip_vectorization)
@@ -195,6 +248,20 @@ _TEST_CASE_PROPERTY_SPEC: list[tuple[str, wvcc.DataType, bool, bool, bool, bool]
     ("error_message", wvcc.DataType.TEXT, False, True, False, False),
     ("stack_trace", wvcc.DataType.TEXT, False, True, False, False),
     ("failure_type", wvcc.DataType.TEXT, True, False, False, True),
+    # WS1 D1/D3/D4 additions. All are filter/aggregate signals — none feed a
+    # named vector, so skip_vectorization=True throughout.
+    #   - run_started_at (DATE): denormalized run start for direct time-window
+    #     filtering on TestCase (range-filterable).
+    #   - retry_count (INT): rerun/flaky attempts (range-filterable).
+    #   - passed_on_retry (BOOL): confirmed single-run flake (no range index).
+    #   - initial_status (TEXT): first-attempt outcome.
+    #   - failure_fingerprint (TEXT): normalized-trace dedup key; exact-match
+    #     filter only (not BM25-searchable).
+    ("run_started_at", wvcc.DataType.DATE, True, False, True, True),
+    ("retry_count", wvcc.DataType.INT, True, False, True, True),
+    ("passed_on_retry", wvcc.DataType.BOOL, True, False, False, True),
+    ("initial_status", wvcc.DataType.TEXT, True, False, False, True),
+    ("failure_fingerprint", wvcc.DataType.TEXT, True, False, False, True),
 ]
 
 

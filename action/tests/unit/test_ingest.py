@@ -27,8 +27,9 @@ from weaviate_test_reporter.ingest import (
     aggregate_run_properties,
     ingest_test_cases,
     insert_test_run,
+    resolve_run_started_at,
 )
-from weaviate_test_reporter.parser import ParsedCase
+from weaviate_test_reporter.parser import ParsedCase, RunSummary
 
 
 def _meta(**overrides) -> dict:
@@ -74,6 +75,10 @@ def _case(**overrides) -> ParsedCase:
         error_message=None,
         stack_trace=None,
         failure_type=None,
+        retry_count=0,
+        passed_on_retry=False,
+        initial_status="passed",
+        failure_fingerprint=None,
     )
     base.update(overrides)
     return ParsedCase(**base)
@@ -455,3 +460,148 @@ def test_ingest_test_cases_gives_up_after_max_attempts():
                 workflow_run_attempt=1,
                 job_name="j",
             )
+
+
+# ---------- D1: run started_at + denormalized run_started_at ----------
+
+
+def _summary(**overrides) -> RunSummary:
+    base = dict(
+        started_at=datetime.fromisoformat("2026-06-30T09:30:00+00:00"),
+        tests_total=5,
+        tests_failed=1,
+        tests_errors=1,
+        tests_skipped=1,
+    )
+    base.update(overrides)
+    return RunSummary(**base)
+
+
+def test_resolve_run_started_at_uses_summary_timestamp():
+    started = resolve_run_started_at(_summary())
+    parsed = datetime.fromisoformat(started)
+    assert parsed == datetime.fromisoformat("2026-06-30T09:30:00+00:00")
+
+
+def test_resolve_run_started_at_falls_back_to_now_when_absent():
+    """No suite timestamp (or no summary) -> ingest time, timezone-aware."""
+    for summary in (None, _summary(started_at=None)):
+        started = resolve_run_started_at(summary)
+        parsed = datetime.fromisoformat(started)
+        assert parsed.tzinfo is not None
+
+
+def test_aggregate_sets_started_at_from_summary():
+    props = aggregate_run_properties(
+        [_case()],
+        _meta(),
+        _cfg(),
+        summary=_summary(),
+        run_started_at="2026-06-30T09:30:00+00:00",
+    )
+    assert props["started_at"] == "2026-06-30T09:30:00+00:00"
+    # existing `timestamp` stays ingest time — NOT repurposed to run start.
+    assert props["timestamp"] != props["started_at"]
+    assert datetime.fromisoformat(props["timestamp"]).tzinfo is not None
+
+
+def test_aggregate_started_at_defaults_to_timestamp_without_summary():
+    """Back-compat: 3-arg callers get started_at == ingest timestamp."""
+    props = aggregate_run_properties([_case()], _meta(), _cfg())
+    assert props["started_at"] == props["timestamp"]
+
+
+def test_aggregate_populates_run_counts_from_summary():
+    props = aggregate_run_properties([_case()], _meta(), _cfg(), summary=_summary())
+    assert props["tests_total"] == 5
+    assert props["tests_failed"] == 1
+    assert props["tests_errors"] == 1
+    assert props["tests_skipped"] == 1
+    # passed = total - failed - errors - skipped
+    assert props["tests_passed"] == 2
+
+
+def test_aggregate_counts_never_negative():
+    """Malformed summaries (failures+errors+skipped > total) must floor
+    tests_passed at 0, never go negative."""
+    props = aggregate_run_properties(
+        [_case()],
+        _meta(),
+        _cfg(),
+        summary=_summary(tests_total=1, tests_failed=3, tests_errors=0, tests_skipped=0),
+    )
+    assert props["tests_passed"] == 0
+
+
+def test_aggregate_derives_counts_from_cases_without_summary():
+    """No <testsuite> count attributes available -> fall back to counting
+    the parsed cases by status so the fields are always populated."""
+    cases = [
+        _case(status="passed"),
+        _case(status="passed"),
+        _case(status="failed"),
+        _case(status="skipped"),
+    ]
+    props = aggregate_run_properties(cases, _meta(), _cfg())
+    assert props["tests_total"] == 4
+    assert props["tests_failed"] == 1
+    assert props["tests_skipped"] == 1
+    assert props["tests_passed"] == 2
+
+
+def test_case_properties_include_retry_and_fingerprint_fields():
+    """Every ingested TestCase carries the D3/D4 fields."""
+    client = MagicMock()
+    collection = MagicMock()
+    client.collections.get.return_value = collection
+    batch_ctx = MagicMock()
+    collection.batch.stream.return_value.__enter__.return_value = batch_ctx
+    collection.batch.failed_objects = []
+
+    case = _case(
+        status="passed",
+        retry_count=2,
+        passed_on_retry=True,
+        initial_status="failed",
+        failure_fingerprint=None,
+    )
+    ingest_test_cases(
+        client,
+        [case],
+        "ru",
+        repository="r",
+        workflow_run_id="1",
+        workflow_run_attempt=1,
+        job_name="j",
+        run_started_at="2026-06-30T09:30:00+00:00",
+    )
+    props = batch_ctx.add_object.call_args.kwargs["properties"]
+    assert props["retry_count"] == 2
+    assert props["passed_on_retry"] is True
+    assert props["initial_status"] == "failed"
+    assert "failure_fingerprint" in props
+    # D1 denormalization: the run's start is stamped on every case.
+    assert props["run_started_at"] == "2026-06-30T09:30:00+00:00"
+
+
+def test_case_properties_omit_run_started_at_when_not_provided():
+    """Back-compat: callers that don't thread run_started_at leave the
+    key out (null on the row) rather than crashing."""
+    client = MagicMock()
+    collection = MagicMock()
+    client.collections.get.return_value = collection
+    batch_ctx = MagicMock()
+    collection.batch.stream.return_value.__enter__.return_value = batch_ctx
+    collection.batch.failed_objects = []
+
+    ingest_test_cases(
+        client,
+        [_case()],
+        "ru",
+        repository="r",
+        workflow_run_id="1",
+        workflow_run_attempt=1,
+        job_name="j",
+    )
+    props = batch_ctx.add_object.call_args.kwargs["properties"]
+    assert "run_started_at" not in props

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="com.example.EdgeTest" time="2.0" tests="3" errors="1" skipped="1" failures="0" timestamp="2026-06-30T15:00:00">
+  <testcase name="testFlakyErrorRecovers" classname="com.example.EdgeTest" time="0.5">
+    <flakyError message="setup blew up try 1" type="java.lang.IllegalStateException">boot error 1
+      at com.example.EdgeTest.testFlakyErrorRecovers(EdgeTest.java:12)</flakyError>
+    <flakyError message="setup blew up try 2" type="java.lang.IllegalStateException">boot error 2
+      at com.example.EdgeTest.testFlakyErrorRecovers(EdgeTest.java:12)</flakyError>
+  </testcase>
+  <testcase name="testErrorsAfterReruns" classname="com.example.EdgeTest" time="0.9">
+    <rerunError message="rerun error" type="java.lang.RuntimeException">rerun err
+      at com.example.EdgeTest.testErrorsAfterReruns(EdgeTest.java:22)</rerunError>
+    <error message="final error" type="java.lang.RuntimeException">final err
+      at com.example.EdgeTest.testErrorsAfterReruns(EdgeTest.java:22)</error>
+  </testcase>
+  <testcase name="testRetriedThenSkipped" classname="com.example.EdgeTest" time="0.1">
+    <flakyFailure message="failed once" type="java.lang.AssertionError">fail then skip
+      at com.example.EdgeTest.testRetriedThenSkipped(EdgeTest.java:33)</flakyFailure>
+    <skipped message="quarantined after flake"/>
+  </testcase>
+</testsuite>

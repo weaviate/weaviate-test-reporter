@@ -68,6 +68,13 @@ def test_ensure_test_run_creates_when_missing():
         "version_full",
         "version_patch",
         "version_minor",
+        # WS1 D1/D2 additions.
+        "started_at",
+        "tests_total",
+        "tests_passed",
+        "tests_failed",
+        "tests_skipped",
+        "tests_errors",
     }
     assert prop_names == expected
 
@@ -98,6 +105,13 @@ def test_test_run_index_flags_are_explicit():
         "job_name",
         "pr_number",
         "actor",
+        # WS1 D1/D2 additions.
+        "started_at",
+        "tests_total",
+        "tests_passed",
+        "tests_failed",
+        "tests_skipped",
+        "tests_errors",
     ):
         assert props[f].indexFilterable is True, f"{f} should be filterable"
 
@@ -111,6 +125,14 @@ def test_test_run_index_flags_are_explicit():
         "timestamp",
         "workflow_run_attempt",
         "pr_number",
+        # WS1: real run-start date + numeric run counts are range-filterable
+        # so "last 7 days" windows and count thresholds work directly.
+        "started_at",
+        "tests_total",
+        "tests_passed",
+        "tests_failed",
+        "tests_skipped",
+        "tests_errors",
     ):
         assert props[r].indexRangeFilters is True, f"{r} should be range-filterable"
 
@@ -157,6 +179,12 @@ def test_ensure_test_case_creates_with_named_vector_config():
         "error_message",
         "stack_trace",
         "failure_type",
+        # WS1 D1/D3/D4 additions.
+        "run_started_at",
+        "retry_count",
+        "passed_on_retry",
+        "initial_status",
+        "failure_fingerprint",
     }
     assert prop_names == expected
 
@@ -174,7 +202,7 @@ def test_test_case_index_flags_match_schema_doc():
         assert props[v].skip_vectorization is False, f"{v} must source a vector"
 
     # Filterable text fields opt OUT of vectorization.
-    for f in ("test_suite", "framework", "status", "failure_type"):
+    for f in ("test_suite", "framework", "status", "failure_type", "initial_status"):
         assert props[f].indexFilterable is True, f"{f} should be filterable"
         assert props[f].indexSearchable is False, f"{f} should not be searchable"
         assert props[f].skip_vectorization is True
@@ -182,6 +210,24 @@ def test_test_case_index_flags_match_schema_doc():
     # duration_ms is filterable + range-filterable for "slowest tests" queries.
     assert props["duration_ms"].indexFilterable is True
     assert props["duration_ms"].indexRangeFilters is True
+
+    # WS1: run_started_at (denormalized run start) — filterable + range so
+    # time-window queries hit TestCase directly, no cross-ref hop.
+    assert props["run_started_at"].indexFilterable is True
+    assert props["run_started_at"].indexRangeFilters is True
+
+    # retry_count is filterable + range ("tests retried >= N").
+    assert props["retry_count"].indexFilterable is True
+    assert props["retry_count"].indexRangeFilters is True
+
+    # passed_on_retry BOOL: filterable, no range index.
+    assert props["passed_on_retry"].indexFilterable is True
+
+    # failure_fingerprint is an exact-match dedup key: filterable, NOT
+    # searchable, and explicitly excluded from vectorization.
+    assert props["failure_fingerprint"].indexFilterable is True
+    assert props["failure_fingerprint"].indexSearchable is False
+    assert props["failure_fingerprint"].skip_vectorization is True
 
 
 def test_ensure_test_case_can_disable_vectorization():
@@ -276,9 +322,21 @@ def _mock_existing_collection(existing_property_names: set[str]):
     return client, collection
 
 
+# The six WS1 D1/D2 run-level properties added on top of the version slots.
+_WS1_RUN_PROPS = {
+    "started_at",
+    "tests_total",
+    "tests_passed",
+    "tests_failed",
+    "tests_skipped",
+    "tests_errors",
+}
+
+
 def test_ensure_test_run_properties_adds_missing_version_props():
-    """The TestRun collection pre-dates the version-* properties — the
-    migration must add all three via `collection.config.add_property`."""
+    """A collection that already carries the WS1 fields but pre-dates the
+    version-* properties — the migration must add exactly the three version
+    slots via `collection.config.add_property`."""
     pre_migration = {
         "run_id",
         "repository",
@@ -295,6 +353,7 @@ def test_ensure_test_run_properties_adds_missing_version_props():
         "pr_number",
         "actor",
         "run_url",
+        *_WS1_RUN_PROPS,
     }
     client, collection = _mock_existing_collection(pre_migration)
 
@@ -303,6 +362,38 @@ def test_ensure_test_run_properties_adds_missing_version_props():
     assert collection.config.add_property.call_count == 3
     added_names = {call.args[0].name for call in collection.config.add_property.call_args_list}
     assert added_names == {"version_full", "version_patch", "version_minor"}
+
+
+def test_ensure_test_run_properties_adds_missing_ws1_props():
+    """A live collection that shipped the version slots but pre-dates WS1 —
+    the additive migration must add the six D1/D2 run-level fields."""
+    pre_ws1 = {
+        "run_id",
+        "repository",
+        "branch",
+        "commit_hash",
+        "trigger_type",
+        "status",
+        "total_duration_ms",
+        "timestamp",
+        "workflow_run_id",
+        "workflow_run_attempt",
+        "workflow_name",
+        "job_name",
+        "pr_number",
+        "actor",
+        "run_url",
+        "version_full",
+        "version_patch",
+        "version_minor",
+    }
+    client, collection = _mock_existing_collection(pre_ws1)
+
+    ensure_test_run_properties(client)
+
+    assert collection.config.add_property.call_count == len(_WS1_RUN_PROPS)
+    added_names = {call.args[0].name for call in collection.config.add_property.call_args_list}
+    assert added_names == _WS1_RUN_PROPS
 
 
 def test_ensure_test_run_properties_adds_only_version_patch_when_others_present():
@@ -328,6 +419,7 @@ def test_ensure_test_run_properties_adds_only_version_patch_when_others_present(
         "run_url",
         "version_full",
         "version_minor",
+        *_WS1_RUN_PROPS,
     }
     client, collection = _mock_existing_collection(pre_patch)
 
@@ -360,6 +452,7 @@ def test_ensure_test_run_properties_is_idempotent():
         "version_full",
         "version_patch",
         "version_minor",
+        *_WS1_RUN_PROPS,
     }
     client, collection = _mock_existing_collection(full_spec_names)
 
@@ -379,10 +472,19 @@ def test_ensure_test_run_properties_no_op_when_collection_missing():
     client.collections.get.assert_not_called()
 
 
+# The five WS1 D1/D3/D4 case-level properties.
+_WS1_CASE_PROPS = {
+    "run_started_at",
+    "retry_count",
+    "passed_on_retry",
+    "initial_status",
+    "failure_fingerprint",
+}
+
+
 def test_ensure_test_case_properties_is_idempotent_on_current_spec():
-    """No new TestCase props in this migration — `add_property` must
-    not be called when the live collection already has the full spec.
-    The function exists so future additive changes inherit the path."""
+    """When the live collection already has the full spec — including the
+    WS1 case fields — `add_property` must not be called."""
     full_case_spec_names = {
         "name",
         "test_suite",
@@ -392,12 +494,35 @@ def test_ensure_test_case_properties_is_idempotent_on_current_spec():
         "error_message",
         "stack_trace",
         "failure_type",
+        *_WS1_CASE_PROPS,
     }
     client, collection = _mock_existing_collection(full_case_spec_names)
 
     ensure_test_case_properties(client)
 
     collection.config.add_property.assert_not_called()
+
+
+def test_ensure_test_case_properties_adds_missing_ws1_props():
+    """A TestCase collection that pre-dates WS1 — the additive migration
+    must add the five D1/D3/D4 case-level fields."""
+    pre_ws1 = {
+        "name",
+        "test_suite",
+        "framework",
+        "status",
+        "duration_ms",
+        "error_message",
+        "stack_trace",
+        "failure_type",
+    }
+    client, collection = _mock_existing_collection(pre_ws1)
+
+    ensure_test_case_properties(client)
+
+    assert collection.config.add_property.call_count == len(_WS1_CASE_PROPS)
+    added_names = {call.args[0].name for call in collection.config.add_property.call_args_list}
+    assert added_names == _WS1_CASE_PROPS
 
 
 # Silence unused-import lint when wvcc isn't directly referenced.

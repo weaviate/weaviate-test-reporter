@@ -8,10 +8,19 @@ attributes, mixed root elements).
 from __future__ import annotations
 
 import tracemalloc
+from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
 
-from weaviate_test_reporter.parser import MAX_TEXT_BYTES, TRUNC_MARKER, parse_junit_file
+from weaviate_test_reporter.parser import (
+    MAX_TEXT_BYTES,
+    TRUNC_MARKER,
+    merge_summaries,
+    normalize_stack_trace,
+    parse_junit_file,
+    parse_junit_summary,
+    stack_trace_fingerprint,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -275,3 +284,248 @@ def test_parse_junit_file_is_a_generator(tmp_path: Path):
     # First call to next() should produce a real ParsedCase
     first = next(result)
     assert first.name == "test_case_0"
+
+
+# ---------- D3: retry / rerun capture (per-case) ----------
+
+
+def test_surefire_reruns_flaky_pass_is_passed_on_retry():
+    """A surefire <flakyFailure> case that ultimately PASSED is the
+    gold-standard flake signal: retry_count counts the flaky elements,
+    passed_on_retry is True, initial_status records the first-attempt fail."""
+    cases = {c.name: c for c in parse_junit_file(FIXTURES / "surefire_reruns.xml")}
+    flaky = cases["testEventuallyPasses"]
+    assert flaky.status == "passed"
+    assert flaky.retry_count == 2
+    assert flaky.passed_on_retry is True
+    assert flaky.initial_status == "failed"
+
+
+def test_surefire_reruns_final_failure_is_not_passed_on_retry():
+    """A case with <rerunFailure> retries that still ends in <failure> is a
+    real failure, not a flake — passed_on_retry must be False."""
+    cases = {c.name: c for c in parse_junit_file(FIXTURES / "surefire_reruns.xml")}
+    failed = cases["testTrulyFails"]
+    assert failed.status == "failed"
+    assert failed.retry_count == 1
+    assert failed.passed_on_retry is False
+    assert failed.initial_status == "failed"
+
+
+def test_surefire_reruns_clean_pass_has_no_retries():
+    cases = {c.name: c for c in parse_junit_file(FIXTURES / "surefire_reruns.xml")}
+    clean = cases["testPassesClean"]
+    assert clean.status == "passed"
+    assert clean.retry_count == 0
+    assert clean.passed_on_retry is False
+    assert clean.initial_status == "passed"
+
+
+def test_dialects_without_reruns_yield_zero_retry_fields():
+    """pytest / gotestsum / jest emit no rerun elements — every case must
+    degrade to retry_count=0, passed_on_retry=False, initial_status==status."""
+    for fixture in ("pytest_simple.xml", "gotestsum.xml", "jest.xml"):
+        for c in parse_junit_file(FIXTURES / fixture):
+            assert c.retry_count == 0, f"{fixture}:{c.name}"
+            assert c.passed_on_retry is False, f"{fixture}:{c.name}"
+            assert c.initial_status == c.status, f"{fixture}:{c.name}"
+
+
+def test_flaky_error_that_recovers_is_passed_on_retry():
+    """<flakyError> (error-type retry) that ultimately passes is a flake,
+    same as <flakyFailure>: retry_count counts the error retries."""
+    cases = {c.name: c for c in parse_junit_file(FIXTURES / "surefire_rerun_edge.xml")}
+    flaky = cases["testFlakyErrorRecovers"]
+    assert flaky.status == "passed"
+    assert flaky.retry_count == 2
+    assert flaky.passed_on_retry is True
+    assert flaky.initial_status == "failed"
+
+
+def test_rerun_error_with_final_error_is_not_flaky():
+    """<rerunError> retries followed by a final <error> is a real failure."""
+    cases = {c.name: c for c in parse_junit_file(FIXTURES / "surefire_rerun_edge.xml")}
+    failed = cases["testErrorsAfterReruns"]
+    assert failed.status == "failed"
+    assert failed.retry_count == 1
+    assert failed.passed_on_retry is False
+    assert failed.initial_status == "failed"
+
+
+def test_retried_then_skipped_is_not_passed_on_retry():
+    """A case that failed once then ended SKIPPED (e.g. quarantined) must
+    record the retry but NOT count as passed-on-retry."""
+    cases = {c.name: c for c in parse_junit_file(FIXTURES / "surefire_rerun_edge.xml")}
+    skipped = cases["testRetriedThenSkipped"]
+    assert skipped.status == "skipped"
+    assert skipped.retry_count == 1
+    assert skipped.passed_on_retry is False
+    assert skipped.initial_status == "failed"
+
+
+# ---------- D4: stack-trace fingerprint ----------
+
+
+def test_normalize_strips_volatile_line_numbers_and_addresses():
+    """Two traces that differ only in line numbers, hex addresses, tmp
+    paths, and timestamps must normalize to the SAME string."""
+    a = (
+        "2026-06-30T14:23:11Z ERROR at /tmp/build-abc123/mod.py:42 "
+        "frame 0x7f8a2b1c line 42: RuntimeError: connection reset"
+    )
+    b = (
+        "2026-07-01T09:00:05Z ERROR at /tmp/build-def999/mod.py:87 "
+        "frame 0x9c1d3e00 line 87: RuntimeError: connection reset"
+    )
+    assert normalize_stack_trace(a) == normalize_stack_trace(b)
+
+
+def test_normalize_keeps_distinct_error_shapes_distinct():
+    """Distinct error messages / types must NOT collapse — over-normalization
+    would make R4 clustering merge unrelated bugs."""
+    a = "at mod.py:42: RuntimeError: connection reset"
+    b = "at mod.py:42: ValueError: expected non-empty payload"
+    assert normalize_stack_trace(a) != normalize_stack_trace(b)
+
+
+def test_fingerprint_is_stable_16_char_hex():
+    fp = stack_trace_fingerprint("at mod.py:42: RuntimeError: boom")
+    assert fp is not None
+    assert len(fp) == 16
+    assert all(ch in "0123456789abcdef" for ch in fp)
+    # deterministic
+    assert fp == stack_trace_fingerprint("at mod.py:99: RuntimeError: boom")
+
+
+def test_fingerprint_none_for_empty():
+    assert stack_trace_fingerprint(None) is None
+    assert stack_trace_fingerprint("") is None
+
+
+def test_failed_case_has_fingerprint_passed_and_skipped_do_not():
+    cases = {c.name: c for c in parse_junit_file(FIXTURES / "pytest_simple.xml")}
+    failed = cases["test_restore_fails_on_missing"]
+    passed = cases["test_backup_creates_snapshot"]
+    skipped = cases["test_backup_skip_when_disabled"]
+    assert failed.failure_fingerprint is not None
+    assert len(failed.failure_fingerprint) == 16
+    assert passed.failure_fingerprint is None
+    assert skipped.failure_fingerprint is None
+
+
+def test_identical_failures_share_a_fingerprint():
+    """Two failing cases whose traces differ only in volatile tokens must
+    produce the same fingerprint — the exact-match dedup key for R4."""
+    a = stack_trace_fingerprint("panic at /tmp/x-1/a.go:10 addr 0x1a")
+    b = stack_trace_fingerprint("panic at /tmp/x-2/a.go:55 addr 0x2b")
+    assert a == b
+
+
+def test_gotestsum_fingerprint_stable_across_elapsed_durations():
+    """Go/gotestsum failures end with `--- FAIL: TestX (0.08s)`. The elapsed
+    time is volatile run-to-run; it must NOT fragment the fingerprint (this
+    would shatter R4 clustering for the ecosystem's primary language)."""
+    cases = {c.name: c for c in parse_junit_file(FIXTURES / "gotestsum.xml")}
+    failed = cases["TestBackup_RestoreFromMissing"]
+    assert failed.stack_trace is not None and "(0.08s)" in failed.stack_trace
+    fp_a = stack_trace_fingerprint(failed.stack_trace)
+    fp_b = stack_trace_fingerprint(failed.stack_trace.replace("(0.08s)", "(0.12s)"))
+    assert fp_a == fp_b
+
+
+def test_normalize_collapses_go_duration_units():
+    """All Go elapsed-time suffixes collapse to one token regardless of unit
+    or magnitude."""
+    baseline = normalize_stack_trace("panic in TestX (0.08s)")
+    for dur in ("(5s)", "(1.5m)", "(200ms)", "(3µs)", "(45us)", "(2h)", "(900ns)"):
+        assert normalize_stack_trace(f"panic in TestX {dur}") == baseline
+
+
+def test_go_duration_normalization_keeps_distinct_failures_distinct():
+    """The duration collapse must not merge genuinely different Go failures."""
+    a = "--- FAIL: TestFoo (0.08s)\n    foo_test.go:10: assertion failed"
+    b = "--- FAIL: TestFoo (0.08s)\n    foo_test.go:10: nil pointer dereference"
+    assert stack_trace_fingerprint(a) != stack_trace_fingerprint(b)
+
+
+def test_normalize_strips_ci_runner_work_dirs():
+    """The same failure fingerprints identically across GitHub-hosted,
+    self-hosted, and legacy runner work directories."""
+    gh = "FAIL at /home/runner/work/repo/repo/pkg/x_test.go:12"
+    self_hosted = "FAIL at /home/actions-runner/_work/repo/repo/pkg/x_test.go:12"
+    legacy = "FAIL at /runner/_work/repo/repo/pkg/x_test.go:12"
+    assert normalize_stack_trace(gh) == normalize_stack_trace(self_hosted)
+    assert normalize_stack_trace(self_hosted) == normalize_stack_trace(legacy)
+
+
+# ---------- D1 + D2: run summary (started_at + counts) ----------
+
+
+def test_parse_summary_reads_earliest_timestamp():
+    """started_at is the earliest <testsuite timestamp> across all suites."""
+    summary = parse_junit_summary(FIXTURES / "timestamped_counts.xml")
+    assert summary.started_at == datetime(2026, 6, 30, 9, 30, 0, tzinfo=UTC)
+
+
+def test_parse_summary_sums_counts_across_suites():
+    """tests_* come from the <testsuite tests= failures= errors= skipped=>
+    attributes summed across suites (not from per-case classification)."""
+    summary = parse_junit_summary(FIXTURES / "timestamped_counts.xml")
+    assert summary.tests_total == 5
+    assert summary.tests_failed == 1
+    assert summary.tests_errors == 1
+    assert summary.tests_skipped == 1
+
+
+def test_parse_summary_naive_timestamp_assumed_utc():
+    """Surefire emits a timezone-naive timestamp; we treat it as UTC so the
+    Weaviate DATE column is always timezone-aware."""
+    summary = parse_junit_summary(FIXTURES / "surefire_reruns.xml")
+    assert summary.started_at == datetime(2026, 6, 30, 14, 23, 11, tzinfo=UTC)
+
+
+def test_parse_summary_no_timestamp_returns_none():
+    """pytest-junit rarely emits a timestamp — started_at falls back to None
+    so the caller can substitute ingest time."""
+    summary = parse_junit_summary(FIXTURES / "pytest_simple.xml")
+    assert summary.started_at is None
+    # counts still populate (junitparser recomputes from children when the
+    # attributes are absent).
+    assert summary.tests_total == 3
+
+
+def test_parse_summary_recomputes_counts_when_attributes_absent():
+    """D2 fallback: a <testsuite> that omits tests=/failures=/errors=/skipped=
+    must still yield correct run-level counts (recomputed from child cases).
+    This is what makes the D2 counts robust for dialects that skip the
+    summary attributes."""
+    summary = parse_junit_summary(FIXTURES / "no_count_attributes.xml")
+    assert summary.tests_total == 4
+    assert summary.tests_failed == 1
+    assert summary.tests_errors == 1
+    assert summary.tests_skipped == 1
+
+
+def test_parse_summary_is_fail_safe_on_garbage(tmp_path: Path):
+    """A malformed XML must never raise — the action can't break CI."""
+    bad = tmp_path / "bad.xml"
+    bad.write_text("<not-junit>>>garbage")
+    summary = parse_junit_summary(bad)
+    assert summary.started_at is None
+    assert summary.tests_total == 0
+
+
+def test_merge_summaries_picks_min_timestamp_and_sums_counts():
+    a = parse_junit_summary(FIXTURES / "timestamped_counts.xml")
+    b = parse_junit_summary(FIXTURES / "surefire_reruns.xml")
+    merged = merge_summaries([a, b])
+    # earliest across both files
+    assert merged.started_at == datetime(2026, 6, 30, 9, 30, 0, tzinfo=UTC)
+    assert merged.tests_total == a.tests_total + b.tests_total
+    assert merged.tests_failed == a.tests_failed + b.tests_failed
+
+
+def test_merge_summaries_empty_is_null_summary():
+    merged = merge_summaries([])
+    assert merged.started_at is None
+    assert merged.tests_total == 0
