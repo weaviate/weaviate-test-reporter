@@ -1,7 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { CheckCircle2, GitBranch, Layers, ListChecks, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  GitBranch,
+  Layers,
+  ListChecks,
+  XCircle,
+} from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorState, LoadingState } from "@/components/States";
@@ -134,7 +140,7 @@ function VersionCard({
       </header>
 
       <p className="mt-4 text-[11px] uppercase tracking-[0.2em] font-mono text-wv-fog-muted">
-        Pass rate
+        Run pass rate
       </p>
       <p
         className={`font-display text-2xl tabular-nums ${toneAccent(tone)}`}
@@ -151,6 +157,17 @@ function VersionCard({
         <dt>Passing</dt>
         <dd className="text-right text-wv-fog tabular-nums">
           {version.passingRuns.toLocaleString()}
+        </dd>
+        <dt>Tests</dt>
+        <dd className="text-right text-wv-fog tabular-nums">
+          {version.tests.toLocaleString()}
+        </dd>
+        <dt>Test pass rate</dt>
+        <dd
+          className={`text-right tabular-nums ${toneAccent(passRateTone(version.testPassRate))}`}
+          data-testid={`version-test-pass-rate-${version.minor}`}
+        >
+          {formatPct(version.testPassRate)}
         </dd>
         <dt>Patches</dt>
         <dd

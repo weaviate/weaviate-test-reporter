@@ -106,14 +106,12 @@ describe("computeFlaky", () => {
 });
 
 describe("deriveKpis", () => {
-  it("computes pass rate, totals, avg duration, and top failing suite", () => {
+  it("computes pass rate from run-level counts, plus avg duration + top failing suite", () => {
     const kpis = deriveKpis({
       totalRuns: 3,
       avgDurationMean: 1234.5,
-      caseStatusGroups: [
-        { value: "passed", count: 8 },
-        { value: "failed", count: 2 },
-      ],
+      totalTests: 10,
+      passedTests: 8,
       failedSuiteGroups: [
         { suite: "suiteA", count: 2 },
         { suite: "suiteB", count: 5 },
@@ -128,15 +126,12 @@ describe("deriveKpis", () => {
     });
   });
 
-  it("includes skipped cases in totalCases (matches old meta.count)", () => {
+  it("counts skipped in totalTests (denominator spans all statuses)", () => {
     const kpis = deriveKpis({
       totalRuns: 1,
       avgDurationMean: null,
-      caseStatusGroups: [
-        { value: "passed", count: 6 },
-        { value: "failed", count: 2 },
-        { value: "skipped", count: 2 },
-      ],
+      totalTests: 10, // 6 passed + 2 failed + 2 skipped
+      passedTests: 6,
       failedSuiteGroups: [],
     });
     expect(kpis.totalCases).toBe(10);
@@ -145,11 +140,12 @@ describe("deriveKpis", () => {
     expect(kpis.avgRunDurationMs).toBe(0);
   });
 
-  it("guards against divide-by-zero with no cases", () => {
+  it("guards against divide-by-zero with no tests", () => {
     const kpis = deriveKpis({
       totalRuns: 0,
       avgDurationMean: null,
-      caseStatusGroups: [],
+      totalTests: 0,
+      passedTests: 0,
       failedSuiteGroups: [],
     });
     expect(kpis.passRate).toBe(0);
@@ -158,29 +154,87 @@ describe("deriveKpis", () => {
 });
 
 describe("rollupRunsByMinor", () => {
-  it("counts rows exactly, derives run-level pass rate + sorted distinct patches, newest minor first", () => {
+  it("counts rows exactly, derives run + test pass rates, sorted distinct patches, newest minor first", () => {
     const out = rollupRunsByMinor([
-      { version_minor: "1.37", version_patch: "1.37.0", status: "success" },
-      { version_minor: "1.37", version_patch: "1.37.1", status: "success" },
-      { version_minor: "1.37", version_patch: "1.37.0", status: "success" },
-      { version_minor: "1.37", version_patch: "1.37.1", status: "failure" },
-      { version_minor: "1.38", version_patch: "1.38.0", status: "success" },
-      { version_minor: "1.38", version_patch: "1.38.0", status: "success" },
+      {
+        version_minor: "1.37",
+        version_patch: "1.37.0",
+        status: "success",
+        tests_total: 10,
+        tests_passed: 10,
+      },
+      {
+        version_minor: "1.37",
+        version_patch: "1.37.1",
+        status: "success",
+        tests_total: 10,
+        tests_passed: 9,
+      },
+      {
+        version_minor: "1.37",
+        version_patch: "1.37.0",
+        status: "success",
+        tests_total: 10,
+        tests_passed: 10,
+      },
+      {
+        version_minor: "1.37",
+        version_patch: "1.37.1",
+        status: "failure",
+        tests_total: 10,
+        tests_passed: 7,
+      },
+      {
+        version_minor: "1.38",
+        version_patch: "1.38.0",
+        status: "success",
+        tests_total: 5,
+        tests_passed: 5,
+      },
+      {
+        version_minor: "1.38",
+        version_patch: "1.38.0",
+        status: "success",
+        tests_total: 5,
+        tests_passed: 5,
+      },
     ]);
     expect(out.map((r) => r.minor)).toEqual(["1.38", "1.37"]);
     const v137 = out.find((r) => r.minor === "1.37")!;
     expect(v137.runs).toBe(4);
     expect(v137.passingRuns).toBe(3);
     expect(v137.passRate).toBe(0.75);
+    // test-level: 36 of 40 individual cases passed
+    expect(v137.tests).toBe(40);
+    expect(v137.testsPassed).toBe(36);
+    expect(v137.testPassRate).toBe(0.9);
     // distinct (1.37.0 appears twice), sorted descending
     expect(v137.patches).toEqual(["1.37.1", "1.37.0"]);
   });
 
   it("ignores runs with no version_minor and dedupes patches", () => {
     const out = rollupRunsByMinor([
-      { version_minor: null, version_patch: "x", status: "success" },
-      { version_minor: "1.40", version_patch: "1.40.0", status: "failure" },
-      { version_minor: "1.40", version_patch: "1.40.0", status: "failure" },
+      {
+        version_minor: null,
+        version_patch: "x",
+        status: "success",
+        tests_total: 3,
+        tests_passed: 3,
+      },
+      {
+        version_minor: "1.40",
+        version_patch: "1.40.0",
+        status: "failure",
+        tests_total: 8,
+        tests_passed: 6,
+      },
+      {
+        version_minor: "1.40",
+        version_patch: "1.40.0",
+        status: "failure",
+        tests_total: 8,
+        tests_passed: 5,
+      },
     ]);
     expect(out).toHaveLength(1);
     expect(out[0]).toMatchObject({
@@ -188,6 +242,9 @@ describe("rollupRunsByMinor", () => {
       runs: 2,
       passingRuns: 0,
       passRate: 0,
+      tests: 16,
+      testsPassed: 11,
+      testPassRate: 0.6875,
       patches: ["1.40.0"],
     });
   });

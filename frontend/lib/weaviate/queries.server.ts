@@ -61,6 +61,9 @@ type RunProps = {
   status: string;
   total_duration_ms: number;
   timestamp: Date;
+  started_at: Date;
+  tests_total: number;
+  tests_passed: number;
   workflow_run_id: string;
   workflow_run_attempt: number;
   workflow_name: string;
@@ -81,6 +84,7 @@ type CaseProps = {
   error_message: string;
   stack_trace: string;
   failure_type: string;
+  run_started_at: Date;
   belongsToRun: CrossReference<RunProps>;
 };
 
@@ -273,12 +277,21 @@ export async function fetchVersionRollup(): Promise<VersionRollup[]> {
   const rows: RunRow[] = [];
   let offset = 0;
   while (rows.length < VERSION_MAX_ROWS) {
-    const pageSize = Math.min(VERSION_PAGE_SIZE, VERSION_MAX_ROWS - rows.length);
+    const pageSize = Math.min(
+      VERSION_PAGE_SIZE,
+      VERSION_MAX_ROWS - rows.length,
+    );
     const res = await runs.query.fetchObjects({
       limit: pageSize,
       offset,
       sort: runs.sort.byCreationTime(true),
-      returnProperties: ["version_minor", "version_patch", "status"],
+      returnProperties: [
+        "version_minor",
+        "version_patch",
+        "status",
+        "tests_total",
+        "tests_passed",
+      ],
     });
     const page = res.objects as unknown as RawObject[];
     for (const o of page) {
@@ -287,6 +300,8 @@ export async function fetchVersionRollup(): Promise<VersionRollup[]> {
         version_minor: (p.version_minor as string | null) ?? null,
         version_patch: (p.version_patch as string | null) ?? null,
         status: (p.status as string) ?? "",
+        tests_total: (p.tests_total as number) ?? 0,
+        tests_passed: (p.tests_passed as number) ?? 0,
       });
     }
     if (page.length < pageSize) break;
@@ -355,25 +370,30 @@ export async function fetchDashboardKpis(
   const cases = casesCol(client);
   const since = sinceIso ? new Date(sinceIso) : undefined;
 
+  // Window by the real run start (started_at / run_started_at, WS1 D1), not
+  // ingest time — so "last 7 days" means when the tests actually ran.
   const runFilter = since
-    ? runs.filter.byProperty("timestamp").greaterOrEqual(since)
+    ? runs.filter.byProperty("started_at").greaterOrEqual(since)
     : undefined;
   const caseWindow = since
-    ? cases.filter.byCreationTime().greaterOrEqual(since)
+    ? cases.filter.byProperty("run_started_at").greaterOrEqual(since)
     : undefined;
   const failedOp = cases.filter.byProperty("status").equal("failed");
   const failedFilter = caseWindow
     ? Filters.and(failedOp, caseWindow)
     : failedOp;
 
-  const [runAgg, statusGroups, failedSuite] = await Promise.all([
+  // Pass rate + totals come from summing the run-level counts (TestRun.tests_*,
+  // WS1 D2) — no full TestCase scan. Only the top-failing-suite still needs a
+  // (filtered) TestCase aggregate.
+  const [runAgg, failedSuite] = await Promise.all([
     runs.aggregate.overAll({
       filters: runFilter,
-      returnMetrics: runs.metrics.aggregate("total_duration_ms").integer(["mean"]),
-    }),
-    cases.aggregate.groupBy.overAll({
-      filters: caseWindow,
-      groupBy: { property: "status", limit: GROUP_LIMIT },
+      returnMetrics: [
+        runs.metrics.aggregate("total_duration_ms").integer(["mean"]),
+        runs.metrics.aggregate("tests_total").integer(["sum"]),
+        runs.metrics.aggregate("tests_passed").integer(["sum"]),
+      ],
     }),
     cases.aggregate.groupBy.overAll({
       filters: failedFilter,
@@ -385,12 +405,17 @@ export async function fetchDashboardKpis(
   // is top-level.
   const runAggR = runAgg as unknown as {
     totalCount?: number;
-    properties?: { total_duration_ms?: { mean?: number | null } };
+    properties?: {
+      total_duration_ms?: { mean?: number | null };
+      tests_total?: { sum?: number | null };
+      tests_passed?: { sum?: number | null };
+    };
   };
   return deriveKpis({
     totalRuns: runAggR.totalCount ?? 0,
     avgDurationMean: runAggR.properties?.total_duration_ms?.mean ?? null,
-    caseStatusGroups: mapGroups(statusGroups),
+    totalTests: runAggR.properties?.tests_total?.sum ?? 0,
+    passedTests: runAggR.properties?.tests_passed?.sum ?? 0,
     failedSuiteGroups: mapGroups(failedSuite).map((g) => ({
       suite: g.value,
       count: g.count,
@@ -410,7 +435,10 @@ export async function fetchFlakyTests(
   const minRuns = Number.isFinite(opts.minRuns) ? (opts.minRuns as number) : 3;
 
   const windowFilter = Filters.and(
-    cases.filter.byCreationTime().greaterOrEqual(since),
+    // Window by the real run start (run_started_at, WS1 D1), not object
+    // creation time — out-of-order / backfilled ingestion must not scramble
+    // each test's chronological status sequence.
+    cases.filter.byProperty("run_started_at").greaterOrEqual(since),
     // Skipped cases carry no flakiness signal; exclude them server-side.
     Filters.or(
       cases.filter.byProperty("status").equal("passed"),
@@ -418,11 +446,11 @@ export async function fetchFlakyTests(
     ),
   );
   // Stable sort across pages so each (suite, name) sequence stays contiguous
-  // and chronological when pages are concatenated.
+  // and in true run order when pages are concatenated.
   const sort = cases.sort
     .byProperty("test_suite", true)
     .byProperty("name", true)
-    .byCreationTime(true);
+    .byProperty("run_started_at", true);
 
   const rows: FlakeRow[] = [];
   let offset = 0;
