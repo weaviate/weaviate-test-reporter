@@ -54,8 +54,9 @@ from weaviate_test_reporter.ingest import (
     _run_uuid,
     aggregate_run_properties,
     ingest_test_cases,
+    resolve_run_started_at,
 )
-from weaviate_test_reporter.parser import parse_junit_file
+from weaviate_test_reporter.parser import parse_junit_file, parse_junit_summary
 from weaviate_test_reporter.schema import (
     TEST_RUN,
     ensure_test_case_collection,
@@ -134,8 +135,12 @@ class _Config:
     """Lightweight stand-in for action.config.Config so we can reuse
     aggregate_run_properties without going through env-var validation."""
 
-    def __init__(self, job_name: str):
+    def __init__(self, job_name: str, version_under_test: str = ""):
         self.job_name = job_name
+        # aggregate_run_properties parses this into the three version slots
+        # (empty -> all None). Present so the dev script exercises the same
+        # code path as the production Config (required since Phase 5b).
+        self.version_under_test = version_under_test
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -173,13 +178,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repository", default="local/dev")
     parser.add_argument("--job-name", default="local-ingest")
     parser.add_argument("--workflow-name", default="local")
-    parser.add_argument("--branch", default=None, help="Defaults to the current git branch, or 'main'.")
+    parser.add_argument(
+        "--branch", default=None, help="Defaults to the current git branch, or 'main'."
+    )
     parser.add_argument("--commit-hash", default=None, help="Defaults to git HEAD, or 'synthetic'.")
     parser.add_argument("--actor", default=None, help=f"Defaults to $USER ({getpass.getuser()!r}).")
-    parser.add_argument("--workflow-run-id", default=None, help="Defaults to a stable hash of the file path.")
+    parser.add_argument(
+        "--workflow-run-id", default=None, help="Defaults to a stable hash of the file path."
+    )
     parser.add_argument("--workflow-run-attempt", type=int, default=1)
-    parser.add_argument("--trigger-type", default="push", choices=["push", "pull_request", "cron", "workflow_dispatch"])
+    parser.add_argument(
+        "--trigger-type",
+        default="push",
+        choices=["push", "pull_request", "cron", "workflow_dispatch"],
+    )
     parser.add_argument("--pr-number", type=int, default=None)
+    parser.add_argument(
+        "--version-under-test",
+        default="",
+        help="SemVer of the artifact under test (e.g. 1.38.1). Empty = no version slots.",
+    )
 
     args = parser.parse_args(argv)
 
@@ -206,14 +224,19 @@ def main(argv: list[str] | None = None) -> int:
         "pr_number": args.pr_number,
         "run_url": f"local://{junit_path.resolve()}",
     }
-    cfg = _Config(job_name=args.job_name)
+    cfg = _Config(job_name=args.job_name, version_under_test=args.version_under_test)
 
     print(f"→ Parsing {junit_path}")
     cases = list(parse_junit_file(junit_path))
     if not cases:
         print("  (no test cases found — nothing to ingest)")
         return 0
-    print(f"  parsed {len(cases)} TestCase(s)")
+    # WS1 D1/D2: real run-start timestamp + run-level counts from the
+    # <testsuite> summary, mirrored onto the TestRun and denormalized onto
+    # every TestCase (matches the production __main__ path).
+    summary = parse_junit_summary(junit_path)
+    run_started_at = resolve_run_started_at(summary)
+    print(f"  parsed {len(cases)} TestCase(s); run started_at={run_started_at}")
 
     print(f"→ Connecting to Weaviate at {args.weaviate_url}")
     client = _connect(args.weaviate_url, args.weaviate_api_key)
@@ -230,7 +253,9 @@ def main(argv: list[str] | None = None) -> int:
         run_uuid = _run_uuid(
             args.repository, workflow_run_id, args.workflow_run_attempt, cfg.job_name
         )
-        run_props = aggregate_run_properties(cases, meta, cfg)
+        run_props = aggregate_run_properties(
+            cases, meta, cfg, summary=summary, run_started_at=run_started_at
+        )
         run_collection = client.collections.get(TEST_RUN)
         if run_collection.data.exists(uuid=run_uuid):
             run_collection.data.replace(uuid=run_uuid, properties=run_props)
@@ -242,11 +267,14 @@ def main(argv: list[str] | None = None) -> int:
         # Batch the cases.
         t0 = time.perf_counter()
         success, failed = ingest_test_cases(
-            client, cases, run_uuid,
+            client,
+            cases,
+            run_uuid,
             repository=args.repository,
             workflow_run_id=workflow_run_id,
             workflow_run_attempt=args.workflow_run_attempt,
             job_name=cfg.job_name,
+            run_started_at=run_started_at,
         )
         elapsed = time.perf_counter() - t0
         print(f"→ Ingested {success} TestCase(s) in {elapsed:.2f}s ({failed} failed)")

@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 import random
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 # Allow running as a script without an editable install.
@@ -25,8 +25,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import weaviate
 from weaviate.classes.init import Auth
 
-from weaviate_test_reporter.ingest import _run_uuid, ingest_test_cases
-from weaviate_test_reporter.parser import ParsedCase
+from weaviate_test_reporter.ingest import _resolve_counts, _run_uuid, ingest_test_cases
+from weaviate_test_reporter.parser import ParsedCase, stack_trace_fingerprint
 from weaviate_test_reporter.schema import (
     TEST_CASE,
     TEST_RUN,
@@ -35,7 +35,7 @@ from weaviate_test_reporter.schema import (
 )
 from weaviate_test_reporter.vectorization import build_test_case_vector_config
 
-random.seed(0xc1)
+random.seed(0xC1)
 
 # In-cluster model2vec endpoint that Weaviate itself reaches via DNS.
 MODEL2VEC_IN_CLUSTER = "http://model2vec-inference.weaviate.svc.cluster.local.:8080"
@@ -179,9 +179,7 @@ FAILURE_TEMPLATES = [
 
 
 def _now_minus(days_back: int, jitter_minutes: int = 30) -> datetime:
-    base = datetime.now(timezone.utc) - timedelta(
-        days=days_back, minutes=random.randint(0, jitter_minutes)
-    )
+    base = datetime.now(UTC) - timedelta(days=days_back, minutes=random.randint(0, jitter_minutes))
     return base
 
 
@@ -242,42 +240,60 @@ def _gen_cases_for_run(run_idx: int, run_failure_count: int) -> list[ParsedCase]
                 f = next(fail_iter)
             except StopIteration:
                 f = random.choice(FAILURE_TEMPLATES)
-            cases.append(ParsedCase(
-                name=f["name"],
-                test_suite=suite,
-                framework=framework,
-                status="failed",
-                duration_ms=random.randint(500, 8_000),
-                error_message=f["message"],
-                stack_trace=f["trace"],
-                failure_type=f["failure_type"],
-            ))
+            cases.append(
+                ParsedCase(
+                    name=f["name"],
+                    test_suite=suite,
+                    framework=framework,
+                    status="failed",
+                    duration_ms=random.randint(500, 8_000),
+                    error_message=f["message"],
+                    stack_trace=f["trace"],
+                    failure_type=f["failure_type"],
+                )
+            )
         elif random.random() < 0.08:
-            cases.append(ParsedCase(
-                name=f"test_skipped_case_{run_idx}_{i}",
-                test_suite=suite,
-                framework=framework,
-                status="skipped",
-                duration_ms=0,
-                error_message="feature flag off",
-                stack_trace=None,
-                failure_type=None,
-            ))
+            cases.append(
+                ParsedCase(
+                    name=f"test_skipped_case_{run_idx}_{i}",
+                    test_suite=suite,
+                    framework=framework,
+                    status="skipped",
+                    duration_ms=0,
+                    error_message="feature flag off",
+                    stack_trace=None,
+                    failure_type=None,
+                )
+            )
         else:
-            cases.append(ParsedCase(
-                name=f"test_pass_case_{i:02d}",
-                test_suite=suite,
-                framework=framework,
-                status="passed",
-                duration_ms=random.randint(40, 900),
-                error_message=None,
-                stack_trace=None,
-                failure_type=None,
-            ))
+            cases.append(
+                ParsedCase(
+                    name=f"test_pass_case_{i:02d}",
+                    test_suite=suite,
+                    framework=framework,
+                    status="passed",
+                    duration_ms=random.randint(40, 900),
+                    error_message=None,
+                    stack_trace=None,
+                    failure_type=None,
+                )
+            )
     return cases
 
 
+def _finalize_ws1_fields(cases: list[ParsedCase]) -> None:
+    """Set the WS1 derived per-case fields the parser would compute, so seeded
+    data matches real ingestion: initial_status mirrors the final status (the
+    seed emits no reruns, so retry_count / passed_on_retry stay 0 / False) and
+    failed cases get a stack-trace fingerprint for the R4 clustering demo."""
+    for c in cases:
+        c.initial_status = c.status
+        if c.status == "failed":
+            c.failure_fingerprint = stack_trace_fingerprint(c.stack_trace or c.error_message)
+
+
 def _insert_run(client: weaviate.WeaviateClient, run_idx: int, cases: list[ParsedCase]):
+    _finalize_ws1_fields(cases)
     timestamp = _now_minus(days_back=10 - run_idx).isoformat()
     workflow_run_id = str(40_000 + run_idx)
     attempt = 1
@@ -285,13 +301,11 @@ def _insert_run(client: weaviate.WeaviateClient, run_idx: int, cases: list[Parse
     status = "failure" if any_failed else "success"
     pr_number = (run_idx % 3) * 100 + 17 if run_idx % 2 == 0 else None
     trigger_type = "pull_request" if pr_number else random.choice(["push", "cron"])
-    branch = (
-        f"feature/run-{run_idx}-fix-flake"
-        if trigger_type == "pull_request"
-        else "main"
-    )
+    branch = f"feature/run-{run_idx}-fix-flake" if trigger_type == "pull_request" else "main"
     actor = random.choice(["alice", "bob", "carol", "dave", "weaviate-bot"])
-    job_name = random.choice(["e2e-backup", "e2e-replication", "e2e-multitenancy", "go-unit", "e2e-rbac"])
+    job_name = random.choice(
+        ["e2e-backup", "e2e-replication", "e2e-multitenancy", "go-unit", "e2e-rbac"]
+    )
     run_uuid = _run_uuid(REPO, workflow_run_id, attempt, job_name)
 
     # Synthesize Weaviate versions for the Versions landing page demo.
@@ -300,10 +314,14 @@ def _insert_run(client: weaviate.WeaviateClient, run_idx: int, cases: list[Parse
     # minors keeps the cards interesting.
     version_full = random.choice(
         [
-            "1.37.5", "1.37.5", "1.37.5",  # weight towards the newest patch
-            "1.37.4", "1.37.4",
+            "1.37.5",
+            "1.37.5",
+            "1.37.5",  # weight towards the newest patch
+            "1.37.4",
+            "1.37.4",
             "1.37.3",
-            "1.36.8", "1.36.8",
+            "1.36.8",
+            "1.36.8",
             "1.36.7",
             "1.35.12",
         ]
@@ -319,6 +337,10 @@ def _insert_run(client: weaviate.WeaviateClient, run_idx: int, cases: list[Parse
         "status": status,
         "total_duration_ms": sum(c.duration_ms for c in cases),
         "timestamp": timestamp,
+        # WS1 D1/D2: seeded runs get a real start time (the synthetic historical
+        # timestamp) and run-level counts, matching production ingestion.
+        "started_at": timestamp,
+        **_resolve_counts(cases, None),
         "workflow_run_id": workflow_run_id,
         "workflow_run_attempt": attempt,
         "workflow_name": "ci",
@@ -337,11 +359,14 @@ def _insert_run(client: weaviate.WeaviateClient, run_idx: int, cases: list[Parse
         run_collection.data.insert(properties=props, uuid=run_uuid)
 
     ingest_test_cases(
-        client, cases, run_uuid,
+        client,
+        cases,
+        run_uuid,
         repository=REPO,
         workflow_run_id=workflow_run_id,
         workflow_run_attempt=attempt,
         job_name=job_name,
+        run_started_at=timestamp,
     )
     return run_uuid, status, len(cases)
 
