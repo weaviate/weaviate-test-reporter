@@ -140,10 +140,14 @@ runs:
         GH_SERVER_URL: ${{ github.server_url }}
         # WS1 D5: resolve the per-job CI deep-link. GH_TOKEN calls the jobs API
         # (needs the default token's `actions: read`); GH_RUNNER_NAME identifies
-        # THIS job among the run's jobs. Both best-effort — the action falls back
-        # to the run+attempt URL if the token lacks scope or nothing matches.
+        # THIS job among the run's jobs; GH_API_URL is the REST base for the
+        # current server (github.com or GitHub Enterprise Server — GHES uses a
+        # custom host, so hard-coding api.github.com would silently fail there).
+        # All best-effort — the action falls back to the run+attempt URL if the
+        # token lacks scope or nothing matches.
         GH_TOKEN: ${{ github.token }}
         GH_RUNNER_NAME: ${{ runner.name }}
+        GH_API_URL: ${{ github.api_url }}
         # PYTHONPATH so the src layout is importable without an editable install.
         # Use the resolved absolute path so this also works when the action is
         # invoked via `uses: ./action` (no `./` segment in the path).

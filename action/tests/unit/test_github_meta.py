@@ -172,6 +172,24 @@ def test_resolve_job_url_falls_back_when_no_runner_match(monkeypatch: pytest.Mon
     assert got == _RUN_URL
 
 
+def test_resolve_job_url_uses_completed_match_when_none_in_progress(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """API-timing edge: if no runner-name match is `in_progress` yet, the last
+    such match is used rather than dropping to run_url."""
+    monkeypatch.setenv("GH_TOKEN", "t")
+    monkeypatch.setenv("GH_RUNNER_NAME", "runner-2")
+    payload = {
+        "jobs": [{"runner_name": "runner-2", "status": "completed", "html_url": "https://x/job/9"}]
+    }
+    with patch(
+        "weaviate_test_reporter.github_meta.urllib.request.urlopen",
+        _urlopen_returning(payload),
+    ):
+        got = resolve_job_url(repository="o/r", run_id="1", run_attempt=1, run_url=_RUN_URL)
+    assert got == "https://x/job/9"
+
+
 def test_resolve_job_url_falls_back_on_api_error(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("GH_TOKEN", "t")
     monkeypatch.setenv("GH_RUNNER_NAME", "runner-2")

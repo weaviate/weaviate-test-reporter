@@ -107,7 +107,7 @@ def _fetch_current_job_url(
         "User-Agent": "weaviate-test-reporter",
     }
     per_page = 100
-    matches: list[tuple[str, str]] = []  # (status, html_url)
+    fallback: str | None = None  # last runner-name match if none is in_progress
     for page in range(1, 11):  # cap at 1000 jobs
         url = (
             f"{api}/repos/{repository}/actions/runs/{run_id}/attempts/"
@@ -119,17 +119,16 @@ def _fetch_current_job_url(
         jobs = payload.get("jobs") or []
         for job in jobs:
             if job.get("runner_name") == runner_name and job.get("html_url"):
-                matches.append((job.get("status") or "", job["html_url"]))
+                # The reporter step runs INSIDE its job, so that job is
+                # `in_progress` — return the moment we see it and stop paging.
+                if job.get("status") == "in_progress":
+                    return job["html_url"]
+                # Keep a completed/queued match only as a fallback (rare API
+                # timing where the current job isn't `in_progress` yet).
+                fallback = job["html_url"]
         if len(jobs) < per_page:
             break
-    if not matches:
-        return None
-    # The reporter step runs inside its job, so that job is `in_progress`; prefer
-    # it when a runner name was reused by earlier (completed) jobs in the run.
-    for status, html_url in matches:
-        if status == "in_progress":
-            return html_url
-    return matches[-1][1]
+    return fallback
 
 
 def resolve_job_url(*, repository: str, run_id: str, run_attempt: int, run_url: str) -> str:
