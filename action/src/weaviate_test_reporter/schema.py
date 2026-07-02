@@ -108,7 +108,8 @@ _TEST_RUN_DESCRIPTIONS: dict[str, str] = {
     ),
     "tests_passed": (
         "Tests that passed: total - failed - errors - skipped (floored at 0). "
-        "Run pass rate = tests_passed / tests_total."
+        "Test-level pass rate = tests_passed / tests_total (distinct from the "
+        "run-level pass rate, which is successful runs / total runs)."
     ),
     "tests_failed": "Tests that failed assertions (sum of <testsuite failures>).",
     "tests_skipped": "Tests skipped / not run (sum of <testsuite skipped>).",

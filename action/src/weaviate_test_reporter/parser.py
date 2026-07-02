@@ -111,13 +111,17 @@ def _classify(case: JUnitTestCase) -> tuple[str, str | None, str | None, str | N
 _ISO_TIMESTAMP_RE = re.compile(
     r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?"
 )
-# Volatile filesystem roots: OS temp dirs plus CI runner work dirs (GitHub
-# hosted `/home/runner/work/…`, self-hosted `/home/actions-runner/_work/…`,
-# and the legacy `/runner/_work/…`). Stripping these lets the same failure
-# fingerprint identically across runner types.
-_TEMP_PATH_RE = re.compile(
-    r"(?:/tmp/|/var/folders/|/private/"
-    r"|/home/runner/work/|/home/actions-runner/_work/|/runner/_work/)\S*"
+# OS temp directories contain random per-run subpaths (build dirs, pytest
+# tmpdirs), so the whole token is volatile — redact it entirely.
+_OS_TEMP_RE = re.compile(r"(?:/tmp/|/var/folders/|/private/)\S*")
+# CI runner CHECKOUT PREFIX only: GitHub-hosted `/home/runner/work/{repo}/{repo}/`,
+# self-hosted `/home/actions-runner/_work/{repo}/{repo}/`, legacy
+# `/runner/_work/{repo}/{repo}/`. Strip just this prefix so the same failure
+# fingerprints identically across runner types, while KEEPING the repo-relative
+# path that follows — the file is part of the failure's identity, so distinct
+# files must stay distinct (only the volatile checkout root is noise).
+_RUNNER_PREFIX_RE = re.compile(
+    r"(?:/home/runner/work|/home/actions-runner/_work|/runner/_work)/[^/\s]+/[^/\s]+/"
 )
 # Go/gotestsum elapsed-time suffix, e.g. `(0.08s)`, `(200ms)`, `(3µs)`. The
 # duration varies run-to-run and must not fragment the fingerprint. Stripped
@@ -134,7 +138,9 @@ def normalize_stack_trace(text: str) -> str:
     """Strip volatile tokens from a stack trace so equivalent failures hash
     identically. Pure function — unit-tested directly."""
     s = _ISO_TIMESTAMP_RE.sub("<TS>", text)
-    s = _TEMP_PATH_RE.sub("<PATH>", s)
+    s = _OS_TEMP_RE.sub("<PATH>", s)
+    # Strip only the volatile runner checkout prefix; keep the repo-relative path.
+    s = _RUNNER_PREFIX_RE.sub("", s)
     s = _GO_DURATION_RE.sub("(<DUR>)", s)
     s = _HEX_ADDR_RE.sub("<HEX>", s)
     s = _LINE_WORD_RE.sub("line <N>", s)

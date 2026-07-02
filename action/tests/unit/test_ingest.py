@@ -511,6 +511,31 @@ def test_aggregate_started_at_defaults_to_timestamp_without_summary():
     assert props["started_at"] == props["timestamp"]
 
 
+def test_resolve_run_started_at_uses_ingest_now_fallback():
+    """With no suite timestamp, the caller-supplied ingest clock is used so
+    started_at can mirror `timestamp` exactly (no divergent now() calls)."""
+    ts = "2026-07-02T08:00:00+00:00"
+    assert resolve_run_started_at(_summary(started_at=None), ingest_now=ts) == ts
+    assert resolve_run_started_at(None, ingest_now=ts) == ts
+
+
+def test_aggregate_started_at_mirrors_timestamp_with_shared_clock():
+    """Dateless dialect (no <testsuite timestamp>): sharing one ingest_now across
+    the resolved run_started_at and the aggregate makes started_at == timestamp
+    exactly — the fallback no longer diverges by a few ms."""
+    ts = "2026-07-02T08:00:00+00:00"
+    run_started_at = resolve_run_started_at(_summary(started_at=None), ingest_now=ts)
+    props = aggregate_run_properties(
+        [_case()],
+        _meta(),
+        _cfg(),
+        summary=_summary(started_at=None),
+        run_started_at=run_started_at,
+        ingest_now=ts,
+    )
+    assert props["started_at"] == props["timestamp"] == ts
+
+
 def test_aggregate_populates_run_counts_from_summary():
     props = aggregate_run_properties([_case()], _meta(), _cfg(), summary=_summary())
     assert props["tests_total"] == 5

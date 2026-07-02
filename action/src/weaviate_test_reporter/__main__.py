@@ -23,6 +23,7 @@ from __future__ import annotations
 import glob
 import logging as stdlib_logging
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -140,14 +141,27 @@ def main() -> int:
             cases: list = []
             summaries = []
             for f in files:
-                file_cases = list(parse_junit_file(Path(f)))
+                try:
+                    file_cases = list(parse_junit_file(Path(f)))
+                except Exception as e:
+                    # Fail-safe: one malformed report must not abort the whole
+                    # run — skip it and keep ingesting the good files.
+                    log.warning(
+                        "parse_file_failed",
+                        path=f,
+                        error=str(e),
+                        error_type=type(e).__name__,
+                    )
+                    continue
                 cases.extend(file_cases)
                 summaries.append(parse_junit_summary(Path(f)))
                 log.info("parsed_file", path=f, cases=len(file_cases))
             # WS1 D1/D2: real run-start timestamp + run-level counts, merged
-            # across every matched report.
+            # across every matched report. One shared ingest clock so started_at
+            # and timestamp match exactly for dialects with no <testsuite timestamp>.
+            ingest_now = datetime.now(UTC).isoformat()
             run_summary = merge_summaries(summaries)
-            run_started_at = resolve_run_started_at(run_summary)
+            run_started_at = resolve_run_started_at(run_summary, ingest_now=ingest_now)
             log.info(
                 "cases_parsed_total",
                 count=len(cases),
@@ -164,6 +178,7 @@ def main() -> int:
                 cfg,
                 summary=run_summary,
                 run_started_at=run_started_at,
+                ingest_now=ingest_now,
             )
             log.info("test_run_inserted", uuid=run_uuid)
 

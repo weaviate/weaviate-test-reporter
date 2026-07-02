@@ -458,6 +458,20 @@ def test_normalize_strips_ci_runner_work_dirs():
     assert normalize_stack_trace(self_hosted) == normalize_stack_trace(legacy)
 
 
+def test_runner_prefix_stripped_but_repo_relative_path_kept():
+    """Only the volatile runner checkout prefix is noise; the repo-relative path
+    is part of the failure's identity. Distinct files under the SAME runner
+    prefix must keep DISTINCT fingerprints (else R4 clustering would merge
+    unrelated failures that differ only by file)."""
+    a = "FAIL at /home/runner/work/repo/repo/pkg/a_test.go:12: boom"
+    b = "FAIL at /home/runner/work/repo/repo/pkg/b_test.go:12: boom"
+    assert stack_trace_fingerprint(a) != stack_trace_fingerprint(b)
+    # the repo-relative path survives normalization; only the prefix is gone
+    normalized = normalize_stack_trace(a)
+    assert "pkg/a_test.go" in normalized
+    assert "/home/runner/work" not in normalized
+
+
 # ---------- D1 + D2: run summary (started_at + counts) ----------
 
 

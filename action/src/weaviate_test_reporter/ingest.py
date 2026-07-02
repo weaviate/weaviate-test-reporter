@@ -71,17 +71,19 @@ def _case_uuid(
 # ---------- TestRun aggregation ----------
 
 
-def resolve_run_started_at(summary: RunSummary | None) -> str:
+def resolve_run_started_at(summary: RunSummary | None, ingest_now: str | None = None) -> str:
     """The run's real start time (WS1 D1) as an ISO string.
 
-    Prefers the earliest `<testsuite timestamp>` captured in the parsed
-    summary; falls back to ingest time (UTC) when no suite emitted one — the
-    same value the existing `timestamp` uses. Computed once per run so the
-    TestRun.started_at and every denormalized TestCase.run_started_at agree.
+    Prefers the earliest `<testsuite timestamp>` captured in the parsed summary.
+    When no suite emitted one, falls back to `ingest_now` if supplied (so the
+    caller can share ONE ingest clock across started_at + timestamp, making them
+    identical for dateless dialects) — otherwise a fresh now(UTC). Computed once
+    per run so TestRun.started_at and every denormalized TestCase.run_started_at
+    agree.
     """
     if summary is not None and summary.started_at is not None:
         return summary.started_at.isoformat()
-    return datetime.now(UTC).isoformat()
+    return ingest_now if ingest_now is not None else datetime.now(UTC).isoformat()
 
 
 def _resolve_counts(cases: list[ParsedCase], summary: RunSummary | None) -> dict[str, int]:
@@ -116,6 +118,7 @@ def aggregate_run_properties(
     cfg: Config,
     summary: RunSummary | None = None,
     run_started_at: str | None = None,
+    ingest_now: str | None = None,
 ) -> dict[str, Any]:
     """Build the TestRun property bag from parsed cases + GH metadata.
 
@@ -134,7 +137,7 @@ def aggregate_run_properties(
     any_failed = any(c.status == "failed" for c in cases)
     status = "failure" if any_failed else "success"
     total_duration = sum(c.duration_ms for c in cases)
-    now_iso = datetime.now(UTC).isoformat()
+    now_iso = ingest_now if ingest_now is not None else datetime.now(UTC).isoformat()
     if run_started_at is not None:
         started_at = run_started_at
     elif summary is not None and summary.started_at is not None:
@@ -195,6 +198,7 @@ def insert_test_run(
     cfg: Config,
     summary: RunSummary | None = None,
     run_started_at: str | None = None,
+    ingest_now: str | None = None,
 ) -> str:
     """Upsert a single TestRun object. Returns the run UUID.
 
@@ -208,7 +212,7 @@ def insert_test_run(
     value it also denormalizes onto every TestCase.
     """
     properties = aggregate_run_properties(
-        cases, meta, cfg, summary=summary, run_started_at=run_started_at
+        cases, meta, cfg, summary=summary, run_started_at=run_started_at, ingest_now=ingest_now
     )
     run_uuid = _run_uuid(
         meta["repository"],
