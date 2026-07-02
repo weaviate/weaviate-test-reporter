@@ -65,6 +65,7 @@ def test_ensure_test_run_creates_when_missing():
         "pr_number",
         "actor",
         "run_url",
+        "job_url",
         "version_full",
         "version_patch",
         "version_minor",
@@ -118,6 +119,8 @@ def test_test_run_index_flags_are_explicit():
     # Display-only.
     assert props["run_url"].indexFilterable is False
     assert props["run_url"].indexSearchable is False
+    assert props["job_url"].indexFilterable is False
+    assert props["job_url"].indexSearchable is False
 
     # Range filterable (numeric + date — for "slowest" and "since" queries).
     for r in (
@@ -353,6 +356,7 @@ def test_ensure_test_run_properties_adds_missing_version_props():
         "pr_number",
         "actor",
         "run_url",
+        "job_url",
         *_WS1_RUN_PROPS,
     }
     client, collection = _mock_existing_collection(pre_migration)
@@ -383,6 +387,7 @@ def test_ensure_test_run_properties_adds_missing_ws1_props():
         "pr_number",
         "actor",
         "run_url",
+        "job_url",
         "version_full",
         "version_patch",
         "version_minor",
@@ -394,6 +399,39 @@ def test_ensure_test_run_properties_adds_missing_ws1_props():
     assert collection.config.add_property.call_count == len(_WS1_RUN_PROPS)
     added_names = {call.args[0].name for call in collection.config.add_property.call_args_list}
     assert added_names == _WS1_RUN_PROPS
+
+
+def test_ensure_test_run_properties_adds_missing_job_url():
+    """D5: a collection carrying the full WS1 spec but pre-dating `job_url` gets
+    exactly that one display-only property added by the additive migration."""
+    pre_d5 = {
+        "run_id",
+        "repository",
+        "branch",
+        "commit_hash",
+        "trigger_type",
+        "status",
+        "total_duration_ms",
+        "timestamp",
+        "workflow_run_id",
+        "workflow_run_attempt",
+        "workflow_name",
+        "job_name",
+        "pr_number",
+        "actor",
+        "run_url",
+        "version_full",
+        "version_patch",
+        "version_minor",
+        *_WS1_RUN_PROPS,
+    }
+    client, collection = _mock_existing_collection(pre_d5)
+
+    ensure_test_run_properties(client)
+
+    assert collection.config.add_property.call_count == 1
+    added_names = {call.args[0].name for call in collection.config.add_property.call_args_list}
+    assert added_names == {"job_url"}
 
 
 def test_ensure_test_run_properties_adds_only_version_patch_when_others_present():
@@ -417,6 +455,7 @@ def test_ensure_test_run_properties_adds_only_version_patch_when_others_present(
         "pr_number",
         "actor",
         "run_url",
+        "job_url",
         "version_full",
         "version_minor",
         *_WS1_RUN_PROPS,
@@ -449,6 +488,7 @@ def test_ensure_test_run_properties_is_idempotent():
         "pr_number",
         "actor",
         "run_url",
+        "job_url",
         "version_full",
         "version_patch",
         "version_minor",

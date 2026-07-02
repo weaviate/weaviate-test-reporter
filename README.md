@@ -44,6 +44,18 @@ Add this step to any GitHub Actions workflow that produces JUnit XML:
 
 GitHub Actions context (`repository`, `run_id`, `run_attempt`, `workflow`, `ref`, `sha`, `event_name`, `pull_request.number`, `actor`, `server_url`) is auto-populated as `GH_*` env vars by `action.yml`.
 
+### Permissions
+
+The action uses the workflow's `GITHUB_TOKEN` automatically (no input) to resolve a deep-link to the **specific CI job** it ran in (`TestRun.job_url`) via the GitHub jobs API. That lookup needs the **`actions: read`** scope.
+
+This is **optional** — if the token lacks the scope, the lookup fails safely and `job_url` falls back to the run+attempt URL (`run_url`); nothing breaks and no other permission is required. But whether the default token has `actions: read` depends on your repo/org "Workflow permissions" setting, so to guarantee the per-job link, grant it explicitly on the job that runs the reporter:
+
+```yaml
+permissions:
+  actions: read   # per-job deep-link (TestRun.job_url) — optional
+  # ...any other scopes your job needs
+```
+
 ### What lands in Weaviate
 
 Two collections:

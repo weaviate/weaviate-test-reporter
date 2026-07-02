@@ -72,6 +72,7 @@ type RunProps = {
   pr_number: number;
   actor: string;
   run_url: string;
+  job_url: string;
   version_full: string;
   version_patch: string;
   version_minor: string;
@@ -152,6 +153,9 @@ function asTestRun(o: RawObject): TestRun {
     pr_number: (p.pr_number as number | null) ?? null,
     actor: (p.actor as string) ?? "",
     run_url: (p.run_url as string) ?? "",
+    // Enforce the documented invariant here (not at every call site): job_url is
+    // never empty when a run_url exists — it falls back to the run+attempt URL.
+    job_url: (p.job_url as string) || (p.run_url as string) || "",
     version_full: (p.version_full as string | null) ?? null,
     version_patch: (p.version_patch as string | null) ?? null,
     version_minor: (p.version_minor as string | null) ?? null,

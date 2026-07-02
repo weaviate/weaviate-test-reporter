@@ -2,14 +2,23 @@
 
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { ArrowUpRight, ChevronRight, FlaskConical, GitCommitHorizontal } from "lucide-react";
+import {
+  ArrowUpRight,
+  ChevronRight,
+  FlaskConical,
+  GitCommitHorizontal,
+} from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorState, LoadingState } from "@/components/States";
 import { StatusBadge } from "@/components/StatusBadge";
 import { RunFilterBar } from "@/components/RunFilterBar";
 import { useAsync } from "@/lib/useAsync";
-import { fetchCasesForRun, fetchRecentRuns, type RunFilters } from "@/lib/queries";
+import {
+  fetchCasesForRun,
+  fetchRecentRuns,
+  type RunFilters,
+} from "@/lib/queries";
 import type { TestRun } from "@/lib/types";
 
 function formatTimestamp(iso: string): string {
@@ -82,13 +91,15 @@ function ExpandedRunBody({ run }: { run: TestRun }) {
   );
 }
 
-
-function RunRow({ run, expanded, onToggle }: {
+function RunRow({
+  run,
+  expanded,
+  onToggle,
+}: {
   run: TestRun;
   expanded: boolean;
   onToggle: () => void;
 }) {
-
   return (
     <div
       className="border-b border-wv-navy-3/40 last:border-b-0"
@@ -145,7 +156,7 @@ function RunRow({ run, expanded, onToggle }: {
           {formatTimestamp(run.timestamp)}
         </div>
         <a
-          href={run.run_url}
+          href={run.job_url}
           target="_blank"
           rel="noopener noreferrer"
           onClick={(e) => e.stopPropagation()}
@@ -154,7 +165,7 @@ function RunRow({ run, expanded, onToggle }: {
             w-7 h-7 rounded-md text-wv-fog-muted hover:text-wv-fog
             hover:bg-wv-navy-3/40 transition-colors
           "
-          aria-label="Open run in GitHub"
+          aria-label="Open CI job in GitHub"
         >
           <ArrowUpRight size={14} strokeWidth={1.75} />
         </a>
@@ -239,7 +250,10 @@ function TestExplorerBody() {
         }
       />
 
-      <section className="px-8 py-8 wv-reveal" style={{ animationDelay: "80ms" }}>
+      <section
+        className="px-8 py-8 wv-reveal"
+        style={{ animationDelay: "80ms" }}
+      >
         <div className="mb-5">
           <RunFilterBar filters={filters} onChange={setFilters} />
         </div>
@@ -248,7 +262,8 @@ function TestExplorerBody() {
           <header className="flex items-center gap-3 px-5 py-3 border-b border-wv-navy-3/40 text-[11px] uppercase tracking-[0.2em] font-mono text-wv-fog-muted">
             <GitCommitHorizontal size={14} strokeWidth={1.75} />
             <span data-testid="run-count-label">
-              TestRun · {runs.data ? `${runs.data.length} most recent` : "loading"}
+              TestRun ·{" "}
+              {runs.data ? `${runs.data.length} most recent` : "loading"}
             </span>
           </header>
 
@@ -266,7 +281,9 @@ function TestExplorerBody() {
                   run={r}
                   expanded={expanded === r.uuid}
                   onToggle={() =>
-                    setExpanded((current) => (current === r.uuid ? null : r.uuid))
+                    setExpanded((current) =>
+                      current === r.uuid ? null : r.uuid,
+                    )
                   }
                 />
               ))}

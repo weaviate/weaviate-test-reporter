@@ -84,6 +84,11 @@ _TEST_RUN_DESCRIPTIONS: dict[str, str] = {
     ),
     "actor": "GitHub username that triggered the run.",
     "run_url": "Link to the run on GitHub (display only).",
+    "job_url": (
+        "Deep-link to this run's specific CI job on GitHub (display only). "
+        "Falls back to the run+attempt page (run_url) when the per-job URL "
+        "can't be resolved."
+    ),
     "version_full": (
         "Exact Weaviate build under test incl. pre-release/build suffix, e.g. "
         "'1.38.1-rfea1de'. Use for exact-build dedup. Null when no version was "
@@ -200,6 +205,7 @@ _TEST_RUN_PROPERTY_SPEC: list[tuple[str, wvcc.DataType, bool, bool, bool]] = [
     ("actor", wvcc.DataType.TEXT, True, False, False),
     # Display-only — no need to index.
     ("run_url", wvcc.DataType.TEXT, False, False, False),
+    ("job_url", wvcc.DataType.TEXT, False, False, False),
     # Three version slots, all derived from the single `version_under_test`
     # action input via `config.parse_version`. The slots progress from
     # most-specific to most-aggregable:
