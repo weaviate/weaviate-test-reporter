@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites>
+  <testsuite name="suite.one" tests="3" failures="1" errors="0" skipped="1" time="1.0" timestamp="2026-06-30T10:00:00Z">
+    <testcase classname="suite.one" name="t_pass" time="0.1"/>
+    <testcase classname="suite.one" name="t_fail" time="0.2">
+      <failure type="AssertionError" message="boom">trace one</failure>
+    </testcase>
+    <testcase classname="suite.one" name="t_skip" time="0.0">
+      <skipped message="skip"/>
+    </testcase>
+  </testsuite>
+  <testsuite name="suite.two" tests="2" failures="0" errors="1" skipped="0" time="0.5" timestamp="2026-06-30T09:30:00Z">
+    <testcase classname="suite.two" name="t_ok" time="0.1"/>
+    <testcase classname="suite.two" name="t_err" time="0.3">
+      <error type="RuntimeError" message="kaboom">error trace</error>
+    </testcase>
+  </testsuite>
+</testsuites>

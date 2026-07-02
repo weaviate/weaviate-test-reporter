@@ -67,6 +67,32 @@ def test_main_returns_zero_on_happy_path(monkeypatch: pytest.MonkeyPatch):
     fake_client.collections.get.assert_any_call("TestCase")
 
 
+def test_main_skips_malformed_report_and_ingests_the_rest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Fail-safe: one unparseable report must not abort the run — it is skipped
+    and the good files still ingest."""
+    good = tmp_path / "good.xml"
+    good.write_text(FIXTURE.read_text())
+    bad = tmp_path / "bad.xml"
+    bad.write_text("<<< not valid junit xml >>>")
+    _full_env(monkeypatch, str(tmp_path / "*.xml"))
+    from weaviate_test_reporter.__main__ import main
+
+    fake_client = MagicMock()
+    fake_collection = MagicMock()
+    fake_client.collections.get.return_value = fake_collection
+    fake_collection.batch.failed_objects = []
+
+    with patch("weaviate_test_reporter.__main__.connect_to_weaviate", return_value=fake_client):
+        rc = main()
+
+    # bad.xml is skipped (not fatal); good.xml still produces a TestRun + batch.
+    assert rc == 0
+    fake_client.collections.get.assert_any_call("TestRun")
+    fake_client.collections.get.assert_any_call("TestCase")
+
+
 def test_main_returns_one_on_config_error(monkeypatch: pytest.MonkeyPatch):
     """Missing required input is always a non-zero exit, regardless of
     fail_on_error — the user wired the action wrong."""

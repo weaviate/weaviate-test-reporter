@@ -62,6 +62,12 @@ export type VersionRollup = {
   passingRuns: number;
   /** passingRuns / runs in 0..1, or null when no runs landed. */
   passRate: number | null;
+  /** Total test cases executed across this minor's runs (Σ TestRun.tests_total). */
+  tests: number;
+  /** Passing test cases across this minor's runs (Σ TestRun.tests_passed). */
+  testsPassed: number;
+  /** testsPassed / tests in 0..1, or null when no test cases were recorded. */
+  testPassRate: number | null;
 };
 
 /** Filter set for the Test Explorer run list. Empty/undefined fields mean

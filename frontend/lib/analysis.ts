@@ -114,20 +114,20 @@ export type SuiteGroup = { suite: string; count: number };
 /**
  * Derive the dashboard KPIs from aggregate primitives.
  *
- * `caseStatusGroups` is the per-status group counts over the window (passed +
- * failed + skipped); `totalCases` is their sum (matches the old `meta.count`,
- * which spanned all statuses). `passRate = passed / totalCases`.
+ * `totalTests` / `passedTests` come from summing the run-level counts
+ * (TestRun.tests_total / tests_passed, WS1 D2) over the windowed runs — no full
+ * TestCase scan. `totalCases = totalTests` (spans passed + failed + skipped,
+ * matching the old meta.count); `passRate = passedTests / totalTests`.
  */
 export function deriveKpis(args: {
   totalRuns: number;
   avgDurationMean: number | null;
-  caseStatusGroups: StatusGroup[];
+  totalTests: number;
+  passedTests: number;
   failedSuiteGroups: SuiteGroup[];
 }): DashboardKpis {
-  const totalCases = args.caseStatusGroups.reduce((s, g) => s + g.count, 0);
-  const passed =
-    args.caseStatusGroups.find((g) => g.value === "passed")?.count ?? 0;
-  const passRate = totalCases > 0 ? passed / totalCases : 0;
+  const totalCases = args.totalTests;
+  const passRate = totalCases > 0 ? args.passedTests / totalCases : 0;
   const top = [...args.failedSuiteGroups].sort((a, b) => b.count - a.count)[0];
   return {
     passRate,
@@ -144,6 +144,8 @@ export type RunRow = {
   version_minor: string | null;
   version_patch: string | null;
   status: string;
+  tests_total: number;
+  tests_passed: number;
 };
 
 /**
@@ -151,24 +153,40 @@ export type RunRow = {
  * `Aggregate groupBy`, whose counts are approximate and jitter between
  * refreshes, so the old numerator/denominator ratio was non-deterministic).
  *
- * Pass rate is RUN-level (success runs / total runs): a run with even one
- * failing test is itself failed, which is what a release reviewer wants.
- * Patches are the distinct canonical `version_patch` values, sorted
- * descending. Runs with no `version_minor` are ignored. Minors are sorted
- * descending by string compare.
+ * Two pass rates are surfaced. RUN-level (success runs / total runs) — a run
+ * with even one failing test is itself failed, which is what a release
+ * reviewer wants. TEST-level (Σ tests_passed / Σ tests_total) — the share of
+ * individual test cases that passed, read straight off the run-level counts
+ * (TestRun.tests_*, WS1 D2) so no TestCase scan is needed. Patches are the
+ * distinct canonical `version_patch` values, sorted descending. Runs with no
+ * `version_minor` are ignored. Minors are sorted descending by string compare.
  */
 export function rollupRunsByMinor(rows: RunRow[]): VersionRollup[] {
-  type Acc = { runs: number; passingRuns: number; patches: Set<string> };
+  type Acc = {
+    runs: number;
+    passingRuns: number;
+    tests: number;
+    testsPassed: number;
+    patches: Set<string>;
+  };
   const byMinor = new Map<string, Acc>();
   for (const r of rows) {
     if (!r.version_minor) continue;
     let acc = byMinor.get(r.version_minor);
     if (!acc) {
-      acc = { runs: 0, passingRuns: 0, patches: new Set() };
+      acc = {
+        runs: 0,
+        passingRuns: 0,
+        tests: 0,
+        testsPassed: 0,
+        patches: new Set(),
+      };
       byMinor.set(r.version_minor, acc);
     }
     acc.runs++;
     if (r.status === "success") acc.passingRuns++;
+    acc.tests += r.tests_total;
+    acc.testsPassed += r.tests_passed;
     if (r.version_patch) acc.patches.add(r.version_patch);
   }
 
@@ -180,6 +198,9 @@ export function rollupRunsByMinor(rows: RunRow[]): VersionRollup[] {
       runs: acc.runs,
       passingRuns: acc.passingRuns,
       passRate: acc.runs > 0 ? acc.passingRuns / acc.runs : null,
+      tests: acc.tests,
+      testsPassed: acc.testsPassed,
+      testPassRate: acc.tests > 0 ? acc.testsPassed / acc.tests : null,
     });
   }
   return out.sort((a, b) => (a.minor < b.minor ? 1 : -1));

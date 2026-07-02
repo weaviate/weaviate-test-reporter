@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="com.example.FlakyTest" time="1.5" tests="3" errors="0" skipped="0" failures="1" timestamp="2026-06-30T14:23:11">
+  <testcase name="testEventuallyPasses" classname="com.example.FlakyTest" time="0.5">
+    <flakyFailure message="assertion failed try 1" type="java.lang.AssertionError">stack trace 1
+      at com.example.FlakyTest.testEventuallyPasses(FlakyTest.java:20)</flakyFailure>
+    <flakyFailure message="assertion failed try 2" type="java.lang.AssertionError">stack trace 2
+      at com.example.FlakyTest.testEventuallyPasses(FlakyTest.java:20)</flakyFailure>
+  </testcase>
+  <testcase name="testTrulyFails" classname="com.example.FlakyTest" time="0.4">
+    <rerunFailure message="rerun failure" type="java.lang.AssertionError">rerun stack
+      at com.example.FlakyTest.testTrulyFails(FlakyTest.java:30)</rerunFailure>
+    <failure message="final failure" type="java.lang.AssertionError">final stack
+      at com.example.FlakyTest.testTrulyFails(FlakyTest.java:30)</failure>
+  </testcase>
+  <testcase name="testPassesClean" classname="com.example.FlakyTest" time="0.1"/>
+</testsuite>

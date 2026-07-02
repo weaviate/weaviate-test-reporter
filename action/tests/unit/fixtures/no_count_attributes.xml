@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites>
+  <testsuite name="nocounts">
+    <testcase classname="nocounts" name="a_pass" time="0.1"/>
+    <testcase classname="nocounts" name="b_fail" time="0.2">
+      <failure type="AssertionError" message="boom">trace</failure>
+    </testcase>
+    <testcase classname="nocounts" name="c_skip" time="0.0">
+      <skipped message="skip"/>
+    </testcase>
+    <testcase classname="nocounts" name="d_error" time="0.3">
+      <error type="RuntimeError" message="kaboom">error trace</error>
+    </testcase>
+  </testsuite>
+</testsuites>
