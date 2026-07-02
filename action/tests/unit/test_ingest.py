@@ -44,6 +44,7 @@ def _meta(**overrides) -> dict:
         "actor": "alice",
         "pr_number": None,
         "run_url": "https://github.com/weaviate/weaviate/actions/runs/12345/attempts/2",
+        "job_url": "https://github.com/weaviate/weaviate/actions/runs/12345/job/999",
     }
     base.update(overrides)
     return base
@@ -275,6 +276,7 @@ def test_insert_test_run_first_time_uses_insert():
         "job_name",
         "actor",
         "run_url",
+        "job_url",
     ):
         assert required in props, f"missing TestRun property: {required}"
 
@@ -534,6 +536,21 @@ def test_aggregate_started_at_mirrors_timestamp_with_shared_clock():
         ingest_now=ts,
     )
     assert props["started_at"] == props["timestamp"] == ts
+
+
+def test_aggregate_uses_job_url_from_meta():
+    """D5: the per-job deep-link resolved into meta is written to TestRun."""
+    props = aggregate_run_properties([_case()], _meta(), _cfg())
+    assert props["job_url"] == ("https://github.com/weaviate/weaviate/actions/runs/12345/job/999")
+
+
+def test_aggregate_job_url_falls_back_to_run_url_when_absent():
+    """Dev callers (ingest_local.py) build meta without job_url — the run+attempt
+    URL is used so the property is always populated."""
+    meta = _meta()
+    del meta["job_url"]
+    props = aggregate_run_properties([_case()], meta, _cfg())
+    assert props["job_url"] == props["run_url"]
 
 
 def test_aggregate_populates_run_counts_from_summary():

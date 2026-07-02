@@ -26,6 +26,9 @@ export type TestRun = {
   pr_number: number | null;
   actor: string;
   run_url: string;
+  /** Deep-link to this run's specific CI job (WS1 D5). Falls back to the
+   *  run+attempt page (run_url) when the per-job URL can't be resolved. */
+  job_url: string;
   // Three version slots, all derived from a single `version_under_test`
   // action input via SemVer 2.0 parsing. All three are null when the
   // action was invoked without `version_under_test` — a non-empty

@@ -138,6 +138,12 @@ runs:
         GH_PR_NUMBER: ${{ github.event.pull_request.number }}
         GH_ACTOR: ${{ github.actor }}
         GH_SERVER_URL: ${{ github.server_url }}
+        # WS1 D5: resolve the per-job CI deep-link. GH_TOKEN calls the jobs API
+        # (needs the default token's `actions: read`); GH_RUNNER_NAME identifies
+        # THIS job among the run's jobs. Both best-effort — the action falls back
+        # to the run+attempt URL if the token lacks scope or nothing matches.
+        GH_TOKEN: ${{ github.token }}
+        GH_RUNNER_NAME: ${{ runner.name }}
         # PYTHONPATH so the src layout is importable without an editable install.
         # Use the resolved absolute path so this also works when the action is
         # invoked via `uses: ./action` (no `./` segment in the path).

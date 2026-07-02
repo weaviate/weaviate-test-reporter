@@ -348,6 +348,7 @@ def _insert_run(client: weaviate.WeaviateClient, run_idx: int, cases: list[Parse
         "pr_number": pr_number,
         "actor": actor,
         "run_url": f"https://github.com/{REPO}/actions/runs/{workflow_run_id}/attempts/{attempt}",
+        "job_url": f"https://github.com/{REPO}/actions/runs/{workflow_run_id}/attempts/{attempt}",
         "version_full": version_full,
         "version_minor": version_minor,
     }

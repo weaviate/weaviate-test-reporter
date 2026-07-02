@@ -175,6 +175,9 @@ def aggregate_run_properties(
         "pr_number": meta.get("pr_number"),
         "actor": meta["actor"],
         "run_url": meta["run_url"],
+        # WS1 D5: per-job deep-link; dev callers whose meta omits it fall back
+        # to the run+attempt URL.
+        "job_url": meta.get("job_url") or meta["run_url"],
         **_resolve_counts(cases, summary),
     }
     # Only populate the version slots when parsing succeeded. Weaviate
