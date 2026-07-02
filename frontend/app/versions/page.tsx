@@ -93,6 +93,12 @@ function summarizePatches(patches: string[]): string {
   return `${patches.slice(0, 3).join(", ")} · +${patches.length - 3} more`;
 }
 
+/** Single shared tooltip for the card's headline metric (no duplicated literal). */
+const TEST_PASS_RATE_HELP =
+  "Share of executed tests that passed (skipped excluded). A finer, less " +
+  "flake-sensitive signal than run-level pass rate, where a single failing test " +
+  "fails the whole run — see Runs / Passing below for the run-level view.";
+
 function VersionCard({
   version,
   delay,
@@ -100,7 +106,7 @@ function VersionCard({
   version: VersionRollup;
   delay: number;
 }) {
-  const tone = passRateTone(version.passRate);
+  const tone = passRateTone(version.testPassRate);
   const ToneIcon =
     tone === "good" ? CheckCircle2 : tone === "bad" ? XCircle : ListChecks;
   // Deep-link into the Test Explorer with the minor pre-filtered.
@@ -139,14 +145,18 @@ function VersionCard({
         <ToneIcon size={18} strokeWidth={1.6} className={toneAccent(tone)} />
       </header>
 
-      <p className="mt-4 text-[11px] uppercase tracking-[0.2em] font-mono text-wv-fog-muted">
-        Run pass rate
+      <p
+        className="mt-4 text-[11px] uppercase tracking-[0.2em] font-mono text-wv-fog-muted"
+        title={TEST_PASS_RATE_HELP}
+      >
+        Test pass rate
       </p>
       <p
         className={`font-display text-2xl tabular-nums ${toneAccent(tone)}`}
         data-testid={`version-pass-rate-${version.minor}`}
+        title={TEST_PASS_RATE_HELP}
       >
-        {formatPct(version.passRate)}
+        {formatPct(version.testPassRate)}
       </p>
 
       <dl className="mt-4 grid grid-cols-2 gap-y-1 text-[12px] text-wv-fog-muted">
@@ -162,12 +172,9 @@ function VersionCard({
         <dd className="text-right text-wv-fog tabular-nums">
           {version.tests.toLocaleString()}
         </dd>
-        <dt>Test pass rate</dt>
-        <dd
-          className={`text-right tabular-nums ${toneAccent(passRateTone(version.testPassRate))}`}
-          data-testid={`version-test-pass-rate-${version.minor}`}
-        >
-          {formatPct(version.testPassRate)}
+        <dt>Skipped</dt>
+        <dd className="text-right text-wv-fog-muted tabular-nums">
+          {version.testsSkipped.toLocaleString()}
         </dd>
         <dt>Patches</dt>
         <dd
