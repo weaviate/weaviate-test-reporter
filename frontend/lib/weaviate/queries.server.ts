@@ -64,6 +64,7 @@ type RunProps = {
   started_at: Date;
   tests_total: number;
   tests_passed: number;
+  tests_skipped: number;
   workflow_run_id: string;
   workflow_run_attempt: number;
   workflow_name: string;
@@ -291,6 +292,7 @@ export async function fetchVersionRollup(): Promise<VersionRollup[]> {
         "status",
         "tests_total",
         "tests_passed",
+        "tests_skipped",
       ],
     });
     const page = res.objects as unknown as RawObject[];
@@ -302,6 +304,7 @@ export async function fetchVersionRollup(): Promise<VersionRollup[]> {
         status: (p.status as string) ?? "",
         tests_total: (p.tests_total as number) ?? 0,
         tests_passed: (p.tests_passed as number) ?? 0,
+        tests_skipped: (p.tests_skipped as number) ?? 0,
       });
     }
     if (page.length < pageSize) break;

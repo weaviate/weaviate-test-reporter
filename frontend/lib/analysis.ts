@@ -146,6 +146,7 @@ export type RunRow = {
   status: string;
   tests_total: number;
   tests_passed: number;
+  tests_skipped: number;
 };
 
 /**
@@ -155,11 +156,14 @@ export type RunRow = {
  *
  * Two pass rates are surfaced. RUN-level (success runs / total runs) — a run
  * with even one failing test is itself failed, which is what a release
- * reviewer wants. TEST-level (Σ tests_passed / Σ tests_total) — the share of
- * individual test cases that passed, read straight off the run-level counts
- * (TestRun.tests_*, WS1 D2) so no TestCase scan is needed. Patches are the
- * distinct canonical `version_patch` values, sorted descending. Runs with no
- * `version_minor` are ignored. Minors are sorted descending by string compare.
+ * reviewer wants. TEST-level (Σ tests_passed / Σ EXECUTED, where executed =
+ * total − skipped) — the share of the tests that actually RAN that passed.
+ * Skipped tests are excluded from BOTH sides so intentionally-skipped tests
+ * (feature flags / platform gating) don't read as failures and drag the rate
+ * down. Both come straight off the run-level counts (TestRun.tests_*, WS1 D2)
+ * — no TestCase scan. Patches are the distinct canonical `version_patch`
+ * values, sorted descending. Runs with no `version_minor` are ignored. Minors
+ * are sorted descending by string compare.
  */
 export function rollupRunsByMinor(rows: RunRow[]): VersionRollup[] {
   type Acc = {
@@ -167,6 +171,7 @@ export function rollupRunsByMinor(rows: RunRow[]): VersionRollup[] {
     passingRuns: number;
     tests: number;
     testsPassed: number;
+    testsSkipped: number;
     patches: Set<string>;
   };
   const byMinor = new Map<string, Acc>();
@@ -179,6 +184,7 @@ export function rollupRunsByMinor(rows: RunRow[]): VersionRollup[] {
         passingRuns: 0,
         tests: 0,
         testsPassed: 0,
+        testsSkipped: 0,
         patches: new Set(),
       };
       byMinor.set(r.version_minor, acc);
@@ -187,11 +193,15 @@ export function rollupRunsByMinor(rows: RunRow[]): VersionRollup[] {
     if (r.status === "success") acc.passingRuns++;
     acc.tests += r.tests_total;
     acc.testsPassed += r.tests_passed;
+    acc.testsSkipped += r.tests_skipped;
     if (r.version_patch) acc.patches.add(r.version_patch);
   }
 
   const out: VersionRollup[] = [];
   for (const [minor, acc] of byMinor) {
+    // Rate over EXECUTED tests — skipped excluded from both sides so
+    // intentionally-skipped tests don't look like failures.
+    const executed = acc.tests - acc.testsSkipped;
     out.push({
       minor,
       patches: [...acc.patches].sort().reverse(),
@@ -200,7 +210,8 @@ export function rollupRunsByMinor(rows: RunRow[]): VersionRollup[] {
       passRate: acc.runs > 0 ? acc.passingRuns / acc.runs : null,
       tests: acc.tests,
       testsPassed: acc.testsPassed,
-      testPassRate: acc.tests > 0 ? acc.testsPassed / acc.tests : null,
+      testsSkipped: acc.testsSkipped,
+      testPassRate: executed > 0 ? acc.testsPassed / executed : null,
     });
   }
   return out.sort((a, b) => (a.minor < b.minor ? 1 : -1));

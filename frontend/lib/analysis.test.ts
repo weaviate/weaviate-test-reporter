@@ -154,35 +154,39 @@ describe("deriveKpis", () => {
 });
 
 describe("rollupRunsByMinor", () => {
-  it("counts rows exactly, derives run + test pass rates, sorted distinct patches, newest minor first", () => {
+  it("counts rows exactly, derives run + test pass rates (skipped excluded), sorted distinct patches, newest minor first", () => {
     const out = rollupRunsByMinor([
       {
         version_minor: "1.37",
         version_patch: "1.37.0",
         status: "success",
-        tests_total: 10,
-        tests_passed: 10,
+        tests_total: 25,
+        tests_passed: 20,
+        tests_skipped: 5,
       },
       {
         version_minor: "1.37",
         version_patch: "1.37.1",
         status: "success",
-        tests_total: 10,
-        tests_passed: 9,
+        tests_total: 25,
+        tests_passed: 20,
+        tests_skipped: 5,
       },
       {
         version_minor: "1.37",
         version_patch: "1.37.0",
         status: "success",
-        tests_total: 10,
-        tests_passed: 10,
+        tests_total: 25,
+        tests_passed: 20,
+        tests_skipped: 5,
       },
       {
         version_minor: "1.37",
         version_patch: "1.37.1",
         status: "failure",
-        tests_total: 10,
-        tests_passed: 7,
+        tests_total: 25,
+        tests_passed: 12,
+        tests_skipped: 5,
       },
       {
         version_minor: "1.38",
@@ -190,6 +194,7 @@ describe("rollupRunsByMinor", () => {
         status: "success",
         tests_total: 5,
         tests_passed: 5,
+        tests_skipped: 0,
       },
       {
         version_minor: "1.38",
@@ -197,6 +202,7 @@ describe("rollupRunsByMinor", () => {
         status: "success",
         tests_total: 5,
         tests_passed: 5,
+        tests_skipped: 0,
       },
     ]);
     expect(out.map((r) => r.minor)).toEqual(["1.38", "1.37"]);
@@ -204,15 +210,16 @@ describe("rollupRunsByMinor", () => {
     expect(v137.runs).toBe(4);
     expect(v137.passingRuns).toBe(3);
     expect(v137.passRate).toBe(0.75);
-    // test-level: 36 of 40 individual cases passed
-    expect(v137.tests).toBe(40);
-    expect(v137.testsPassed).toBe(36);
+    expect(v137.tests).toBe(100);
+    expect(v137.testsPassed).toBe(72);
+    expect(v137.testsSkipped).toBe(20);
+    // 72 passed of 80 EXECUTED (100 − 20 skipped) = 0.9 — NOT 72/100 = 0.72.
     expect(v137.testPassRate).toBe(0.9);
     // distinct (1.37.0 appears twice), sorted descending
     expect(v137.patches).toEqual(["1.37.1", "1.37.0"]);
   });
 
-  it("ignores runs with no version_minor and dedupes patches", () => {
+  it("excludes skipped from the test pass rate; ignores null minors; dedupes patches", () => {
     const out = rollupRunsByMinor([
       {
         version_minor: null,
@@ -220,20 +227,23 @@ describe("rollupRunsByMinor", () => {
         status: "success",
         tests_total: 3,
         tests_passed: 3,
+        tests_skipped: 0,
       },
       {
         version_minor: "1.40",
         version_patch: "1.40.0",
         status: "failure",
-        tests_total: 8,
+        tests_total: 10,
         tests_passed: 6,
+        tests_skipped: 2,
       },
       {
         version_minor: "1.40",
         version_patch: "1.40.0",
         status: "failure",
-        tests_total: 8,
-        tests_passed: 5,
+        tests_total: 10,
+        tests_passed: 6,
+        tests_skipped: 2,
       },
     ]);
     expect(out).toHaveLength(1);
@@ -242,10 +252,28 @@ describe("rollupRunsByMinor", () => {
       runs: 2,
       passingRuns: 0,
       passRate: 0,
-      tests: 16,
-      testsPassed: 11,
-      testPassRate: 0.6875,
+      tests: 20,
+      testsPassed: 12,
+      testsSkipped: 4,
+      // 12 passed of 16 executed (20 − 4 skipped) = 0.75 (not 12/20 = 0.6).
+      testPassRate: 0.75,
       patches: ["1.40.0"],
     });
+  });
+
+  it("returns null test pass rate when everything was skipped (nothing executed)", () => {
+    const out = rollupRunsByMinor([
+      {
+        version_minor: "1.41",
+        version_patch: "1.41.0",
+        status: "success",
+        tests_total: 8,
+        tests_passed: 0,
+        tests_skipped: 8,
+      },
+    ]);
+    expect(out[0].tests).toBe(8);
+    expect(out[0].testsSkipped).toBe(8);
+    expect(out[0].testPassRate).toBeNull();
   });
 });

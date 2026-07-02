@@ -162,10 +162,17 @@ function VersionCard({
         <dd className="text-right text-wv-fog tabular-nums">
           {version.tests.toLocaleString()}
         </dd>
-        <dt>Test pass rate</dt>
+        <dt>Skipped</dt>
+        <dd className="text-right text-wv-fog-muted tabular-nums">
+          {version.testsSkipped.toLocaleString()}
+        </dd>
+        <dt title="Share of executed tests that passed — skipped tests are excluded.">
+          Test pass rate
+        </dt>
         <dd
           className={`text-right tabular-nums ${toneAccent(passRateTone(version.testPassRate))}`}
           data-testid={`version-test-pass-rate-${version.minor}`}
+          title="Share of executed tests that passed — skipped tests are excluded."
         >
           {formatPct(version.testPassRate)}
         </dd>
