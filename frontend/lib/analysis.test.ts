@@ -276,4 +276,19 @@ describe("rollupRunsByMinor", () => {
     expect(out[0].testsSkipped).toBe(8);
     expect(out[0].testPassRate).toBeNull();
   });
+
+  it("clamps executed to >= 0 when a dialect reports tests_skipped > tests_total", () => {
+    const out = rollupRunsByMinor([
+      {
+        version_minor: "1.42",
+        version_patch: "1.42.0",
+        status: "success",
+        tests_total: 5,
+        tests_passed: 5,
+        tests_skipped: 8,
+      },
+    ]);
+    // executed = max(0, 5 − 8) = 0 → null, never a negative rate.
+    expect(out[0].testPassRate).toBeNull();
+  });
 });

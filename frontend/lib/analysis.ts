@@ -200,8 +200,10 @@ export function rollupRunsByMinor(rows: RunRow[]): VersionRollup[] {
   const out: VersionRollup[] = [];
   for (const [minor, acc] of byMinor) {
     // Rate over EXECUTED tests — skipped excluded from both sides so
-    // intentionally-skipped tests don't look like failures.
-    const executed = acc.tests - acc.testsSkipped;
+    // intentionally-skipped tests don't look like failures. Clamp to >= 0 in
+    // case a dialect ever reports tests_skipped > tests_total (some JUnit
+    // writers count `tests` as executed-only).
+    const executed = Math.max(0, acc.tests - acc.testsSkipped);
     out.push({
       minor,
       patches: [...acc.patches].sort().reverse(),
