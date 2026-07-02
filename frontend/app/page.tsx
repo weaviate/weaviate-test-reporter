@@ -156,7 +156,7 @@ function RunRow({
           {formatTimestamp(run.timestamp)}
         </div>
         <a
-          href={run.job_url || run.run_url}
+          href={run.job_url}
           target="_blank"
           rel="noopener noreferrer"
           onClick={(e) => e.stopPropagation()}
