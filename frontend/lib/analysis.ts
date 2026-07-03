@@ -114,20 +114,27 @@ export type SuiteGroup = { suite: string; count: number };
 /**
  * Derive the dashboard KPIs from aggregate primitives.
  *
- * `totalTests` / `passedTests` come from summing the run-level counts
- * (TestRun.tests_total / tests_passed, WS1 D2) over the windowed runs — no full
- * TestCase scan. `totalCases = totalTests` (spans passed + failed + skipped,
- * matching the old meta.count); `passRate = passedTests / totalTests`.
+ * `totalTests` / `passedTests` / `skippedTests` come from summing the run-level
+ * counts (TestRun.tests_*, WS1 D2) over the windowed runs — no full TestCase
+ * scan. `passRate` is over EXECUTED tests — `passedTests / (totalTests −
+ * skippedTests)` — so intentionally-skipped tests don't drag it down; this
+ * matches the /versions definition (#17) and stops the global rate reading far
+ * lower than every per-version rate. `totalCases` stays the full count (spans
+ * passed + failed + skipped); `skippedCases` is surfaced for transparency.
  */
 export function deriveKpis(args: {
   totalRuns: number;
   avgDurationMean: number | null;
   totalTests: number;
   passedTests: number;
+  skippedTests: number;
   failedSuiteGroups: SuiteGroup[];
 }): DashboardKpis {
   const totalCases = args.totalTests;
-  const passRate = totalCases > 0 ? args.passedTests / totalCases : 0;
+  // Exclude skipped from the denominator (clamp ≥ 0 in case a dialect reports
+  // skipped > total). Same reasoning as rollupRunsByMinor / #17.
+  const executed = Math.max(0, totalCases - args.skippedTests);
+  const passRate = executed > 0 ? args.passedTests / executed : 0;
   const top = [...args.failedSuiteGroups].sort((a, b) => b.count - a.count)[0];
   return {
     passRate,
@@ -135,6 +142,7 @@ export function deriveKpis(args: {
     topFailingSuite: top ?? null,
     totalRuns: args.totalRuns,
     totalCases,
+    skippedCases: args.skippedTests,
   };
 }
 
@@ -274,9 +282,8 @@ export type TrendPoint = {
   testsPassed: number;
   failures: number; // tests_failed + tests_errors
   testsSkipped: number;
-  /** testsPassed / tests_total — matches the dashboard KPI tile (skipped
-   *  included in the denominator). Aligning the whole dashboard to the
-   *  exclude-skipped definition used on /versions is a separate follow-up. */
+  /** testsPassed / EXECUTED (tests_total − skipped) — over the tests that ran,
+   *  matching the dashboard KPI tile and /versions (#17). null when nothing ran. */
   passRate: number | null;
   avgDurationMs: number | null;
 };
@@ -331,6 +338,7 @@ export function bucketRunsByDay(rows: TrendRunRow[]): TrendPoint[] {
 
   const out: TrendPoint[] = [];
   for (const [day, acc] of byDay) {
+    const executed = Math.max(0, acc.tests - acc.testsSkipped);
     out.push({
       day,
       runs: acc.runs,
@@ -339,7 +347,8 @@ export function bucketRunsByDay(rows: TrendRunRow[]): TrendPoint[] {
       testsPassed: acc.testsPassed,
       failures: acc.failures,
       testsSkipped: acc.testsSkipped,
-      passRate: acc.tests > 0 ? acc.testsPassed / acc.tests : null,
+      // Over executed tests (skipped excluded), matching deriveKpis / #17.
+      passRate: executed > 0 ? acc.testsPassed / executed : null,
       avgDurationMs: acc.runs > 0 ? acc.durationSum / acc.runs : null,
     });
   }

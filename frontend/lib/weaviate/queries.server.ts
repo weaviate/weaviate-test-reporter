@@ -423,6 +423,7 @@ export async function fetchDashboardKpis(
         runs.metrics.aggregate("total_duration_ms").integer(["mean"]),
         runs.metrics.aggregate("tests_total").integer(["sum"]),
         runs.metrics.aggregate("tests_passed").integer(["sum"]),
+        runs.metrics.aggregate("tests_skipped").integer(["sum"]),
       ],
     }),
     cases.aggregate.groupBy.overAll({
@@ -439,6 +440,7 @@ export async function fetchDashboardKpis(
       total_duration_ms?: { mean?: number | null };
       tests_total?: { sum?: number | null };
       tests_passed?: { sum?: number | null };
+      tests_skipped?: { sum?: number | null };
     };
   };
   return deriveKpis({
@@ -446,6 +448,7 @@ export async function fetchDashboardKpis(
     avgDurationMean: runAggR.properties?.total_duration_ms?.mean ?? null,
     totalTests: runAggR.properties?.tests_total?.sum ?? 0,
     passedTests: runAggR.properties?.tests_passed?.sum ?? 0,
+    skippedTests: runAggR.properties?.tests_skipped?.sum ?? 0,
     failedSuiteGroups: mapGroups(failedSuite).map((g) => ({
       suite: g.value,
       count: g.count,

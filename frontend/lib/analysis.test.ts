@@ -109,12 +109,13 @@ describe("computeFlaky", () => {
 });
 
 describe("deriveKpis", () => {
-  it("computes pass rate from run-level counts, plus avg duration + top failing suite", () => {
+  it("computes pass rate over executed tests, plus avg duration + top failing suite", () => {
     const kpis = deriveKpis({
       totalRuns: 3,
       avgDurationMean: 1234.5,
       totalTests: 10,
       passedTests: 8,
+      skippedTests: 0,
       failedSuiteGroups: [
         { suite: "suiteA", count: 2 },
         { suite: "suiteB", count: 5 },
@@ -126,29 +127,34 @@ describe("deriveKpis", () => {
       topFailingSuite: { suite: "suiteB", count: 5 },
       totalRuns: 3,
       totalCases: 10,
+      skippedCases: 0,
     });
   });
 
-  it("counts skipped in totalTests (denominator spans all statuses)", () => {
+  it("excludes skipped from the pass-rate denominator (of the tests that ran)", () => {
     const kpis = deriveKpis({
       totalRuns: 1,
       avgDurationMean: null,
       totalTests: 10, // 6 passed + 2 failed + 2 skipped
       passedTests: 6,
+      skippedTests: 2,
       failedSuiteGroups: [],
     });
-    expect(kpis.totalCases).toBe(10);
-    expect(kpis.passRate).toBe(0.6);
+    expect(kpis.totalCases).toBe(10); // full count still reported
+    expect(kpis.skippedCases).toBe(2);
+    // 6 passed of 8 EXECUTED (10 − 2 skipped) = 0.75 — NOT 6/10 = 0.6.
+    expect(kpis.passRate).toBe(0.75);
     expect(kpis.topFailingSuite).toBeNull();
     expect(kpis.avgRunDurationMs).toBe(0);
   });
 
-  it("guards against divide-by-zero with no tests", () => {
+  it("guards against divide-by-zero when nothing ran", () => {
     const kpis = deriveKpis({
       totalRuns: 0,
       avgDurationMean: null,
       totalTests: 0,
       passedTests: 0,
+      skippedTests: 0,
       failedSuiteGroups: [],
     });
     expect(kpis.passRate).toBe(0);
@@ -375,15 +381,15 @@ describe("bucketRunsByDay", () => {
         total_duration_ms: 100_000,
         tests_total: 100,
         tests_passed: 90,
-        tests_failed: 5,
-        tests_skipped: 5,
+        tests_failed: 0,
+        tests_skipped: 10,
       }),
       trendRow("2026-07-01T09:00:00.000Z", "failure", {
         total_duration_ms: 200_000,
         tests_total: 100,
-        tests_passed: 80,
-        tests_failed: 15,
-        tests_skipped: 5,
+        tests_passed: 72,
+        tests_failed: 18,
+        tests_skipped: 10,
       }),
       trendRow("2026-07-02T10:00:00.000Z", "success", {
         total_duration_ms: 50_000,
@@ -410,10 +416,10 @@ describe("bucketRunsByDay", () => {
       runs: 2,
       passingRuns: 1, // only the "success" run
       tests: 200,
-      testsPassed: 170,
-      failures: 20, // 5 + 15 failed, 0 errors
-      testsSkipped: 10,
-      passRate: 0.85, // 170 / 200 (skipped included, matches KPI tile)
+      testsPassed: 162,
+      failures: 18, // 0 + 18 failed, 0 errors
+      testsSkipped: 20,
+      passRate: 0.9, // 162 / 180 EXECUTED (200 − 20 skipped) — NOT 162/200 = 0.81
       avgDurationMs: 150_000, // (100k + 200k) / 2
     });
 

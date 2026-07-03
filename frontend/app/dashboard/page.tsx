@@ -100,7 +100,9 @@ export default function DashboardPage() {
                 testId="kpi-pass-rate"
                 label="Global pass rate"
                 value={formatPct(kpis.data.passRate)}
-                helper={`Across ${kpis.data.totalCases.toLocaleString()} TestCases.`}
+                helper={`Of ${(
+                  kpis.data.totalCases - kpis.data.skippedCases
+                ).toLocaleString()} executed TestCases · ${kpis.data.skippedCases.toLocaleString()} skipped (excluded).`}
                 Icon={CheckCircle2}
                 tone={passRateTone(kpis.data.passRate)}
                 delay={0}

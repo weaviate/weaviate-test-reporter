@@ -121,11 +121,12 @@ export type TestCase = {
 };
 
 export type DashboardKpis = {
-  passRate: number; // 0..1
+  passRate: number; // 0..1, over EXECUTED tests (skipped excluded), matching /versions
   avgRunDurationMs: number;
   topFailingSuite: { suite: string; count: number } | null;
   totalRuns: number;
-  totalCases: number;
+  totalCases: number; // all cases (passed + failed + skipped)
+  skippedCases: number; // excluded from the pass-rate denominator
 };
 
 /**
