@@ -6,8 +6,10 @@ import { PageHeader } from "@/components/PageHeader";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorState, LoadingState } from "@/components/States";
 import { TrendCharts } from "@/components/TrendCharts";
+import { TrendFilterBar } from "@/components/TrendFilterBar";
 import { useAsync } from "@/lib/useAsync";
 import { fetchDashboardKpis, fetchRunTrend, isoDaysAgo } from "@/lib/queries";
+import type { TrendFilters } from "@/lib/queries";
 
 const RANGES = [
   { id: "7d", label: "Last 7 days", days: 7 },
@@ -55,7 +57,16 @@ export default function DashboardPage() {
     () => fetchDashboardKpis(sinceIso),
     [sinceIso ?? "all"],
   );
-  const trend = useAsync(() => fetchRunTrend(sinceIso), [sinceIso ?? "all"]);
+  const [trendFilters, setTrendFilters] = useState<TrendFilters>({});
+  const trend = useAsync(
+    () => fetchRunTrend(sinceIso, trendFilters),
+    [
+      sinceIso ?? "all",
+      (trendFilters.repositories ?? []).join("|"),
+      (trendFilters.branches ?? []).join("|"),
+      (trendFilters.versionMinors ?? []).join("|"),
+    ],
+  );
 
   return (
     <>
@@ -138,19 +149,28 @@ export default function DashboardPage() {
           </>
         ) : null}
 
-        {trend.loading ? (
-          <LoadingState label="Charting run history…" />
-        ) : trend.error ? (
-          <ErrorState error={trend.error} />
-        ) : trend.data && trend.data.length > 0 ? (
-          <TrendCharts data={trend.data} />
-        ) : trend.data ? (
-          <EmptyState
-            Icon={TrendingUp}
-            title="Not enough history to chart yet"
-            description="Trends appear once runs have landed in this window — widen the range or ingest more runs."
-          />
-        ) : null}
+        <div>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-[11px] uppercase tracking-[0.2em] font-mono text-wv-fog-muted">
+              Trends
+            </p>
+            <TrendFilterBar filters={trendFilters} onChange={setTrendFilters} />
+          </div>
+
+          {trend.loading ? (
+            <LoadingState label="Charting run history…" />
+          ) : trend.error ? (
+            <ErrorState error={trend.error} />
+          ) : trend.data && trend.data.length > 0 ? (
+            <TrendCharts data={trend.data} />
+          ) : trend.data ? (
+            <EmptyState
+              Icon={TrendingUp}
+              title="No runs to chart"
+              description="No runs match the current window and filters — widen the range, clear filters, or ingest more runs."
+            />
+          ) : null}
+        </div>
       </section>
     </>
   );
