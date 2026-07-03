@@ -252,3 +252,96 @@ export function summarizeRunCounts(c: {
     segs.push({ text: `${c.tests_skipped} skipped`, tone: "muted" });
   return segs;
 }
+
+// ---------- dashboard trend (time series, WS2 H2) ----------
+
+export type TrendRunRow = {
+  started_at: string; // UTC ISO (WS1 D1); "" for a legacy row with no run-start
+  status: string;
+  total_duration_ms: number;
+  tests_total: number;
+  tests_passed: number;
+  tests_failed: number;
+  tests_skipped: number;
+  tests_errors: number;
+};
+
+export type TrendPoint = {
+  day: string; // "YYYY-MM-DD" (UTC)
+  runs: number;
+  passingRuns: number;
+  tests: number;
+  testsPassed: number;
+  failures: number; // tests_failed + tests_errors
+  testsSkipped: number;
+  /** testsPassed / tests_total — matches the dashboard KPI tile (skipped
+   *  included in the denominator). Aligning the whole dashboard to the
+   *  exclude-skipped definition used on /versions is a separate follow-up. */
+  passRate: number | null;
+  avgDurationMs: number | null;
+};
+
+/**
+ * Bucket TestRun rows into a per-UTC-day series for the dashboard trend charts.
+ *
+ * Pure + deterministic, same house style as `rollupRunsByMinor` (paginate real
+ * rows, derive here — not Weaviate's jittery Aggregate groupBy). The day is the
+ * UTC calendar date of `started_at` (real run start, WS1 D1), read straight off
+ * the ISO string so there's no timezone drift. Rows with no usable `started_at`
+ * are skipped rather than bucketed under a bogus day. Output is sorted ascending
+ * by day so charts read oldest → newest, left → right.
+ */
+export function bucketRunsByDay(rows: TrendRunRow[]): TrendPoint[] {
+  type Acc = {
+    runs: number;
+    passingRuns: number;
+    tests: number;
+    testsPassed: number;
+    failures: number;
+    testsSkipped: number;
+    durationSum: number;
+  };
+  const byDay = new Map<string, Acc>();
+  for (const r of rows) {
+    // started_at is a UTC ISO string ("2026-07-01T03:36:42.000Z"); its first 10
+    // chars are the UTC calendar day. Skip rows without a usable date.
+    if (!r.started_at || r.started_at.length < 10) continue;
+    const day = r.started_at.slice(0, 10);
+    let acc = byDay.get(day);
+    if (!acc) {
+      acc = {
+        runs: 0,
+        passingRuns: 0,
+        tests: 0,
+        testsPassed: 0,
+        failures: 0,
+        testsSkipped: 0,
+        durationSum: 0,
+      };
+      byDay.set(day, acc);
+    }
+    acc.runs++;
+    if (r.status === "success") acc.passingRuns++;
+    acc.tests += r.tests_total;
+    acc.testsPassed += r.tests_passed;
+    acc.failures += r.tests_failed + r.tests_errors;
+    acc.testsSkipped += r.tests_skipped;
+    acc.durationSum += r.total_duration_ms;
+  }
+
+  const out: TrendPoint[] = [];
+  for (const [day, acc] of byDay) {
+    out.push({
+      day,
+      runs: acc.runs,
+      passingRuns: acc.passingRuns,
+      tests: acc.tests,
+      testsPassed: acc.testsPassed,
+      failures: acc.failures,
+      testsSkipped: acc.testsSkipped,
+      passRate: acc.tests > 0 ? acc.testsPassed / acc.tests : null,
+      avgDurationMs: acc.runs > 0 ? acc.durationSum / acc.runs : null,
+    });
+  }
+  return out.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+}

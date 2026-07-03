@@ -5,8 +5,10 @@ import {
   deriveKpis,
   rollupRunsByMinor,
   summarizeRunCounts,
+  bucketRunsByDay,
   FLAKES_RECENT_STATUSES,
   type FlakeRow,
+  type TrendRunRow,
 } from "./analysis";
 import type { TestCaseStatus } from "./types";
 
@@ -347,5 +349,103 @@ describe("summarizeRunCounts", () => {
         tests_errors: 0,
       }),
     ).toEqual([]);
+  });
+});
+
+describe("bucketRunsByDay", () => {
+  const trendRow = (
+    started_at: string,
+    status: string,
+    over: Partial<TrendRunRow> = {},
+  ): TrendRunRow => ({
+    started_at,
+    status,
+    total_duration_ms: 0,
+    tests_total: 0,
+    tests_passed: 0,
+    tests_failed: 0,
+    tests_skipped: 0,
+    tests_errors: 0,
+    ...over,
+  });
+
+  it("buckets by UTC day, sums counts, derives passRate + avgDuration, sorted oldest→newest", () => {
+    const out = bucketRunsByDay([
+      trendRow("2026-07-01T03:00:00.000Z", "success", {
+        total_duration_ms: 100_000,
+        tests_total: 100,
+        tests_passed: 90,
+        tests_failed: 5,
+        tests_skipped: 5,
+      }),
+      trendRow("2026-07-01T09:00:00.000Z", "failure", {
+        total_duration_ms: 200_000,
+        tests_total: 100,
+        tests_passed: 80,
+        tests_failed: 15,
+        tests_skipped: 5,
+      }),
+      trendRow("2026-07-02T10:00:00.000Z", "success", {
+        total_duration_ms: 50_000,
+        tests_total: 50,
+        tests_passed: 50,
+      }),
+      trendRow("2026-06-30T22:00:00.000Z", "success", {
+        total_duration_ms: 70_000,
+        tests_total: 60,
+        tests_passed: 54,
+        tests_failed: 5,
+        tests_errors: 1,
+      }),
+    ]);
+
+    expect(out.map((p) => p.day)).toEqual([
+      "2026-06-30",
+      "2026-07-01",
+      "2026-07-02",
+    ]);
+
+    const d0701 = out.find((p) => p.day === "2026-07-01")!;
+    expect(d0701).toMatchObject({
+      runs: 2,
+      passingRuns: 1, // only the "success" run
+      tests: 200,
+      testsPassed: 170,
+      failures: 20, // 5 + 15 failed, 0 errors
+      testsSkipped: 10,
+      passRate: 0.85, // 170 / 200 (skipped included, matches KPI tile)
+      avgDurationMs: 150_000, // (100k + 200k) / 2
+    });
+
+    // errors fold into the failures count (5 failed + 1 error = 6)
+    expect(out.find((p) => p.day === "2026-06-30")!.failures).toBe(6);
+  });
+
+  it("skips rows with no usable started_at rather than bucketing a bogus day", () => {
+    const out = bucketRunsByDay([
+      trendRow("", "success", { tests_total: 10, tests_passed: 10 }),
+      trendRow("2026-07-01T00:00:00.000Z", "success", {
+        tests_total: 10,
+        tests_passed: 10,
+      }),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].day).toBe("2026-07-01");
+    expect(out[0].runs).toBe(1);
+  });
+
+  it("returns null passRate for a day whose runs recorded no tests", () => {
+    const out = bucketRunsByDay([
+      trendRow("2026-07-01T00:00:00.000Z", "failure", {
+        total_duration_ms: 5_000,
+      }),
+    ]);
+    expect(out[0].passRate).toBeNull();
+    expect(out[0].avgDurationMs).toBe(5_000);
+    expect(out[0].runs).toBe(1);
+  });
+
+  it("returns [] for no rows", () => {
+    expect(bucketRunsByDay([])).toEqual([]);
   });
 });
