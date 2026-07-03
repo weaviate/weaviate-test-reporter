@@ -110,7 +110,10 @@ export function TrendCharts({ data }: { data: TrendPoint[] }) {
           <Tooltip
             contentStyle={TOOLTIP_STYLE}
             labelStyle={{ color: "var(--wv-fog-muted)" }}
-            formatter={(value) => [pctTick(Number(value)), "pass rate"]}
+            formatter={(value) => [
+              value == null ? "N/A" : pctTick(Number(value)),
+              "pass rate",
+            ]}
           />
           <Area
             type="monotone"
