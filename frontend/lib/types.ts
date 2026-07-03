@@ -19,6 +19,16 @@ export type TestRun = {
   status: TestRunStatus;
   total_duration_ms: number;
   timestamp: string;
+  /** Real CI run start (WS1 D1) — JUnit `<testsuite timestamp>`, falling back to
+   *  ingest time when absent. Prefer over `timestamp` for run-time sort/display. */
+  started_at: string;
+  /** Run-level counts (WS1 D2), straight off the `<testsuite>` attributes.
+   *  `tests_total` INCLUDES skipped; `tests_passed` = total − failed − errors − skipped. */
+  tests_total: number;
+  tests_passed: number;
+  tests_failed: number;
+  tests_skipped: number;
+  tests_errors: number;
   workflow_run_id: string;
   workflow_run_attempt: number;
   workflow_name: string;

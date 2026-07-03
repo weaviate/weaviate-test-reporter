@@ -64,7 +64,9 @@ type RunProps = {
   started_at: Date;
   tests_total: number;
   tests_passed: number;
+  tests_failed: number;
   tests_skipped: number;
+  tests_errors: number;
   workflow_run_id: string;
   workflow_run_attempt: number;
   workflow_name: string;
@@ -146,6 +148,14 @@ function asTestRun(o: RawObject): TestRun {
     status: p.status as TestRunStatus,
     total_duration_ms: (p.total_duration_ms as number) ?? 0,
     timestamp: normalizeDate(p.timestamp),
+    // Real run start (WS1 D1); the action always sets it (falls back to ingest
+    // time), so a re-ingested cluster never has an empty started_at.
+    started_at: normalizeDate(p.started_at),
+    tests_total: (p.tests_total as number) ?? 0,
+    tests_passed: (p.tests_passed as number) ?? 0,
+    tests_failed: (p.tests_failed as number) ?? 0,
+    tests_skipped: (p.tests_skipped as number) ?? 0,
+    tests_errors: (p.tests_errors as number) ?? 0,
     workflow_run_id: (p.workflow_run_id as string) ?? "",
     workflow_run_attempt: (p.workflow_run_attempt as number) ?? 1,
     workflow_name: (p.workflow_name as string) ?? "",
@@ -239,7 +249,9 @@ export async function fetchRecentRuns(
 
   const res = await runs.query.fetchObjects({
     limit: safeLimit,
-    sort: runs.sort.byProperty("timestamp", false),
+    // Order by real run start (WS1 D1), not ingest time — a run reported hours
+    // after it ran shouldn't jump ahead of runs that actually started later.
+    sort: runs.sort.byProperty("started_at", false),
     filters: filter,
   });
   return (res.objects as unknown as RawObject[]).map(asTestRun);

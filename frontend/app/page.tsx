@@ -20,6 +20,7 @@ import {
   type RunFilters,
 } from "@/lib/queries";
 import type { TestRun } from "@/lib/types";
+import { summarizeRunCounts } from "@/lib/analysis";
 
 function formatTimestamp(iso: string): string {
   if (!iso) return "—";
@@ -91,6 +92,36 @@ function ExpandedRunBody({ run }: { run: TestRun }) {
   );
 }
 
+/** Compact run-level count summary (WS1 D2): `154/167 · 3 failed · 10 skipped`.
+ *  Renders nothing for legacy rows that carry no counts. */
+function RunCounts({ run }: { run: TestRun }) {
+  const segs = summarizeRunCounts(run);
+  if (segs.length === 0) return null;
+  return (
+    <p
+      data-testid="run-counts"
+      className="mt-0.5 flex items-center gap-1.5 text-[11px] font-mono tabular-nums"
+    >
+      {segs.map((seg, i) => (
+        <span key={seg.text} className="flex items-center gap-1.5">
+          {i > 0 ? (
+            <span aria-hidden="true" className="opacity-40">
+              ·
+            </span>
+          ) : null}
+          <span
+            className={
+              seg.tone === "bad" ? "text-wv-danger" : "text-wv-fog-muted"
+            }
+          >
+            {seg.text}
+          </span>
+        </span>
+      ))}
+    </p>
+  );
+}
+
 function RunRow({
   run,
   expanded,
@@ -145,6 +176,7 @@ function RunRow({
               </>
             ) : null}
           </p>
+          <RunCounts run={run} />
         </div>
         <div className="hidden md:block text-right shrink-0 w-[100px]">
           <p className="font-mono text-[12px] text-wv-fog tabular-nums">
@@ -152,8 +184,11 @@ function RunRow({
           </p>
           <p className="text-[11px] text-wv-fog-muted">{run.trigger_type}</p>
         </div>
-        <div className="hidden lg:block text-right shrink-0 w-[170px] font-mono text-[11px] text-wv-fog-muted">
-          {formatTimestamp(run.timestamp)}
+        <div
+          className="hidden lg:block text-right shrink-0 w-[170px] font-mono text-[11px] text-wv-fog-muted"
+          title="Run start time (UTC)"
+        >
+          {formatTimestamp(run.started_at)}
         </div>
         <a
           href={run.job_url}
