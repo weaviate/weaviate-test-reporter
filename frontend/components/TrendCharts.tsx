@@ -15,6 +15,7 @@ import {
   Tooltip,
 } from "recharts";
 import type { TrendPoint } from "@/lib/queries";
+import { passRateDomain } from "@/lib/analysis";
 
 // Recharts takes plain CSS color strings; reference the brand tokens so the
 // charts stay in lock-step with the theme (globals.css `:root`).
@@ -31,7 +32,10 @@ const TOOLTIP_STYLE = {
 
 /** "2026-07-01" → "07-01" (compact axis tick; days are already UTC). */
 const dayTick = (day: string): string => day.slice(5);
+// Whole-percent for the axis gridlines; one decimal for the tooltip value so a
+// 99.8% (or a drop to 99.5%) isn't rounded up to a flat "100%".
 const pctTick = (v: number): string => `${Math.round(v * 100)}%`;
+const pctPrecise = (v: number): string => `${(v * 100).toFixed(1)}%`;
 const durationTick = (ms: number): string =>
   ms >= 60_000 ? `${Math.round(ms / 60_000)}m` : `${Math.round(ms / 1000)}s`;
 
@@ -106,12 +110,16 @@ export function TrendCharts({ data }: { data: TrendPoint[] }) {
           </defs>
           <CartesianGrid stroke={GRID} strokeOpacity={0.4} vertical={false} />
           <XAxis {...xAxisProps} />
-          <YAxis {...yAxisBase} domain={[0, 1]} tickFormatter={pctTick} />
+          <YAxis
+            {...yAxisBase}
+            domain={passRateDomain(data)}
+            tickFormatter={pctTick}
+          />
           <Tooltip
             contentStyle={TOOLTIP_STYLE}
             labelStyle={{ color: "var(--wv-fog-muted)" }}
             formatter={(value) => [
-              value == null ? "N/A" : pctTick(Number(value)),
+              value == null ? "N/A" : pctPrecise(Number(value)),
               "pass rate",
             ]}
           />

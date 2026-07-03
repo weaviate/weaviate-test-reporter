@@ -354,3 +354,24 @@ export function bucketRunsByDay(rows: TrendRunRow[]): TrendPoint[] {
   }
   return out.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
 }
+
+/**
+ * Y-axis domain for the pass-rate trend chart. Zooms to the data so small dips
+ * are visible instead of a flat line pinned at the top — a healthy suite (99%+)
+ * would otherwise hide a drop to 99.5% on a fixed [0,1] axis. Floors to a nice
+ * 5% step just BELOW the minimum (never above the data), so the lowest point
+ * always sits off the axis floor. Falls back to [0,1] when nothing has a rate.
+ */
+export function passRateDomain(
+  points: { passRate: number | null }[],
+): [number, number] {
+  const vals = points
+    .map((p) => p.passRate)
+    .filter((v): v is number => v != null);
+  if (vals.length === 0) return [0, 1];
+  // Work in integer percent — `Math.floor(1 / 0.05)` is 19, not 20, in float.
+  const minPct = Math.min(...vals) * 100;
+  const niceMinPct = Math.floor((minPct + 1e-9) / 5) * 5; // nearest 5% ≤ min
+  const floorPct = Math.max(0, niceMinPct - 5); // one step of headroom below
+  return [floorPct / 100, 1];
+}

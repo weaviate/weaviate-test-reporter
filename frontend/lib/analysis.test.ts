@@ -6,6 +6,7 @@ import {
   rollupRunsByMinor,
   summarizeRunCounts,
   bucketRunsByDay,
+  passRateDomain,
   FLAKES_RECENT_STATUSES,
   type FlakeRow,
   type TrendRunRow,
@@ -453,5 +454,28 @@ describe("bucketRunsByDay", () => {
 
   it("returns [] for no rows", () => {
     expect(bucketRunsByDay([])).toEqual([]);
+  });
+});
+
+describe("passRateDomain", () => {
+  it("zooms in when the suite is healthy so small dips are visible", () => {
+    // min 0.995 → nice floor 0.95 → one step of headroom → 0.90
+    expect(passRateDomain([{ passRate: 0.998 }, { passRate: 0.995 }])).toEqual([
+      0.9, 1,
+    ]);
+  });
+
+  it("drops the floor when there are real failures", () => {
+    expect(passRateDomain([{ passRate: 0.6 }, { passRate: 0.99 }])).toEqual([
+      0.55, 1,
+    ]);
+  });
+
+  it("keeps headroom below a perfect 100% so a future dip would show", () => {
+    expect(passRateDomain([{ passRate: 1 }])).toEqual([0.95, 1]);
+  });
+
+  it("falls back to [0,1] when no point has a rate", () => {
+    expect(passRateDomain([{ passRate: null }])).toEqual([0, 1]);
   });
 });
