@@ -218,3 +218,37 @@ export function rollupRunsByMinor(rows: RunRow[]): VersionRollup[] {
   }
   return out.sort((a, b) => (a.minor < b.minor ? 1 : -1));
 }
+
+// ---------- test-explorer run counts ----------
+
+export type RunCountTone = "muted" | "bad";
+export type RunCountSegment = { text: string; tone: RunCountTone };
+
+/**
+ * Compact run-level count summary for a Test Explorer row (WS1 D2 counts).
+ *
+ * Always leads with `passed/total`, then appends `failed` / `errors` / `skipped`
+ * segments only when non-zero (errors is usually 0, so it's hidden unless it
+ * happened). Returns `[]` when the run carries no counts (`tests_total <= 0` —
+ * e.g. a legacy row ingested before WS1), so the caller renders nothing rather
+ * than a misleading "0/0". `tests_total` INCLUDES skipped, matching the schema.
+ */
+export function summarizeRunCounts(c: {
+  tests_total: number;
+  tests_passed: number;
+  tests_failed: number;
+  tests_skipped: number;
+  tests_errors: number;
+}): RunCountSegment[] {
+  if (!c.tests_total || c.tests_total <= 0) return [];
+  const segs: RunCountSegment[] = [
+    { text: `${c.tests_passed}/${c.tests_total}`, tone: "muted" },
+  ];
+  if (c.tests_failed > 0)
+    segs.push({ text: `${c.tests_failed} failed`, tone: "bad" });
+  if (c.tests_errors > 0)
+    segs.push({ text: `${c.tests_errors} errors`, tone: "bad" });
+  if (c.tests_skipped > 0)
+    segs.push({ text: `${c.tests_skipped} skipped`, tone: "muted" });
+  return segs;
+}

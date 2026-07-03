@@ -4,6 +4,7 @@ import {
   computeFlaky,
   deriveKpis,
   rollupRunsByMinor,
+  summarizeRunCounts,
   FLAKES_RECENT_STATUSES,
   type FlakeRow,
 } from "./analysis";
@@ -290,5 +291,61 @@ describe("rollupRunsByMinor", () => {
     ]);
     // executed = max(0, 5 − 8) = 0 → null, never a negative rate.
     expect(out[0].testPassRate).toBeNull();
+  });
+});
+
+describe("summarizeRunCounts", () => {
+  it("leads with passed/total and appends only the non-zero failed/skipped segments", () => {
+    const segs = summarizeRunCounts({
+      tests_total: 167,
+      tests_passed: 154,
+      tests_failed: 3,
+      tests_skipped: 10,
+      tests_errors: 0,
+    });
+    expect(segs).toEqual([
+      { text: "154/167", tone: "muted" },
+      { text: "3 failed", tone: "bad" },
+      { text: "10 skipped", tone: "muted" },
+    ]);
+  });
+
+  it("shows only the ratio when everything passed", () => {
+    const segs = summarizeRunCounts({
+      tests_total: 100,
+      tests_passed: 100,
+      tests_failed: 0,
+      tests_skipped: 0,
+      tests_errors: 0,
+    });
+    expect(segs).toEqual([{ text: "100/100", tone: "muted" }]);
+  });
+
+  it("surfaces errors as a distinct segment when present", () => {
+    const segs = summarizeRunCounts({
+      tests_total: 50,
+      tests_passed: 45,
+      tests_failed: 2,
+      tests_skipped: 1,
+      tests_errors: 2,
+    });
+    expect(segs).toEqual([
+      { text: "45/50", tone: "muted" },
+      { text: "2 failed", tone: "bad" },
+      { text: "2 errors", tone: "bad" },
+      { text: "1 skipped", tone: "muted" },
+    ]);
+  });
+
+  it("returns [] for a legacy row with no counts (tests_total 0) so nothing renders", () => {
+    expect(
+      summarizeRunCounts({
+        tests_total: 0,
+        tests_passed: 0,
+        tests_failed: 0,
+        tests_skipped: 0,
+        tests_errors: 0,
+      }),
+    ).toEqual([]);
   });
 });
