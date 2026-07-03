@@ -114,20 +114,27 @@ export type SuiteGroup = { suite: string; count: number };
 /**
  * Derive the dashboard KPIs from aggregate primitives.
  *
- * `totalTests` / `passedTests` come from summing the run-level counts
- * (TestRun.tests_total / tests_passed, WS1 D2) over the windowed runs — no full
- * TestCase scan. `totalCases = totalTests` (spans passed + failed + skipped,
- * matching the old meta.count); `passRate = passedTests / totalTests`.
+ * `totalTests` / `passedTests` / `skippedTests` come from summing the run-level
+ * counts (TestRun.tests_*, WS1 D2) over the windowed runs — no full TestCase
+ * scan. `passRate` is over EXECUTED tests — `passedTests / (totalTests −
+ * skippedTests)` — so intentionally-skipped tests don't drag it down; this
+ * matches the /versions definition (#17) and stops the global rate reading far
+ * lower than every per-version rate. `totalCases` stays the full count (spans
+ * passed + failed + skipped); `skippedCases` is surfaced for transparency.
  */
 export function deriveKpis(args: {
   totalRuns: number;
   avgDurationMean: number | null;
   totalTests: number;
   passedTests: number;
+  skippedTests: number;
   failedSuiteGroups: SuiteGroup[];
 }): DashboardKpis {
   const totalCases = args.totalTests;
-  const passRate = totalCases > 0 ? args.passedTests / totalCases : 0;
+  // Exclude skipped from the denominator (clamp ≥ 0 in case a dialect reports
+  // skipped > total). Same reasoning as rollupRunsByMinor / #17.
+  const executed = Math.max(0, totalCases - args.skippedTests);
+  const passRate = executed > 0 ? args.passedTests / executed : 0;
   const top = [...args.failedSuiteGroups].sort((a, b) => b.count - a.count)[0];
   return {
     passRate,
@@ -135,6 +142,7 @@ export function deriveKpis(args: {
     topFailingSuite: top ?? null,
     totalRuns: args.totalRuns,
     totalCases,
+    skippedCases: args.skippedTests,
   };
 }
 
@@ -251,4 +259,119 @@ export function summarizeRunCounts(c: {
   if (c.tests_skipped > 0)
     segs.push({ text: `${c.tests_skipped} skipped`, tone: "muted" });
   return segs;
+}
+
+// ---------- dashboard trend (time series, WS2 H2) ----------
+
+export type TrendRunRow = {
+  started_at: string; // UTC ISO (WS1 D1); "" for a legacy row with no run-start
+  status: string;
+  total_duration_ms: number;
+  tests_total: number;
+  tests_passed: number;
+  tests_failed: number;
+  tests_skipped: number;
+  tests_errors: number;
+};
+
+export type TrendPoint = {
+  day: string; // "YYYY-MM-DD" (UTC)
+  runs: number;
+  passingRuns: number;
+  tests: number;
+  testsPassed: number;
+  failures: number; // tests_failed + tests_errors
+  testsSkipped: number;
+  /** testsPassed / EXECUTED (tests_total − skipped) — over the tests that ran,
+   *  matching the dashboard KPI tile and /versions (#17). null when nothing ran. */
+  passRate: number | null;
+  avgDurationMs: number | null;
+};
+
+/**
+ * Bucket TestRun rows into a per-UTC-day series for the dashboard trend charts.
+ *
+ * Pure + deterministic, same house style as `rollupRunsByMinor` (paginate real
+ * rows, derive here — not Weaviate's jittery Aggregate groupBy). The day is the
+ * UTC calendar date of `started_at` (real run start, WS1 D1), read straight off
+ * the ISO string so there's no timezone drift. Rows with no usable `started_at`
+ * are skipped rather than bucketed under a bogus day. Output is sorted ascending
+ * by day so charts read oldest → newest, left → right.
+ */
+export function bucketRunsByDay(rows: TrendRunRow[]): TrendPoint[] {
+  type Acc = {
+    runs: number;
+    passingRuns: number;
+    tests: number;
+    testsPassed: number;
+    failures: number;
+    testsSkipped: number;
+    durationSum: number;
+  };
+  const byDay = new Map<string, Acc>();
+  for (const r of rows) {
+    // started_at is a UTC ISO string ("2026-07-01T03:36:42.000Z"); its first 10
+    // chars are the UTC calendar day. Skip rows without a usable date.
+    if (!r.started_at || r.started_at.length < 10) continue;
+    const day = r.started_at.slice(0, 10);
+    let acc = byDay.get(day);
+    if (!acc) {
+      acc = {
+        runs: 0,
+        passingRuns: 0,
+        tests: 0,
+        testsPassed: 0,
+        failures: 0,
+        testsSkipped: 0,
+        durationSum: 0,
+      };
+      byDay.set(day, acc);
+    }
+    acc.runs++;
+    if (r.status === "success") acc.passingRuns++;
+    acc.tests += r.tests_total;
+    acc.testsPassed += r.tests_passed;
+    acc.failures += r.tests_failed + r.tests_errors;
+    acc.testsSkipped += r.tests_skipped;
+    acc.durationSum += r.total_duration_ms;
+  }
+
+  const out: TrendPoint[] = [];
+  for (const [day, acc] of byDay) {
+    const executed = Math.max(0, acc.tests - acc.testsSkipped);
+    out.push({
+      day,
+      runs: acc.runs,
+      passingRuns: acc.passingRuns,
+      tests: acc.tests,
+      testsPassed: acc.testsPassed,
+      failures: acc.failures,
+      testsSkipped: acc.testsSkipped,
+      // Over executed tests (skipped excluded), matching deriveKpis / #17.
+      passRate: executed > 0 ? acc.testsPassed / executed : null,
+      avgDurationMs: acc.runs > 0 ? acc.durationSum / acc.runs : null,
+    });
+  }
+  return out.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+}
+
+/**
+ * Y-axis domain for the pass-rate trend chart. Zooms to the data so small dips
+ * are visible instead of a flat line pinned at the top — a healthy suite (99%+)
+ * would otherwise hide a drop to 99.5% on a fixed [0,1] axis. Floors to a nice
+ * 5% step just BELOW the minimum (never above the data), so the lowest point
+ * always sits off the axis floor. Falls back to [0,1] when nothing has a rate.
+ */
+export function passRateDomain(
+  points: { passRate: number | null }[],
+): [number, number] {
+  const vals = points
+    .map((p) => p.passRate)
+    .filter((v): v is number => v != null);
+  if (vals.length === 0) return [0, 1];
+  // Work in integer percent — `Math.floor(1 / 0.05)` is 19, not 20, in float.
+  const minPct = Math.min(...vals) * 100;
+  const niceMinPct = Math.floor((minPct + 1e-9) / 5) * 5; // nearest 5% ≤ min
+  const floorPct = Math.max(0, niceMinPct - 5); // one step of headroom below
+  return [floorPct / 100, 1];
 }

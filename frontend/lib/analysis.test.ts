@@ -5,8 +5,11 @@ import {
   deriveKpis,
   rollupRunsByMinor,
   summarizeRunCounts,
+  bucketRunsByDay,
+  passRateDomain,
   FLAKES_RECENT_STATUSES,
   type FlakeRow,
+  type TrendRunRow,
 } from "./analysis";
 import type { TestCaseStatus } from "./types";
 
@@ -107,12 +110,13 @@ describe("computeFlaky", () => {
 });
 
 describe("deriveKpis", () => {
-  it("computes pass rate from run-level counts, plus avg duration + top failing suite", () => {
+  it("computes pass rate over executed tests, plus avg duration + top failing suite", () => {
     const kpis = deriveKpis({
       totalRuns: 3,
       avgDurationMean: 1234.5,
       totalTests: 10,
       passedTests: 8,
+      skippedTests: 0,
       failedSuiteGroups: [
         { suite: "suiteA", count: 2 },
         { suite: "suiteB", count: 5 },
@@ -124,29 +128,34 @@ describe("deriveKpis", () => {
       topFailingSuite: { suite: "suiteB", count: 5 },
       totalRuns: 3,
       totalCases: 10,
+      skippedCases: 0,
     });
   });
 
-  it("counts skipped in totalTests (denominator spans all statuses)", () => {
+  it("excludes skipped from the pass-rate denominator (of the tests that ran)", () => {
     const kpis = deriveKpis({
       totalRuns: 1,
       avgDurationMean: null,
       totalTests: 10, // 6 passed + 2 failed + 2 skipped
       passedTests: 6,
+      skippedTests: 2,
       failedSuiteGroups: [],
     });
-    expect(kpis.totalCases).toBe(10);
-    expect(kpis.passRate).toBe(0.6);
+    expect(kpis.totalCases).toBe(10); // full count still reported
+    expect(kpis.skippedCases).toBe(2);
+    // 6 passed of 8 EXECUTED (10 − 2 skipped) = 0.75 — NOT 6/10 = 0.6.
+    expect(kpis.passRate).toBe(0.75);
     expect(kpis.topFailingSuite).toBeNull();
     expect(kpis.avgRunDurationMs).toBe(0);
   });
 
-  it("guards against divide-by-zero with no tests", () => {
+  it("guards against divide-by-zero when nothing ran", () => {
     const kpis = deriveKpis({
       totalRuns: 0,
       avgDurationMean: null,
       totalTests: 0,
       passedTests: 0,
+      skippedTests: 0,
       failedSuiteGroups: [],
     });
     expect(kpis.passRate).toBe(0);
@@ -347,5 +356,126 @@ describe("summarizeRunCounts", () => {
         tests_errors: 0,
       }),
     ).toEqual([]);
+  });
+});
+
+describe("bucketRunsByDay", () => {
+  const trendRow = (
+    started_at: string,
+    status: string,
+    over: Partial<TrendRunRow> = {},
+  ): TrendRunRow => ({
+    started_at,
+    status,
+    total_duration_ms: 0,
+    tests_total: 0,
+    tests_passed: 0,
+    tests_failed: 0,
+    tests_skipped: 0,
+    tests_errors: 0,
+    ...over,
+  });
+
+  it("buckets by UTC day, sums counts, derives passRate + avgDuration, sorted oldest→newest", () => {
+    const out = bucketRunsByDay([
+      trendRow("2026-07-01T03:00:00.000Z", "success", {
+        total_duration_ms: 100_000,
+        tests_total: 100,
+        tests_passed: 90,
+        tests_failed: 0,
+        tests_skipped: 10,
+      }),
+      trendRow("2026-07-01T09:00:00.000Z", "failure", {
+        total_duration_ms: 200_000,
+        tests_total: 100,
+        tests_passed: 72,
+        tests_failed: 18,
+        tests_skipped: 10,
+      }),
+      trendRow("2026-07-02T10:00:00.000Z", "success", {
+        total_duration_ms: 50_000,
+        tests_total: 50,
+        tests_passed: 50,
+      }),
+      trendRow("2026-06-30T22:00:00.000Z", "success", {
+        total_duration_ms: 70_000,
+        tests_total: 60,
+        tests_passed: 54,
+        tests_failed: 5,
+        tests_errors: 1,
+      }),
+    ]);
+
+    expect(out.map((p) => p.day)).toEqual([
+      "2026-06-30",
+      "2026-07-01",
+      "2026-07-02",
+    ]);
+
+    const d0701 = out.find((p) => p.day === "2026-07-01")!;
+    expect(d0701).toMatchObject({
+      runs: 2,
+      passingRuns: 1, // only the "success" run
+      tests: 200,
+      testsPassed: 162,
+      failures: 18, // 0 + 18 failed, 0 errors
+      testsSkipped: 20,
+      passRate: 0.9, // 162 / 180 EXECUTED (200 − 20 skipped) — NOT 162/200 = 0.81
+      avgDurationMs: 150_000, // (100k + 200k) / 2
+    });
+
+    // errors fold into the failures count (5 failed + 1 error = 6)
+    expect(out.find((p) => p.day === "2026-06-30")!.failures).toBe(6);
+  });
+
+  it("skips rows with no usable started_at rather than bucketing a bogus day", () => {
+    const out = bucketRunsByDay([
+      trendRow("", "success", { tests_total: 10, tests_passed: 10 }),
+      trendRow("2026-07-01T00:00:00.000Z", "success", {
+        tests_total: 10,
+        tests_passed: 10,
+      }),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].day).toBe("2026-07-01");
+    expect(out[0].runs).toBe(1);
+  });
+
+  it("returns null passRate for a day whose runs recorded no tests", () => {
+    const out = bucketRunsByDay([
+      trendRow("2026-07-01T00:00:00.000Z", "failure", {
+        total_duration_ms: 5_000,
+      }),
+    ]);
+    expect(out[0].passRate).toBeNull();
+    expect(out[0].avgDurationMs).toBe(5_000);
+    expect(out[0].runs).toBe(1);
+  });
+
+  it("returns [] for no rows", () => {
+    expect(bucketRunsByDay([])).toEqual([]);
+  });
+});
+
+describe("passRateDomain", () => {
+  it("zooms in when the suite is healthy so small dips are visible", () => {
+    // min 0.995 → nice floor 0.95 → one step of headroom → 0.90
+    expect(passRateDomain([{ passRate: 0.998 }, { passRate: 0.995 }])).toEqual([
+      0.9, 1,
+    ]);
+  });
+
+  it("drops the floor when there are real failures", () => {
+    expect(passRateDomain([{ passRate: 0.6 }, { passRate: 0.99 }])).toEqual([
+      0.55, 1,
+    ]);
+  });
+
+  it("keeps headroom below a perfect 100% so a future dip would show", () => {
+    expect(passRateDomain([{ passRate: 1 }])).toEqual([0.95, 1]);
+  });
+
+  it("falls back to [0,1] when no point has a rate", () => {
+    expect(passRateDomain([{ passRate: null }])).toEqual([0, 1]);
   });
 });

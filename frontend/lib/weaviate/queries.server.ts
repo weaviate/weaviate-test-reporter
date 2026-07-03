@@ -20,9 +20,12 @@ import {
   computeFlaky,
   deriveKpis,
   rollupRunsByMinor,
+  bucketRunsByDay,
   type FlakeRow,
   type StatusGroup,
   type RunRow,
+  type TrendPoint,
+  type TrendRunRow,
 } from "../analysis";
 import type {
   DashboardKpis,
@@ -103,6 +106,9 @@ const FLAKES_MAX_ROWS = 200_000;
 // see rollupRunsByMinor for why we don't use approximate Aggregate groupBy.
 const VERSION_PAGE_SIZE = 1000;
 const VERSION_MAX_ROWS = 100_000;
+// Trend charts page the same rows (windowed by started_at) and bucket by day.
+const TREND_PAGE_SIZE = 1000;
+const TREND_MAX_ROWS = 100_000;
 
 function clamp(n: number, lo: number, hi: number): number {
   // Non-finite input (NaN/Infinity from a bad query param) falls back to the
@@ -417,6 +423,7 @@ export async function fetchDashboardKpis(
         runs.metrics.aggregate("total_duration_ms").integer(["mean"]),
         runs.metrics.aggregate("tests_total").integer(["sum"]),
         runs.metrics.aggregate("tests_passed").integer(["sum"]),
+        runs.metrics.aggregate("tests_skipped").integer(["sum"]),
       ],
     }),
     cases.aggregate.groupBy.overAll({
@@ -433,6 +440,7 @@ export async function fetchDashboardKpis(
       total_duration_ms?: { mean?: number | null };
       tests_total?: { sum?: number | null };
       tests_passed?: { sum?: number | null };
+      tests_skipped?: { sum?: number | null };
     };
   };
   return deriveKpis({
@@ -440,11 +448,69 @@ export async function fetchDashboardKpis(
     avgDurationMean: runAggR.properties?.total_duration_ms?.mean ?? null,
     totalTests: runAggR.properties?.tests_total?.sum ?? 0,
     passedTests: runAggR.properties?.tests_passed?.sum ?? 0,
+    skippedTests: runAggR.properties?.tests_skipped?.sum ?? 0,
     failedSuiteGroups: mapGroups(failedSuite).map((g) => ({
       suite: g.value,
       count: g.count,
     })),
   });
+}
+
+/**
+ * Per-day trend series for the dashboard charts (WS2 H2). Windowed by real run
+ * start (started_at, WS1 D1) so it lines up with the KPI tiles above it. Pages
+ * the actual TestRun rows and buckets them in a pure function — deterministic,
+ * unlike Weaviate's approximate date-grouped Aggregate.
+ */
+export async function fetchRunTrend(sinceIso?: string): Promise<TrendPoint[]> {
+  const client = await getClient();
+  const runs = runsCol(client);
+  const since = sinceIso ? new Date(sinceIso) : undefined;
+  const filter = since
+    ? runs.filter.byProperty("started_at").greaterOrEqual(since)
+    : undefined;
+
+  const rows: TrendRunRow[] = [];
+  let offset = 0;
+  while (rows.length < TREND_MAX_ROWS) {
+    const pageSize = Math.min(TREND_PAGE_SIZE, TREND_MAX_ROWS - rows.length);
+    const res = await runs.query.fetchObjects({
+      limit: pageSize,
+      offset,
+      filters: filter,
+      // Creation-time order is a stable total order → offset pagination stays
+      // correct across pages. Bucketing doesn't depend on the order.
+      sort: runs.sort.byCreationTime(true),
+      returnProperties: [
+        "started_at",
+        "status",
+        "total_duration_ms",
+        "tests_total",
+        "tests_passed",
+        "tests_failed",
+        "tests_skipped",
+        "tests_errors",
+      ],
+    });
+    const page = res.objects as unknown as RawObject[];
+    for (const o of page) {
+      const p = o.properties;
+      rows.push({
+        started_at: normalizeDate(p.started_at),
+        status: (p.status as string) ?? "",
+        total_duration_ms: (p.total_duration_ms as number) ?? 0,
+        tests_total: (p.tests_total as number) ?? 0,
+        tests_passed: (p.tests_passed as number) ?? 0,
+        tests_failed: (p.tests_failed as number) ?? 0,
+        tests_skipped: (p.tests_skipped as number) ?? 0,
+        tests_errors: (p.tests_errors as number) ?? 0,
+      });
+    }
+    if (page.length < pageSize) break;
+    offset += page.length;
+  }
+
+  return bucketRunsByDay(rows);
 }
 
 export async function fetchFlakyTests(

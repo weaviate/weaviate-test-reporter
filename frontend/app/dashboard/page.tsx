@@ -1,11 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { CheckCircle2, Gauge, Timer, XCircle } from "lucide-react";
+import { CheckCircle2, Gauge, Timer, TrendingUp, XCircle } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
+import { EmptyState } from "@/components/EmptyState";
 import { ErrorState, LoadingState } from "@/components/States";
+import { TrendCharts } from "@/components/TrendCharts";
 import { useAsync } from "@/lib/useAsync";
-import { fetchDashboardKpis, isoDaysAgo } from "@/lib/queries";
+import { fetchDashboardKpis, fetchRunTrend, isoDaysAgo } from "@/lib/queries";
 
 const RANGES = [
   { id: "7d", label: "Last 7 days", days: 7 },
@@ -53,6 +55,7 @@ export default function DashboardPage() {
     () => fetchDashboardKpis(sinceIso),
     [sinceIso ?? "all"],
   );
+  const trend = useAsync(() => fetchRunTrend(sinceIso), [sinceIso ?? "all"]);
 
   return (
     <>
@@ -61,7 +64,10 @@ export default function DashboardPage() {
         title="State of the suite"
         description="KPIs computed via Weaviate aggregation queries."
         right={
-          <div className="inline-flex rounded-md border border-wv-navy-3/60 overflow-hidden" data-testid="range-picker">
+          <div
+            className="inline-flex rounded-md border border-wv-navy-3/60 overflow-hidden"
+            data-testid="range-picker"
+          >
             {RANGES.map((r) => (
               <button
                 key={r.id}
@@ -82,7 +88,7 @@ export default function DashboardPage() {
         }
       />
 
-      <section className="px-8 py-8">
+      <section className="px-8 py-8 space-y-8">
         {kpis.loading ? (
           <LoadingState label="Aggregating Weaviate metrics…" />
         ) : kpis.error ? (
@@ -94,7 +100,10 @@ export default function DashboardPage() {
                 testId="kpi-pass-rate"
                 label="Global pass rate"
                 value={formatPct(kpis.data.passRate)}
-                helper={`Across ${kpis.data.totalCases.toLocaleString()} TestCases.`}
+                helper={`Of ${Math.max(
+                  0,
+                  kpis.data.totalCases - kpis.data.skippedCases,
+                ).toLocaleString()} executed TestCases · ${kpis.data.skippedCases.toLocaleString()} skipped (excluded).`}
                 Icon={CheckCircle2}
                 tone={passRateTone(kpis.data.passRate)}
                 delay={0}
@@ -127,6 +136,20 @@ export default function DashboardPage() {
               />
             </div>
           </>
+        ) : null}
+
+        {trend.loading ? (
+          <LoadingState label="Charting run history…" />
+        ) : trend.error ? (
+          <ErrorState error={trend.error} />
+        ) : trend.data && trend.data.length > 0 ? (
+          <TrendCharts data={trend.data} />
+        ) : trend.data ? (
+          <EmptyState
+            Icon={TrendingUp}
+            title="Not enough history to chart yet"
+            description="Trends appear once runs have landed in this window — widen the range or ingest more runs."
+          />
         ) : null}
       </section>
     </>
