@@ -34,6 +34,7 @@ import type {
   TestCaseStatus,
   TestRun,
   TestRunStatus,
+  TrendFilters,
   VersionRollup,
   FlakyTest,
 } from "../types";
@@ -462,13 +463,35 @@ export async function fetchDashboardKpis(
  * the actual TestRun rows and buckets them in a pure function — deterministic,
  * unlike Weaviate's approximate date-grouped Aggregate.
  */
-export async function fetchRunTrend(sinceIso?: string): Promise<TrendPoint[]> {
+export async function fetchRunTrend(
+  sinceIso?: string,
+  filters: TrendFilters = {},
+): Promise<TrendPoint[]> {
   const client = await getClient();
   const runs = runsCol(client);
   const since = sinceIso ? new Date(sinceIso) : undefined;
-  const filter = since
-    ? runs.filter.byProperty("started_at").greaterOrEqual(since)
-    : undefined;
+
+  // Window (started_at) AND any repo/branch/version slice — same filter algebra
+  // as fetchRecentRuns.
+  const ops: FilterValue[] = [];
+  if (since) {
+    ops.push(runs.filter.byProperty("started_at").greaterOrEqual(since));
+  }
+  if (filters.repositories?.length) {
+    ops.push(anyEqual(runs, "repository", filters.repositories));
+  }
+  if (filters.branches?.length) {
+    ops.push(anyEqual(runs, "branch", filters.branches));
+  }
+  if (filters.versionMinors?.length) {
+    ops.push(anyEqual(runs, "version_minor", filters.versionMinors));
+  }
+  const filter =
+    ops.length === 0
+      ? undefined
+      : ops.length === 1
+        ? ops[0]
+        : Filters.and(...ops);
 
   const rows: TrendRunRow[] = [];
   let offset = 0;

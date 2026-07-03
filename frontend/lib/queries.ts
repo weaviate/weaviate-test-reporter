@@ -18,6 +18,7 @@ import type {
   VersionRollup,
   FlakyTest,
   RunFilters,
+  TrendFilters,
 } from "./types";
 import {
   API_TIMEOUTS_MS,
@@ -33,7 +34,7 @@ export { isoDaysAgo } from "./analysis";
 export type { TrendPoint } from "./analysis";
 export { TARGET_VECTORS, DEFAULT_TARGET_VECTOR } from "./constants";
 export type { TargetVector, FlakesWindow } from "./constants";
-export type { RunFilters } from "./types";
+export type { RunFilters, TrendFilters } from "./types";
 
 // ---------- fetch helper ----------
 
@@ -186,9 +187,15 @@ export async function fetchDashboardKpis(
   );
 }
 
-export async function fetchRunTrend(sinceIso?: string): Promise<TrendPoint[]> {
+export async function fetchRunTrend(
+  sinceIso?: string,
+  filters: TrendFilters = {},
+): Promise<TrendPoint[]> {
   const p = new URLSearchParams();
   if (sinceIso) p.set("since", sinceIso);
+  for (const r of filters.repositories ?? []) p.append("repository", r);
+  for (const b of filters.branches ?? []) p.append("branch", b);
+  for (const v of filters.versionMinors ?? []) p.append("versionMinor", v);
   const qs = p.toString();
   return apiGet<TrendPoint[]>(
     `/api/trend${qs ? `?${qs}` : ""}`,

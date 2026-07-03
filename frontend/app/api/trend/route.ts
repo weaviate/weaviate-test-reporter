@@ -5,11 +5,17 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request): Promise<Response> {
-  const sinceRaw = new URL(req.url).searchParams.get("since") ?? undefined;
+  const params = new URL(req.url).searchParams;
+  const sinceRaw = params.get("since") ?? undefined;
   if (sinceRaw !== undefined && Number.isNaN(new Date(sinceRaw).getTime())) {
     return badRequest(
       "Invalid 'since' parameter; could not be parsed as a timestamp.",
     );
   }
-  return handle(() => fetchRunTrend(sinceRaw));
+  const filters = {
+    repositories: params.getAll("repository"),
+    branches: params.getAll("branch"),
+    versionMinors: params.getAll("versionMinor"),
+  };
+  return handle(() => fetchRunTrend(sinceRaw, filters));
 }

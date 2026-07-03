@@ -103,6 +103,14 @@ export type RunFilters = {
   versionFulls?: string[];
 };
 
+/** Filters for the dashboard trend charts (WS2 H2 slicing) — repo / branch /
+ *  minor version. Scopes the charts only; the KPI tiles stay global. */
+export type TrendFilters = {
+  repositories?: string[];
+  branches?: string[];
+  versionMinors?: string[];
+};
+
 export type TestCaseStatus = "passed" | "failed" | "skipped";
 
 export type TestCase = {
