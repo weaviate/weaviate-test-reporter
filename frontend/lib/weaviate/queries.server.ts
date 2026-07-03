@@ -251,7 +251,12 @@ export async function fetchRecentRuns(
     limit: safeLimit,
     // Order by real run start (WS1 D1), not ingest time — a run reported hours
     // after it ran shouldn't jump ahead of runs that actually started later.
-    sort: runs.sort.byProperty("started_at", false),
+    // Secondary key (ingest `timestamp`) breaks ties deterministically when
+    // parallel matrix jobs share the same run-start, so the list doesn't flicker
+    // between refreshes.
+    sort: runs.sort
+      .byProperty("started_at", false)
+      .byProperty("timestamp", false),
     filters: filter,
   });
   return (res.objects as unknown as RawObject[]).map(asTestRun);
