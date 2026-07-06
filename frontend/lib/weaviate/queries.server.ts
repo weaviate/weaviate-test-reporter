@@ -689,8 +689,13 @@ export async function fetchFlakyTests(
   opts: { minRuns?: number } = {},
 ): Promise<FlakyTest[]> {
   const client = await getClient();
-  const cases = casesCol(client);
-  const runs = runsCol(client);
+  // Bulk flakiness scan reads at the default ONE consistency, NOT the QUORUM
+  // used for the /versions pass-rate. Flakes is a trailing-window trend, so a
+  // read lagging the very latest run by a replica-hop is fine — whereas QUORUM
+  // makes every read in a large multi-page scan wait for a replica majority,
+  // a real latency multiplier here.
+  const cases = client.collections.get<CaseProps>(COLLECTIONS.TEST_CASE);
+  const runs = client.collections.get<RunProps>(COLLECTIONS.TEST_RUN);
   const days = window === "7d" ? 7 : 30;
   const since = new Date(isoDaysAgo(days));
   // `?? 3` wouldn't catch NaN (only null/undefined), so guard for finiteness.
@@ -712,6 +717,8 @@ export async function fetchFlakyTests(
         limit: FLAKES_PAGE_SIZE,
         offset: ro,
         filters: runFilter,
+        // Stable order so offset pagination doesn't skip/dupe runs across pages.
+        sort: runs.sort.byCreationTime(true),
         returnProperties: ["version_minor", "job_name"],
       });
       const page = res.objects as unknown as RawObject[];
@@ -737,12 +744,13 @@ export async function fetchFlakyTests(
       cases.filter.byProperty("status").equal("failed"),
     ),
   );
-  // Stable sort across pages so each (suite, name) sequence stays contiguous
-  // and in true run order when pages are concatenated.
-  const sort = cases.sort
-    .byProperty("test_suite", true)
-    .byProperty("name", true)
-    .byProperty("run_started_at", true);
+  // Sort by run_started_at ALONE (not the old 3-key suite/name/time sort).
+  // computeFlaky groups via a Map, so it needs no contiguity-by-test — only
+  // each group's status subsequence in run order, which a single global time
+  // sort already guarantees (a subsequence of a time-ordered list stays
+  // ordered). One sort key is cheaper for the engine and keeps offset
+  // pagination stable across pages.
+  const sort = cases.sort.byProperty("run_started_at", true);
 
   const rows: FlakeRow[] = [];
   let offset = 0;
