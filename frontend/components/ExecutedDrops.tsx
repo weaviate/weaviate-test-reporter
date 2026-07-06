@@ -47,6 +47,7 @@ export function ExecutedDrops({ drops }: { drops: ExecutedDrop[] }) {
             </p>
             <p className="mt-0.5 text-[11px] text-wv-fog-muted truncate">
               {d.repository}
+              {d.versionMinor ? ` · ${d.versionMinor}` : ""}
             </p>
           </div>
           <div className="text-right shrink-0 tabular-nums">

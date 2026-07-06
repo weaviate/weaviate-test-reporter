@@ -489,9 +489,11 @@ describe("detectExecutedDrops", () => {
     started_at: string,
     tests_total: number,
     tests_skipped = 0,
+    version_minor: string | null = "1.37",
   ): ExecutedDropRow => ({
     repository,
     job_name,
+    version_minor,
     started_at,
     tests_total,
     tests_skipped,
@@ -580,5 +582,29 @@ describe("detectExecutedDrops", () => {
       dropRow("r", "big", "2026-07-06T00:00:00.000Z", 40), // −60%
     ]);
     expect(out.map((d) => d.job_name)).toEqual(["big", "small"]);
+  });
+
+  it("does NOT flag a cross-version-only comparison (no same-version baseline)", () => {
+    // Tests are skipped per version, so a 1.37 run executing fewer than a 1.36
+    // run is expected, not a collapse — and there's no prior 1.37 to compare to.
+    const out = detectExecutedDrops([
+      dropRow("r", "e2e", "2026-07-05T00:00:00.000Z", 800, 0, "1.36"),
+      dropRow("r", "e2e", "2026-07-06T00:00:00.000Z", 600, 0, "1.37"),
+    ]);
+    expect(out).toEqual([]);
+  });
+
+  it("compares against the most recent SAME-version run, skipping an interleaved other version", () => {
+    const out = detectExecutedDrops([
+      dropRow("r", "e2e", "2026-07-04T00:00:00.000Z", 800, 0, "1.37"), // 1.37 baseline
+      dropRow("r", "e2e", "2026-07-05T00:00:00.000Z", 300, 0, "1.36"), // interleaved 1.36 — ignored
+      dropRow("r", "e2e", "2026-07-06T00:00:00.000Z", 500, 0, "1.37"), // latest 1.37
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      versionMinor: "1.37",
+      prevExecuted: 800, // the 07-04 1.37 run, NOT the 07-05 1.36 run
+      currExecuted: 500,
+    });
   });
 });

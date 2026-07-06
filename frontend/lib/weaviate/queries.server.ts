@@ -567,6 +567,7 @@ export async function fetchExecutedDrops(
       returnProperties: [
         "repository",
         "job_name",
+        "version_minor",
         "started_at",
         "tests_total",
         "tests_skipped",
@@ -580,6 +581,7 @@ export async function fetchExecutedDrops(
       rows.push({
         repository: (p.repository as string) ?? "",
         job_name: (p.job_name as string) ?? "",
+        version_minor: (p.version_minor as string | null) ?? null,
         started_at: normalizeDate(p.started_at),
         tests_total: (p.tests_total as number) ?? 0,
         tests_skipped: (p.tests_skipped as number) ?? 0,

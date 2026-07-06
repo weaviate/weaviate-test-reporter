@@ -381,6 +381,7 @@ export function passRateDomain(
 export type ExecutedDropRow = {
   repository: string;
   job_name: string;
+  version_minor: string | null; // compare like-for-like versions (see below)
   started_at: string; // UTC ISO; used only to order a job's runs
   tests_total: number;
   tests_skipped: number;
@@ -391,6 +392,7 @@ export type ExecutedDropRow = {
 export type ExecutedDrop = {
   repository: string;
   job_name: string;
+  versionMinor: string | null;
   prevExecuted: number;
   currExecuted: number;
   prevTotal: number;
@@ -409,17 +411,23 @@ export const MIN_PREV_EXECUTED = 5;
 
 /**
  * Detect "silent test-collapse" (WS2 H3): jobs whose most recent run ran
- * meaningfully fewer tests than the run before it — often worse than a red test
- * (a suite quietly stopped collecting / running). Executed = tests_total −
- * tests_skipped (clamped ≥ 0), the same "ran" definition as the pass rate, so a
- * jump in skips counts as a drop too.
+ * meaningfully fewer tests than a comparable earlier run — often worse than a
+ * red test (a suite quietly stopped collecting / running). Executed =
+ * tests_total − tests_skipped (clamped ≥ 0), the same "ran" definition as the
+ * pass rate, so a jump in skips counts as a drop too.
  *
- * Pure + deterministic (house style). Groups rows by (repository, job_name),
- * orders each job's runs by started_at (UTC ISO sorts chronologically), and
- * compares the latest two. A job is flagged when the previous run executed at
- * least MIN_PREV_EXECUTED tests AND the latest run dropped by at least
- * EXECUTED_DROP_THRESHOLD. Jobs with fewer than two runs (or no started_at) are
- * skipped. Output is sorted by drop magnitude, largest first.
+ * **Version-aware.** Tests are frequently skipped per version (a feature only
+ * exists in 1.37+, so 1.36 runs legitimately execute fewer), so comparing
+ * across versions is noise. For each (repository, job_name), the latest run is
+ * compared only against the **most recent prior run of the SAME version_minor**.
+ * A run on a brand-new version with no same-version predecessor is therefore not
+ * evaluated — a version bump can never masquerade as a collapse.
+ *
+ * Pure + deterministic (house style). A job is flagged when its same-version
+ * baseline executed at least MIN_PREV_EXECUTED tests AND the latest run dropped
+ * by at least EXECUTED_DROP_THRESHOLD. Rows with no started_at, jobs with fewer
+ * than two runs, and latest runs with no same-version baseline are skipped.
+ * Output is sorted by drop magnitude, largest first.
  */
 export function detectExecutedDrops(rows: ExecutedDropRow[]): ExecutedDrop[] {
   const byJob = new Map<string, ExecutedDropRow[]>();
@@ -439,7 +447,12 @@ export function detectExecutedDrops(rows: ExecutedDropRow[]): ExecutedDrop[] {
       a.started_at < b.started_at ? 1 : a.started_at > b.started_at ? -1 : 0,
     );
     const curr = list[0];
-    const prev = list[1];
+    // Baseline = the most recent OLDER run of the SAME version_minor. Skip over
+    // any interleaved runs on a different version so 1.37-vs-1.36 never flags.
+    const prev = list
+      .slice(1)
+      .find((r) => r.version_minor === curr.version_minor);
+    if (!prev) continue; // no same-version baseline (e.g. first run on a version)
     const currExecuted = Math.max(0, curr.tests_total - curr.tests_skipped);
     const prevExecuted = Math.max(0, prev.tests_total - prev.tests_skipped);
     if (prevExecuted < MIN_PREV_EXECUTED) continue;
@@ -447,6 +460,7 @@ export function detectExecutedDrops(rows: ExecutedDropRow[]): ExecutedDrop[] {
     out.push({
       repository: curr.repository,
       job_name: curr.job_name,
+      versionMinor: curr.version_minor,
       prevExecuted,
       currExecuted,
       prevTotal: prev.tests_total,
