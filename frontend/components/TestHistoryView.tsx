@@ -63,7 +63,7 @@ export function TestHistoryView({ history }: { history: TestHistory }) {
               return (
                 <a
                   key={`${p.runId}-${i}`}
-                  href={p.jobUrl}
+                  href={p.jobUrl || undefined}
                   target="_blank"
                   rel="noopener noreferrer"
                   title={label}
@@ -85,7 +85,7 @@ export function TestHistoryView({ history }: { history: TestHistory }) {
             {failures.map((p, i) => (
               <a
                 key={`${p.runId}-f${i}`}
-                href={p.jobUrl}
+                href={p.jobUrl || undefined}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="block rounded-md border border-wv-navy-3/40 bg-wv-navy-2/40 px-4 py-3 hover:bg-wv-navy-2/60 transition-colors"
