@@ -22,7 +22,8 @@ const row = (
   name: string,
   status: TestCaseStatus,
   framework = "pytest",
-): FlakeRow => ({ test_suite, name, status, framework });
+  version_minor: string | null = "1.37",
+): FlakeRow => ({ test_suite, name, status, framework, version_minor });
 
 describe("isoDaysAgo", () => {
   it("returns a UTC-midnight ISO string", () => {
@@ -110,6 +111,40 @@ describe("computeFlaky", () => {
     ];
     const out = computeFlaky(rows);
     expect(out.map((t) => t.name)).toEqual(["high", "low"]);
+  });
+
+  it("does NOT flag a version-deterministic test (fails only on one version)", () => {
+    // Interleaved across versions by time, but stable WITHIN each version:
+    // passes on 1.37, fails on 1.36. Grouped globally this looks maximally
+    // flaky (pass,fail,pass,fail,…); grouped per version it's stable → dropped.
+    const rows = [
+      row("s", "x", "passed", "pytest", "1.37"),
+      row("s", "x", "failed", "pytest", "1.36"),
+      row("s", "x", "passed", "pytest", "1.37"),
+      row("s", "x", "failed", "pytest", "1.36"),
+      row("s", "x", "passed", "pytest", "1.37"),
+      row("s", "x", "failed", "pytest", "1.36"),
+    ];
+    expect(computeFlaky(rows)).toEqual([]);
+  });
+
+  it("scores flakiness per version and labels the row with its version", () => {
+    const rows = [
+      // flaky on 1.37 (pass,fail,pass), stable on 1.36 (pass,pass,pass)
+      row("s", "y", "passed", "pytest", "1.37"),
+      row("s", "y", "failed", "pytest", "1.37"),
+      row("s", "y", "passed", "pytest", "1.37"),
+      row("s", "y", "passed", "pytest", "1.36"),
+      row("s", "y", "passed", "pytest", "1.36"),
+      row("s", "y", "passed", "pytest", "1.36"),
+    ];
+    const out = computeFlaky(rows);
+    expect(out).toHaveLength(1); // only the 1.37 group flaked
+    expect(out[0]).toMatchObject({
+      name: "y",
+      version_minor: "1.37",
+      transitions: 2,
+    });
   });
 });
 

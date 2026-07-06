@@ -723,14 +723,20 @@ export async function fetchFlakyTests(
       filters: windowFilter,
       sort,
       returnProperties: ["name", "test_suite", "framework", "status"],
+      // Pull the run's minor version so flakiness is scoped per version (R3).
+      returnReferences: [
+        { linkOn: "belongsToRun", returnProperties: ["version_minor"] },
+      ],
     });
     const page = res.objects as unknown as RawObject[];
     for (const o of page) {
       const p = o.properties;
+      const rp = o.references?.belongsToRun?.objects?.[0]?.properties ?? {};
       rows.push({
         test_suite: (p.test_suite as string) ?? "",
         name: (p.name as string) ?? "",
         framework: (p.framework as string) ?? "",
+        version_minor: (rp.version_minor as string | null) ?? null,
         status: p.status as TestCaseStatus,
       });
     }

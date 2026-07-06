@@ -152,6 +152,9 @@ export type FlakyTest = {
   test_suite: string;
   name: string;
   framework: string;
+  /** Minor version this flakiness is scoped to (WS3 R3), or null when the run
+   *  carried no version_under_test. Flakiness is computed per (suite, name, version). */
+  version_minor: string | null;
   total_runs: number;
   passed: number;
   failed: number;
