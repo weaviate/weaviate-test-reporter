@@ -27,7 +27,7 @@ from pathlib import Path
 import pytest
 from weaviate.classes.query import Filter, QueryReference
 
-from weaviate_test_reporter.config import Config
+from weaviate_test_reporter.config import Config, parse_version
 from weaviate_test_reporter.ingest import (
     _run_uuid,
     ingest_test_cases,
@@ -78,6 +78,7 @@ def _cfg(**overrides):
 def _ingest_pipeline(client, meta, cfg):
     cases = list(parse_junit_file(FIXTURE))
     run_uuid = insert_test_run(client, cases, meta, cfg)
+    _, _, version_minor = parse_version(cfg.version_under_test)
     successful, failed = ingest_test_cases(
         client,
         cases,
@@ -86,6 +87,10 @@ def _ingest_pipeline(client, meta, cfg):
         workflow_run_id=meta["workflow_run_id"],
         workflow_run_attempt=meta["workflow_run_attempt"],
         job_name=cfg.job_name,
+        # WS3 R3: denormalize the run's identity onto every case, matching the
+        # production __main__ path so all ingestion routes write full rows.
+        version_minor=version_minor,
+        branch=meta["branch"],
     )
     return run_uuid, cases, successful, failed
 
@@ -103,6 +108,19 @@ def test_full_pipeline_lands_one_run_and_three_cases(weaviate_client):
 
     test_cases = weaviate_client.collections.get(TEST_CASE).query.fetch_objects(limit=10)
     assert len(test_cases.objects) == 3
+
+
+def test_test_case_carries_denormalized_run_identity(weaviate_client):
+    """WS3 R3: the run's branch + job_name are stamped on every TestCase so
+    flakes/history scope without a belongsToRun hop. version_minor is absent
+    here because the fixture cfg carries no version_under_test."""
+    _ingest_pipeline(weaviate_client, _meta(), _cfg())
+
+    case = weaviate_client.collections.get(TEST_CASE).query.fetch_objects(limit=1).objects[0]
+    props = case.properties
+    assert props["branch"] == "main"
+    assert props["job_name"] == "integration"
+    assert props.get("version_minor") is None
 
 
 def test_test_run_carries_aggregated_properties(weaviate_client):
