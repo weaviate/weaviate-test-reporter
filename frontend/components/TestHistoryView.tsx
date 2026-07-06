@@ -58,16 +58,20 @@ export function TestHistoryView({ history }: { history: TestHistory }) {
           </p>
         ) : (
           <div className="flex flex-wrap gap-1" data-testid="history-timeline">
-            {history.points.map((p, i) => (
-              <a
-                key={`${p.runId}-${i}`}
-                href={p.jobUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                title={`${p.status} · ${fmtDate(p.runStartedAt)}${context(p)}`}
-                className={`h-6 w-3 rounded-sm ${cellTone(p.status)} transition-shadow hover:ring-2 hover:ring-wv-fog/40`}
-              />
-            ))}
+            {history.points.map((p, i) => {
+              const label = `${p.status} · ${fmtDate(p.runStartedAt)}${context(p)}`;
+              return (
+                <a
+                  key={`${p.runId}-${i}`}
+                  href={p.jobUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={label}
+                  aria-label={label}
+                  className={`h-6 w-3 rounded-sm ${cellTone(p.status)} transition-shadow hover:ring-2 hover:ring-wv-fog/40`}
+                />
+              );
+            })}
           </div>
         )}
       </div>
