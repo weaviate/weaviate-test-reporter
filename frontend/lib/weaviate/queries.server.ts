@@ -573,6 +573,7 @@ export async function fetchExecutedDrops(
         "tests_skipped",
         "run_id",
         "job_url",
+        "run_url",
       ],
     });
     const page = res.objects as unknown as RawObject[];

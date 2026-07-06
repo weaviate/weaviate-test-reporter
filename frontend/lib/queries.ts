@@ -213,7 +213,7 @@ export async function fetchExecutedDrops(
   return apiGet<ExecutedDrop[]>(
     `/api/drops${qs ? `?${qs}` : ""}`,
     API_TIMEOUTS_MS.default,
-    "Fetch coverage drops",
+    "Fetch executed drops",
   );
 }
 

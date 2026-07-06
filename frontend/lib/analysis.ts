@@ -456,7 +456,7 @@ export function detectExecutedDrops(rows: ExecutedDropRow[]): ExecutedDrop[] {
     const currExecuted = Math.max(0, curr.tests_total - curr.tests_skipped);
     const prevExecuted = Math.max(0, prev.tests_total - prev.tests_skipped);
     if (prevExecuted < MIN_PREV_EXECUTED) continue;
-    if (currExecuted >= prevExecuted * (1 - EXECUTED_DROP_THRESHOLD)) continue;
+    if (currExecuted > prevExecuted * (1 - EXECUTED_DROP_THRESHOLD)) continue;
     out.push({
       repository: curr.repository,
       job_name: curr.job_name,

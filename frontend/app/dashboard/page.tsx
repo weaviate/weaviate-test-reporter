@@ -170,7 +170,7 @@ export default function DashboardPage() {
             </p>
           </div>
           {drops.loading ? (
-            <LoadingState label="Checking for coverage drops…" />
+            <LoadingState label="Checking for executed drops…" />
           ) : drops.error ? (
             <ErrorState error={drops.error} />
           ) : drops.data ? (

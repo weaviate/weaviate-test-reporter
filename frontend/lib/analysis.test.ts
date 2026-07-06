@@ -516,6 +516,15 @@ describe("detectExecutedDrops", () => {
     });
   });
 
+  it("flags an exact 10% drop (boundary is inclusive)", () => {
+    const out = detectExecutedDrops([
+      dropRow("r", "j", "2026-07-05T00:00:00.000Z", 100),
+      dropRow("r", "j", "2026-07-06T00:00:00.000Z", 90), // exactly −10%
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].dropPct).toBeCloseTo(0.1);
+  });
+
   it("does not flag a stable / increased job or a sub-threshold dip", () => {
     expect(
       detectExecutedDrops([
