@@ -157,6 +157,20 @@ _TEST_CASE_DESCRIPTIONS: dict[str, str] = {
         "Category of the failure, e.g. 'AssertionError', 'TimeoutError'; null "
         "when the test passed."
     ),
+    "version_minor": (
+        "MAJOR.MINOR version lineage under test (e.g. '1.38'), denormalized from "
+        "the run so flakiness/history can be scoped per version without a "
+        "belongsToRun hop. Null when the run carried no version_under_test."
+    ),
+    "job_name": (
+        "CI job this case ran in (matrix cell / upgrade leg), denormalized from "
+        "the run. A test runs once per job per run, so flakiness is scoped per "
+        "(suite, name, version_minor, job_name)."
+    ),
+    "branch": (
+        "Git branch the run executed against (e.g. 'main'), denormalized from the "
+        "run for direct branch-scoped filtering on TestCase."
+    ),
     "run_started_at": (
         "Real start time of the parent run (RFC3339), denormalized from "
         "TestRun.started_at. Filter time windows ('last 7 days') directly on "
@@ -269,6 +283,13 @@ _TEST_CASE_PROPERTY_SPEC: list[tuple[str, wvcc.DataType, bool, bool, bool, bool]
     ("passed_on_retry", wvcc.DataType.BOOL, True, False, False, True),
     ("initial_status", wvcc.DataType.TEXT, True, False, False, True),
     ("failure_fingerprint", wvcc.DataType.TEXT, True, False, False, True),
+    # WS3 R3: denormalize the run's identity onto every case so the flakes
+    # full-scan and per-test history group + filter directly on TestCase,
+    # dropping the belongsToRun hop on the hot path. All TEXT, filterable,
+    # not BM25-searchable, excluded from vectorization.
+    ("version_minor", wvcc.DataType.TEXT, True, False, False, True),
+    ("job_name", wvcc.DataType.TEXT, True, False, False, True),
+    ("branch", wvcc.DataType.TEXT, True, False, False, True),
 ]
 
 
@@ -400,9 +421,10 @@ def ensure_test_run_properties(client: weaviate.WeaviateClient) -> None:
 
 
 def ensure_test_case_properties(client: weaviate.WeaviateClient) -> None:
-    """Mirror of `ensure_test_run_properties` for TestCase. No new
-    properties today, but the function exists so future TestCase spec
-    extensions inherit the same idempotent additive-migration path.
+    """Mirror of `ensure_test_run_properties` for TestCase: additively add
+    any spec property missing on the existing collection (WS3 R3 adds the
+    denormalized version_minor / job_name / branch). Idempotent; a defensive
+    no-op when the collection doesn't yet exist.
     """
     if not client.collections.exists(TEST_CASE):
         return

@@ -647,3 +647,59 @@ def test_case_properties_omit_run_started_at_when_not_provided():
     )
     props = batch_ctx.add_object.call_args.kwargs["properties"]
     assert "run_started_at" not in props
+
+
+def test_case_properties_include_denormalized_version_job_branch():
+    """WS3 R3: every ingested TestCase carries the run's version_minor,
+    job_name and branch so flakes/history group + filter without a
+    belongsToRun hop on the hot path."""
+    client = MagicMock()
+    collection = MagicMock()
+    client.collections.get.return_value = collection
+    batch_ctx = MagicMock()
+    collection.batch.stream.return_value.__enter__.return_value = batch_ctx
+    collection.batch.failed_objects = []
+
+    ingest_test_cases(
+        client,
+        [_case()],
+        "ru",
+        repository="r",
+        workflow_run_id="1",
+        workflow_run_attempt=1,
+        job_name="e2e-replicas-3",
+        run_started_at="2026-06-30T09:30:00+00:00",
+        version_minor="1.38",
+        branch="main",
+    )
+    props = batch_ctx.add_object.call_args.kwargs["properties"]
+    assert props["version_minor"] == "1.38"
+    assert props["job_name"] == "e2e-replicas-3"
+    assert props["branch"] == "main"
+
+
+def test_case_properties_omit_version_minor_when_not_provided():
+    """A run with no version_under_test leaves version_minor off the case
+    (null on the row), mirroring the TestRun. job_name + branch are always
+    known, so they're always stamped."""
+    client = MagicMock()
+    collection = MagicMock()
+    client.collections.get.return_value = collection
+    batch_ctx = MagicMock()
+    collection.batch.stream.return_value.__enter__.return_value = batch_ctx
+    collection.batch.failed_objects = []
+
+    ingest_test_cases(
+        client,
+        [_case()],
+        "ru",
+        repository="r",
+        workflow_run_id="1",
+        workflow_run_attempt=1,
+        job_name="j",
+        branch="main",
+    )
+    props = batch_ctx.add_object.call_args.kwargs["properties"]
+    assert "version_minor" not in props
+    assert props["job_name"] == "j"
+    assert props["branch"] == "main"

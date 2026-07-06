@@ -30,7 +30,7 @@ from urllib.parse import urlparse
 import weaviate
 from weaviate.classes.init import Auth
 
-from .config import Config, ConfigError
+from .config import Config, ConfigError, parse_version
 from .github_meta import GithubMetadataError, resolve_github_metadata
 from .ingest import ingest_test_cases, insert_test_run, resolve_run_started_at
 from .logging import configure_logging, get_logger, group
@@ -182,6 +182,9 @@ def main() -> int:
             )
             log.info("test_run_inserted", uuid=run_uuid)
 
+            # WS3 R3: denormalize the run's version_minor / job_name / branch
+            # onto every case (same parse as aggregate_run_properties).
+            _, _, version_minor = parse_version(cfg.version_under_test)
             successful, failed = ingest_test_cases(
                 client,
                 cases,
@@ -191,6 +194,8 @@ def main() -> int:
                 workflow_run_attempt=meta["workflow_run_attempt"],
                 job_name=cfg.job_name,
                 run_started_at=run_started_at,
+                version_minor=version_minor,
+                branch=meta["branch"],
             )
             log.info("test_cases_ingested", successful=successful, failed=failed)
 
