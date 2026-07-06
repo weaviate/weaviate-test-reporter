@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ActivitySquare, ArrowLeft, Zap } from "lucide-react";
+import { ActivitySquare, Zap } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorState, LoadingState } from "@/components/States";
@@ -94,7 +94,6 @@ export default function FlakesPage() {
               selectedLabel={
                 selectedVersion === null ? null : versionLabel(selectedVersion)
               }
-              onClear={() => setSelectedVersion(null)}
             />
           </>
         )}
@@ -195,11 +194,9 @@ function VersionChip({
 function FlakeTable({
   rows,
   selectedLabel,
-  onClear,
 }: {
   rows: FlakyTest[];
   selectedLabel: string | null;
-  onClear: () => void;
 }) {
   return (
     <div
@@ -212,17 +209,6 @@ function FlakeTable({
           {rows.length} flak{rows.length === 1 ? "y test" : "y tests"}
           {selectedLabel ? ` on ${selectedLabel}` : ""}
         </span>
-        {selectedLabel ? (
-          <button
-            type="button"
-            onClick={onClear}
-            data-testid="flakes-back-all-versions"
-            className="ml-auto inline-flex items-center gap-1 normal-case tracking-normal text-[12px] text-wv-fog-muted hover:text-wv-fog transition-colors"
-          >
-            <ArrowLeft size={13} strokeWidth={1.75} />
-            Back to all versions
-          </button>
-        ) : null}
       </header>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
