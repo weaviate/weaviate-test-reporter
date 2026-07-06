@@ -744,13 +744,17 @@ export async function fetchFlakyTests(
       cases.filter.byProperty("status").equal("failed"),
     ),
   );
-  // Sort by run_started_at ALONE (not the old 3-key suite/name/time sort).
-  // computeFlaky groups via a Map, so it needs no contiguity-by-test — only
-  // each group's status subsequence in run order, which a single global time
-  // sort already guarantees (a subsequence of a time-ordered list stays
-  // ordered). One sort key is cheaper for the engine and keeps offset
-  // pagination stable across pages.
-  const sort = cases.sort.byProperty("run_started_at", true);
+  // Sort by (test_suite, name, run_started_at). run_started_at ALONE is NOT
+  // safe: EVERY case in a run shares that timestamp, so a single-key sort makes
+  // huge tie-groups and offset pagination goes unstable across page boundaries
+  // — cases get skipped/duplicated and run counts inflate. The (suite, name)
+  // keys make the order near-unique per row so pagination stays stable;
+  // computeFlaky only needs each group chronological, which the trailing
+  // run_started_at key provides.
+  const sort = cases.sort
+    .byProperty("test_suite", true)
+    .byProperty("name", true)
+    .byProperty("run_started_at", true);
 
   const rows: FlakeRow[] = [];
   let offset = 0;

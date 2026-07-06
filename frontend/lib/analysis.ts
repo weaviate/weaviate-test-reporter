@@ -52,11 +52,13 @@ export type FlakeRow = {
  * `{suite, name}`; without the job in the key those all collapse into one group
  * and inflate `total_runs`. Only WITHIN-context flips count.
  *
- * Rows MUST already be ordered by `run_started_at` so each group's status
- * sequence is chronological. Grouping is by Map (not array contiguity), so a
- * single global time sort suffices — each group's subsequence of a time-ordered
- * list stays time-ordered. `flakiness_score = transitions / (runs - 1)`. Groups
- * with fewer than `minRuns` observations, or zero transitions, drop.
+ * Rows MUST already be ordered so each group's status subsequence is in
+ * run_started_at order — the caller sorts by `(test_suite, name,
+ * run_started_at)`: the leading keys keep offset pagination stable (every case
+ * in a run shares run_started_at, so a single-key sort would tie-collide and
+ * skip/dupe rows), and the trailing time key makes each group chronological.
+ * Grouping is by Map, so array contiguity isn't required. `flakiness_score =
+ * transitions / (runs - 1)`. Groups with < `minRuns` obs, or 0 transitions, drop.
  */
 export function computeFlaky(rows: FlakeRow[], minRuns = 3): FlakyTest[] {
   type Acc = {
