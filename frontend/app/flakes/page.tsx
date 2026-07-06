@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { ActivitySquare, Zap } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { EmptyState } from "@/components/EmptyState";
@@ -132,8 +133,14 @@ function FlakeRow({ row }: { row: FlakyTest }) {
       data-flake-suite={row.test_suite}
       data-flake-name={row.name}
     >
-      <td className="px-5 py-2.5 font-mono text-[13px] text-wv-fog">
-        {row.name}
+      <td className="px-5 py-2.5 font-mono text-[13px]">
+        <Link
+          href={`/tests?suite=${encodeURIComponent(row.test_suite)}&name=${encodeURIComponent(row.name)}`}
+          className="text-wv-fog hover:text-wv-green transition-colors"
+          data-testid="flake-history-link"
+        >
+          {row.name}
+        </Link>
       </td>
       <td className="px-3 py-2.5 text-[12px] text-wv-fog-muted font-mono">
         {row.test_suite}

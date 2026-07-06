@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   ArrowUpRight,
@@ -60,9 +61,14 @@ function ExpandedRunBody({ run }: { run: TestRun }) {
               className="rounded-md border border-wv-navy-3/40 px-4 py-3 bg-wv-navy/60"
             >
               <div className="flex items-center justify-between gap-3 mb-1.5">
-                <p className="font-mono text-[13px] text-wv-fog truncate">
+                <Link
+                  href={`/tests?suite=${encodeURIComponent(c.test_suite)}&name=${encodeURIComponent(c.name)}`}
+                  className="min-w-0 flex-1 font-mono text-[13px] text-wv-fog hover:text-wv-green transition-colors truncate"
+                  data-testid="case-history-link"
+                  title="Open this test's history"
+                >
                   {c.name}
-                </p>
+                </Link>
                 <span className="text-[11px] font-mono text-wv-fog-muted shrink-0">
                   {c.test_suite}
                 </span>

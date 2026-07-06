@@ -473,3 +473,81 @@ export function detectExecutedDrops(rows: ExecutedDropRow[]): ExecutedDrop[] {
   }
   return out.sort((a, b) => b.dropPct - a.dropPct);
 }
+
+// ---------- WS3 R1: single-test history ----------
+
+export type TestHistoryPoint = {
+  status: TestCaseStatus; // the test's status in that run
+  runStartedAt: string; // UTC ISO of the run (WS1 D1)
+  versionMinor: string | null;
+  branch: string | null;
+  runStatus: string; // the run's overall status
+  runId: string;
+  jobUrl: string; // deep-link to the CI job
+  errorMessage: string | null;
+  failureType: string | null;
+  durationMs: number;
+};
+
+export type TestHistory = {
+  testSuite: string;
+  name: string;
+  framework: string;
+  totalRuns: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  /** Transition density over the passed/failed subsequence — same signal as the
+   *  Flakes page, scoped to this one test. 0 when it never flipped or ran <2×. */
+  flakinessScore: number;
+  points: TestHistoryPoint[]; // chronological, oldest → newest
+};
+
+/**
+ * Shape one test's raw occurrences into its history (WS3 R1). Pure + testable:
+ * sorts the points chronologically by run start (UTC ISO sorts correctly),
+ * tallies pass/fail/skip, and computes a per-test flakiness score from the
+ * pass↔fail transition density (skipped runs carry no signal and are ignored,
+ * exactly as the Flakes page does).
+ */
+export function buildTestHistory(
+  meta: { testSuite: string; name: string; framework: string },
+  points: TestHistoryPoint[],
+): TestHistory {
+  const sorted = [...points].sort((a, b) =>
+    a.runStartedAt < b.runStartedAt
+      ? -1
+      : a.runStartedAt > b.runStartedAt
+        ? 1
+        : 0,
+  );
+
+  let passed = 0;
+  let failed = 0;
+  let skipped = 0;
+  let transitions = 0;
+  let pf = 0; // count of passed/failed observations
+  let prev: TestCaseStatus | null = null;
+  for (const pt of sorted) {
+    if (pt.status === "passed") passed++;
+    else if (pt.status === "failed") failed++;
+    else skipped++;
+    if (pt.status === "passed" || pt.status === "failed") {
+      pf++;
+      if (prev !== null && pt.status !== prev) transitions++;
+      prev = pt.status;
+    }
+  }
+
+  return {
+    testSuite: meta.testSuite,
+    name: meta.name,
+    framework: meta.framework,
+    totalRuns: sorted.length,
+    passed,
+    failed,
+    skipped,
+    flakinessScore: pf > 1 ? transitions / (pf - 1) : 0,
+    points: sorted,
+  };
+}

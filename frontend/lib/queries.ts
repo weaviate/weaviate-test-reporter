@@ -26,12 +26,17 @@ import {
   type TargetVector,
   type FlakesWindow,
 } from "./constants";
-import type { TrendPoint, ExecutedDrop } from "./analysis";
+import type { TrendPoint, ExecutedDrop, TestHistory } from "./analysis";
 
 // Re-exports so existing `import { ... } from "@/lib/queries"` sites keep
 // working without edits.
 export { isoDaysAgo } from "./analysis";
-export type { TrendPoint, ExecutedDrop } from "./analysis";
+export type {
+  TrendPoint,
+  ExecutedDrop,
+  TestHistory,
+  TestHistoryPoint,
+} from "./analysis";
 export { TARGET_VECTORS, DEFAULT_TARGET_VECTOR } from "./constants";
 export type { TargetVector, FlakesWindow } from "./constants";
 export type { RunFilters, TrendFilters } from "./types";
@@ -214,6 +219,18 @@ export async function fetchExecutedDrops(
     `/api/drops${qs ? `?${qs}` : ""}`,
     API_TIMEOUTS_MS.default,
     "Fetch executed drops",
+  );
+}
+
+export async function fetchTestHistory(
+  testSuite: string,
+  name: string,
+): Promise<TestHistory> {
+  const p = new URLSearchParams({ suite: testSuite, name });
+  return apiGet<TestHistory>(
+    `/api/test-history?${p.toString()}`,
+    API_TIMEOUTS_MS.default,
+    "Fetch test history",
   );
 }
 
