@@ -375,3 +375,101 @@ export function passRateDomain(
   const floorPct = Math.max(0, niceMinPct - 5); // one step of headroom below
   return [floorPct / 100, 1];
 }
+
+// ---------- H3: expected-vs-executed (silent test-collapse) ----------
+
+export type ExecutedDropRow = {
+  repository: string;
+  job_name: string;
+  version_minor: string | null; // compare like-for-like versions (see below)
+  started_at: string; // UTC ISO; used only to order a job's runs
+  tests_total: number;
+  tests_skipped: number;
+  run_id: string;
+  job_url: string;
+};
+
+export type ExecutedDrop = {
+  repository: string;
+  job_name: string;
+  versionMinor: string | null;
+  prevExecuted: number;
+  currExecuted: number;
+  prevTotal: number;
+  currTotal: number;
+  dropPct: number; // 0..1 — share of the previous run's executed tests lost
+  currStartedAt: string;
+  currRunId: string;
+  currJobUrl: string;
+};
+
+/** Flag a job whose latest run executed ≥ this fraction fewer tests than the
+ *  run before it. Tunable — start conservative to avoid noise. */
+export const EXECUTED_DROP_THRESHOLD = 0.1;
+/** Ignore trivially small jobs so a 2→1 blip doesn't read as a 50% collapse. */
+export const MIN_PREV_EXECUTED = 5;
+
+/**
+ * Detect "silent test-collapse" (WS2 H3): jobs whose most recent run ran
+ * meaningfully fewer tests than a comparable earlier run — often worse than a
+ * red test (a suite quietly stopped collecting / running). Executed =
+ * tests_total − tests_skipped (clamped ≥ 0), the same "ran" definition as the
+ * pass rate, so a jump in skips counts as a drop too.
+ *
+ * **Version-aware.** Tests are frequently skipped per version (a feature only
+ * exists in 1.37+, so 1.36 runs legitimately execute fewer), so comparing
+ * across versions is noise. For each (repository, job_name), the latest run is
+ * compared only against the **most recent prior run of the SAME version_minor**.
+ * A run on a brand-new version with no same-version predecessor is therefore not
+ * evaluated — a version bump can never masquerade as a collapse.
+ *
+ * Pure + deterministic (house style). A job is flagged when its same-version
+ * baseline executed at least MIN_PREV_EXECUTED tests AND the latest run dropped
+ * by at least EXECUTED_DROP_THRESHOLD. Rows with no started_at, jobs with fewer
+ * than two runs, and latest runs with no same-version baseline are skipped.
+ * Output is sorted by drop magnitude, largest first.
+ */
+export function detectExecutedDrops(rows: ExecutedDropRow[]): ExecutedDrop[] {
+  const byJob = new Map<string, ExecutedDropRow[]>();
+  for (const r of rows) {
+    if (!r.started_at) continue; // can't order it
+    const key = `${r.repository}${FLAKES_KEY_SEP}${r.job_name}`;
+    const list = byJob.get(key);
+    if (list) list.push(r);
+    else byJob.set(key, [r]);
+  }
+
+  const out: ExecutedDrop[] = [];
+  for (const list of byJob.values()) {
+    if (list.length < 2) continue;
+    // Newest first (ISO strings sort chronologically).
+    list.sort((a, b) =>
+      a.started_at < b.started_at ? 1 : a.started_at > b.started_at ? -1 : 0,
+    );
+    const curr = list[0];
+    // Baseline = the most recent OLDER run of the SAME version_minor. Skip over
+    // any interleaved runs on a different version so 1.37-vs-1.36 never flags.
+    const prev = list
+      .slice(1)
+      .find((r) => r.version_minor === curr.version_minor);
+    if (!prev) continue; // no same-version baseline (e.g. first run on a version)
+    const currExecuted = Math.max(0, curr.tests_total - curr.tests_skipped);
+    const prevExecuted = Math.max(0, prev.tests_total - prev.tests_skipped);
+    if (prevExecuted < MIN_PREV_EXECUTED) continue;
+    if (currExecuted > prevExecuted * (1 - EXECUTED_DROP_THRESHOLD)) continue;
+    out.push({
+      repository: curr.repository,
+      job_name: curr.job_name,
+      versionMinor: curr.version_minor,
+      prevExecuted,
+      currExecuted,
+      prevTotal: prev.tests_total,
+      currTotal: curr.tests_total,
+      dropPct: (prevExecuted - currExecuted) / prevExecuted,
+      currStartedAt: curr.started_at,
+      currRunId: curr.run_id,
+      currJobUrl: curr.job_url,
+    });
+  }
+  return out.sort((a, b) => b.dropPct - a.dropPct);
+}

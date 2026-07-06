@@ -7,9 +7,11 @@ import {
   summarizeRunCounts,
   bucketRunsByDay,
   passRateDomain,
+  detectExecutedDrops,
   FLAKES_RECENT_STATUSES,
   type FlakeRow,
   type TrendRunRow,
+  type ExecutedDropRow,
 } from "./analysis";
 import type { TestCaseStatus } from "./types";
 
@@ -477,5 +479,141 @@ describe("passRateDomain", () => {
 
   it("falls back to [0,1] when no point has a rate", () => {
     expect(passRateDomain([{ passRate: null }])).toEqual([0, 1]);
+  });
+});
+
+describe("detectExecutedDrops", () => {
+  const dropRow = (
+    repository: string,
+    job_name: string,
+    started_at: string,
+    tests_total: number,
+    tests_skipped = 0,
+    version_minor: string | null = "1.37",
+  ): ExecutedDropRow => ({
+    repository,
+    job_name,
+    version_minor,
+    started_at,
+    tests_total,
+    tests_skipped,
+    run_id: `${job_name}-${started_at}`,
+    job_url: "https://ci/x",
+  });
+
+  it("flags a job whose latest run executed ≥10% fewer tests than the run before", () => {
+    const out = detectExecutedDrops([
+      dropRow("weaviate", "e2e", "2026-07-05T10:00:00.000Z", 800),
+      dropRow("weaviate", "e2e", "2026-07-06T10:00:00.000Z", 600), // 600 vs 800 = −25%
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      repository: "weaviate",
+      job_name: "e2e",
+      prevExecuted: 800,
+      currExecuted: 600,
+      dropPct: 0.25,
+    });
+  });
+
+  it("flags an exact 10% drop (boundary is inclusive)", () => {
+    const out = detectExecutedDrops([
+      dropRow("r", "j", "2026-07-05T00:00:00.000Z", 100),
+      dropRow("r", "j", "2026-07-06T00:00:00.000Z", 90), // exactly −10%
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].dropPct).toBeCloseTo(0.1);
+  });
+
+  it("does not flag a stable / increased job or a sub-threshold dip", () => {
+    expect(
+      detectExecutedDrops([
+        dropRow("r", "j", "2026-07-05T00:00:00.000Z", 500),
+        dropRow("r", "j", "2026-07-06T00:00:00.000Z", 480), // −4%, under 10%
+      ]),
+    ).toEqual([]);
+    expect(
+      detectExecutedDrops([
+        dropRow("r", "j", "2026-07-05T00:00:00.000Z", 500),
+        dropRow("r", "j", "2026-07-06T00:00:00.000Z", 520), // increased
+      ]),
+    ).toEqual([]);
+  });
+
+  it("skips jobs with fewer than two runs", () => {
+    expect(
+      detectExecutedDrops([
+        dropRow("r", "solo", "2026-07-06T00:00:00.000Z", 100),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("ignores trivially small jobs (previous executed < MIN_PREV_EXECUTED)", () => {
+    expect(
+      detectExecutedDrops([
+        dropRow("r", "tiny", "2026-07-05T00:00:00.000Z", 4),
+        dropRow("r", "tiny", "2026-07-06T00:00:00.000Z", 1), // 75% drop but too small
+      ]),
+    ).toEqual([]);
+  });
+
+  it("counts a skip-rise as an executed drop (executed = total − skipped)", () => {
+    const out = detectExecutedDrops([
+      dropRow("r", "flaggate", "2026-07-05T00:00:00.000Z", 500, 0), // executed 500
+      dropRow("r", "flaggate", "2026-07-06T00:00:00.000Z", 500, 300), // executed 200 → −60%
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ prevExecuted: 500, currExecuted: 200 });
+  });
+
+  it("compares the two most recent runs regardless of input order; groups by (repo, job)", () => {
+    const out = detectExecutedDrops([
+      dropRow("weaviate", "e2e", "2026-07-01T00:00:00.000Z", 100), // older — ignored
+      dropRow("weaviate", "e2e", "2026-07-06T00:00:00.000Z", 600), // latest
+      dropRow("weaviate", "e2e", "2026-07-05T00:00:00.000Z", 800), // previous
+      dropRow("tools", "e2e", "2026-07-05T00:00:00.000Z", 200), // same name, other repo, stable
+      dropRow("tools", "e2e", "2026-07-06T00:00:00.000Z", 200),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      repository: "weaviate",
+      job_name: "e2e",
+      prevExecuted: 800,
+      currExecuted: 600,
+    });
+  });
+
+  it("sorts flagged jobs by drop magnitude, largest first", () => {
+    const out = detectExecutedDrops([
+      dropRow("r", "small", "2026-07-05T00:00:00.000Z", 100),
+      dropRow("r", "small", "2026-07-06T00:00:00.000Z", 85), // −15%
+      dropRow("r", "big", "2026-07-05T00:00:00.000Z", 100),
+      dropRow("r", "big", "2026-07-06T00:00:00.000Z", 40), // −60%
+    ]);
+    expect(out.map((d) => d.job_name)).toEqual(["big", "small"]);
+  });
+
+  it("does NOT flag a cross-version-only comparison (no same-version baseline)", () => {
+    // Tests are skipped per version, so a 1.37 run executing fewer than a 1.36
+    // run is expected, not a collapse — and there's no prior 1.37 to compare to.
+    const out = detectExecutedDrops([
+      dropRow("r", "e2e", "2026-07-05T00:00:00.000Z", 800, 0, "1.36"),
+      dropRow("r", "e2e", "2026-07-06T00:00:00.000Z", 600, 0, "1.37"),
+    ]);
+    expect(out).toEqual([]);
+  });
+
+  it("compares against the most recent SAME-version run, skipping an interleaved other version", () => {
+    const out = detectExecutedDrops([
+      dropRow("r", "e2e", "2026-07-04T00:00:00.000Z", 800, 0, "1.37"), // 1.37 baseline
+      dropRow("r", "e2e", "2026-07-05T00:00:00.000Z", 300, 0, "1.36"), // interleaved 1.36 — ignored
+      dropRow("r", "e2e", "2026-07-06T00:00:00.000Z", 500, 0, "1.37"), // latest 1.37
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      versionMinor: "1.37",
+      prevExecuted: 800, // the 07-04 1.37 run, NOT the 07-05 1.36 run
+      currExecuted: 500,
+    });
   });
 });

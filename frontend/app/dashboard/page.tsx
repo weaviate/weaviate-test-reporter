@@ -7,8 +7,14 @@ import { EmptyState } from "@/components/EmptyState";
 import { ErrorState, LoadingState } from "@/components/States";
 import { TrendCharts } from "@/components/TrendCharts";
 import { TrendFilterBar } from "@/components/TrendFilterBar";
+import { ExecutedDrops } from "@/components/ExecutedDrops";
 import { useAsync } from "@/lib/useAsync";
-import { fetchDashboardKpis, fetchRunTrend, isoDaysAgo } from "@/lib/queries";
+import {
+  fetchDashboardKpis,
+  fetchExecutedDrops,
+  fetchRunTrend,
+  isoDaysAgo,
+} from "@/lib/queries";
 import type { TrendFilters } from "@/lib/queries";
 
 const RANGES = [
@@ -55,6 +61,10 @@ export default function DashboardPage() {
 
   const kpis = useAsync(
     () => fetchDashboardKpis(sinceIso),
+    [sinceIso ?? "all"],
+  );
+  const drops = useAsync(
+    () => fetchExecutedDrops(sinceIso),
     [sinceIso ?? "all"],
   );
   const [trendFilters, setTrendFilters] = useState<TrendFilters>({});
@@ -148,6 +158,25 @@ export default function DashboardPage() {
             </div>
           </>
         ) : null}
+
+        <div>
+          <div className="mb-4">
+            <p className="text-[11px] uppercase tracking-[0.2em] font-mono text-wv-fog-muted">
+              Expected vs executed
+            </p>
+            <p className="mt-1 text-[12px] text-wv-fog-muted">
+              Jobs whose latest run executed fewer tests than the run before — a
+              silent test-collapse.
+            </p>
+          </div>
+          {drops.loading ? (
+            <LoadingState label="Checking for executed drops…" />
+          ) : drops.error ? (
+            <ErrorState error={drops.error} />
+          ) : drops.data ? (
+            <ExecutedDrops drops={drops.data} />
+          ) : null}
+        </div>
 
         <div>
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
