@@ -22,6 +22,7 @@ import {
   rollupRunsByMinor,
   bucketRunsByDay,
   detectExecutedDrops,
+  buildTestHistory,
   type FlakeRow,
   type StatusGroup,
   type RunRow,
@@ -29,6 +30,8 @@ import {
   type TrendRunRow,
   type ExecutedDrop,
   type ExecutedDropRow,
+  type TestHistory,
+  type TestHistoryPoint,
 } from "../analysis";
 import type {
   DashboardKpis,
@@ -113,6 +116,9 @@ const VERSION_MAX_ROWS = 100_000;
 // Trend charts page the same rows (windowed by started_at) and bucket by day.
 const TREND_PAGE_SIZE = 1000;
 const TREND_MAX_ROWS = 100_000;
+// One test's history — bounded (one case per run) but paginate to be safe.
+const HISTORY_PAGE_SIZE = 1000;
+const HISTORY_MAX_ROWS = 50_000;
 
 function clamp(n: number, lo: number, hi: number): number {
   // Non-finite input (NaN/Infinity from a bad query param) falls back to the
@@ -143,7 +149,10 @@ type RawObject = {
   uuid: string;
   properties: Record<string, unknown>;
   metadata?: { distance?: number };
-  references?: Record<string, { objects?: Array<{ uuid: string }> }>;
+  references?: Record<
+    string,
+    { objects?: Array<{ uuid: string; properties?: Record<string, unknown> }> }
+  >;
 };
 
 function asTestRun(o: RawObject): TestRun {
@@ -595,6 +604,84 @@ export async function fetchExecutedDrops(
   }
 
   return detectExecutedDrops(rows);
+}
+
+/**
+ * One test's full history across runs (WS3 R1). Fetches every `TestCase` row for
+ * a `(test_suite, name)` — ordered by real run start (run_started_at, WS1 D1) —
+ * and pulls each run's version / branch / status / CI link through the
+ * `belongsToRun` cross-reference, then shapes it with the pure `buildTestHistory`.
+ */
+export async function fetchTestHistory(
+  testSuite: string,
+  name: string,
+): Promise<TestHistory> {
+  const client = await getClient();
+  const cases = casesCol(client);
+
+  const filter = Filters.and(
+    cases.filter.byProperty("test_suite").equal(testSuite),
+    cases.filter.byProperty("name").equal(name),
+  );
+
+  const points: TestHistoryPoint[] = [];
+  let framework = "";
+  let offset = 0;
+  while (points.length < HISTORY_MAX_ROWS) {
+    const pageSize = Math.min(
+      HISTORY_PAGE_SIZE,
+      HISTORY_MAX_ROWS - points.length,
+    );
+    const res = await cases.query.fetchObjects({
+      limit: pageSize,
+      offset,
+      filters: filter,
+      sort: cases.sort.byProperty("run_started_at", true),
+      returnProperties: [
+        "status",
+        "framework",
+        "run_started_at",
+        "error_message",
+        "failure_type",
+        "duration_ms",
+      ],
+      returnReferences: [
+        {
+          linkOn: "belongsToRun",
+          returnProperties: [
+            "version_minor",
+            "branch",
+            "status",
+            "run_id",
+            "run_url",
+            "job_url",
+          ],
+        },
+      ],
+    });
+    const page = res.objects as unknown as RawObject[];
+    for (const o of page) {
+      const p = o.properties;
+      if (!framework) framework = (p.framework as string) ?? "";
+      const rp = o.references?.belongsToRun?.objects?.[0]?.properties ?? {};
+      points.push({
+        status: p.status as TestCaseStatus,
+        runStartedAt: normalizeDate(p.run_started_at),
+        versionMinor: (rp.version_minor as string | null) ?? null,
+        branch: (rp.branch as string | null) ?? null,
+        runStatus: (rp.status as string) ?? "",
+        runId: (rp.run_id as string) ?? "",
+        jobUrl: (rp.job_url as string) || (rp.run_url as string) || "",
+        errorMessage: (p.error_message as string | null) ?? null,
+        failureType: (p.failure_type as string | null) ?? null,
+        durationMs: (p.duration_ms as number) ?? 0,
+      });
+    }
+    if (page.length < pageSize) break;
+    offset += page.length;
+  }
+
+  return buildTestHistory({ testSuite, name, framework }, points);
 }
 
 export async function fetchFlakyTests(

@@ -8,10 +8,12 @@ import {
   bucketRunsByDay,
   passRateDomain,
   detectExecutedDrops,
+  buildTestHistory,
   FLAKES_RECENT_STATUSES,
   type FlakeRow,
   type TrendRunRow,
   type ExecutedDropRow,
+  type TestHistoryPoint,
 } from "./analysis";
 import type { TestCaseStatus } from "./types";
 
@@ -615,5 +617,77 @@ describe("detectExecutedDrops", () => {
       prevExecuted: 800, // the 07-04 1.37 run, NOT the 07-05 1.36 run
       currExecuted: 500,
     });
+  });
+});
+
+describe("buildTestHistory", () => {
+  const meta = { testSuite: "e2e", name: "test_x", framework: "pytest" };
+  const pt = (
+    status: TestCaseStatus,
+    runStartedAt: string,
+    over: Partial<TestHistoryPoint> = {},
+  ): TestHistoryPoint => ({
+    status,
+    runStartedAt,
+    versionMinor: "1.37",
+    branch: "main",
+    runStatus: status === "failed" ? "failure" : "success",
+    runId: `run-${runStartedAt}`,
+    jobUrl: "https://ci/job",
+    errorMessage: null,
+    failureType: null,
+    durationMs: 0,
+    ...over,
+  });
+
+  it("sorts chronologically, tallies pass/fail/skip, scores transition density", () => {
+    const h = buildTestHistory(meta, [
+      pt("failed", "2026-07-03T00:00:00.000Z"),
+      pt("passed", "2026-07-01T00:00:00.000Z"),
+      pt("failed", "2026-07-02T00:00:00.000Z"),
+    ]);
+    expect(h.points.map((p) => p.runStartedAt)).toEqual([
+      "2026-07-01T00:00:00.000Z",
+      "2026-07-02T00:00:00.000Z",
+      "2026-07-03T00:00:00.000Z",
+    ]);
+    expect(h).toMatchObject({ totalRuns: 3, passed: 1, failed: 2, skipped: 0 });
+    // sequence pass,fail,fail → 1 transition over 3 obs → 1/2
+    expect(h.flakinessScore).toBe(0.5);
+  });
+
+  it("scores a stable (all-passed) test as 0", () => {
+    const h = buildTestHistory(meta, [
+      pt("passed", "2026-07-01T00:00:00.000Z"),
+      pt("passed", "2026-07-02T00:00:00.000Z"),
+      pt("passed", "2026-07-03T00:00:00.000Z"),
+    ]);
+    expect(h.flakinessScore).toBe(0);
+    expect(h).toMatchObject({ passed: 3, failed: 0 });
+  });
+
+  it("ignores skipped runs in the flake score but still counts them", () => {
+    const h = buildTestHistory(meta, [
+      pt("passed", "2026-07-01T00:00:00.000Z"),
+      pt("skipped", "2026-07-02T00:00:00.000Z"),
+      pt("failed", "2026-07-03T00:00:00.000Z"),
+    ]);
+    expect(h).toMatchObject({ passed: 1, failed: 1, skipped: 1, totalRuns: 3 });
+    // passed→failed (skip ignored) = 1 transition over 2 obs → 1/1 = 1
+    expect(h.flakinessScore).toBe(1);
+  });
+
+  it("scores 0 with fewer than two passed/failed observations", () => {
+    const h = buildTestHistory(meta, [
+      pt("passed", "2026-07-01T00:00:00.000Z"),
+      pt("skipped", "2026-07-02T00:00:00.000Z"),
+    ]);
+    expect(h.flakinessScore).toBe(0);
+  });
+
+  it("handles an empty history", () => {
+    const h = buildTestHistory(meta, []);
+    expect(h).toMatchObject({ totalRuns: 0, passed: 0, failed: 0, points: [] });
+    expect(h.flakinessScore).toBe(0);
   });
 });
