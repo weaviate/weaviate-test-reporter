@@ -7,9 +7,11 @@ import {
   summarizeRunCounts,
   bucketRunsByDay,
   passRateDomain,
+  detectExecutedDrops,
   FLAKES_RECENT_STATUSES,
   type FlakeRow,
   type TrendRunRow,
+  type ExecutedDropRow,
 } from "./analysis";
 import type { TestCaseStatus } from "./types";
 
@@ -477,5 +479,106 @@ describe("passRateDomain", () => {
 
   it("falls back to [0,1] when no point has a rate", () => {
     expect(passRateDomain([{ passRate: null }])).toEqual([0, 1]);
+  });
+});
+
+describe("detectExecutedDrops", () => {
+  const dropRow = (
+    repository: string,
+    job_name: string,
+    started_at: string,
+    tests_total: number,
+    tests_skipped = 0,
+  ): ExecutedDropRow => ({
+    repository,
+    job_name,
+    started_at,
+    tests_total,
+    tests_skipped,
+    run_id: `${job_name}-${started_at}`,
+    job_url: "https://ci/x",
+  });
+
+  it("flags a job whose latest run executed ≥10% fewer tests than the run before", () => {
+    const out = detectExecutedDrops([
+      dropRow("weaviate", "e2e", "2026-07-05T10:00:00.000Z", 800),
+      dropRow("weaviate", "e2e", "2026-07-06T10:00:00.000Z", 600), // 600 vs 800 = −25%
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      repository: "weaviate",
+      job_name: "e2e",
+      prevExecuted: 800,
+      currExecuted: 600,
+      dropPct: 0.25,
+    });
+  });
+
+  it("does not flag a stable / increased job or a sub-threshold dip", () => {
+    expect(
+      detectExecutedDrops([
+        dropRow("r", "j", "2026-07-05T00:00:00.000Z", 500),
+        dropRow("r", "j", "2026-07-06T00:00:00.000Z", 480), // −4%, under 10%
+      ]),
+    ).toEqual([]);
+    expect(
+      detectExecutedDrops([
+        dropRow("r", "j", "2026-07-05T00:00:00.000Z", 500),
+        dropRow("r", "j", "2026-07-06T00:00:00.000Z", 520), // increased
+      ]),
+    ).toEqual([]);
+  });
+
+  it("skips jobs with fewer than two runs", () => {
+    expect(
+      detectExecutedDrops([
+        dropRow("r", "solo", "2026-07-06T00:00:00.000Z", 100),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("ignores trivially small jobs (previous executed < MIN_PREV_EXECUTED)", () => {
+    expect(
+      detectExecutedDrops([
+        dropRow("r", "tiny", "2026-07-05T00:00:00.000Z", 4),
+        dropRow("r", "tiny", "2026-07-06T00:00:00.000Z", 1), // 75% drop but too small
+      ]),
+    ).toEqual([]);
+  });
+
+  it("counts a skip-rise as an executed drop (executed = total − skipped)", () => {
+    const out = detectExecutedDrops([
+      dropRow("r", "flaggate", "2026-07-05T00:00:00.000Z", 500, 0), // executed 500
+      dropRow("r", "flaggate", "2026-07-06T00:00:00.000Z", 500, 300), // executed 200 → −60%
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ prevExecuted: 500, currExecuted: 200 });
+  });
+
+  it("compares the two most recent runs regardless of input order; groups by (repo, job)", () => {
+    const out = detectExecutedDrops([
+      dropRow("weaviate", "e2e", "2026-07-01T00:00:00.000Z", 100), // older — ignored
+      dropRow("weaviate", "e2e", "2026-07-06T00:00:00.000Z", 600), // latest
+      dropRow("weaviate", "e2e", "2026-07-05T00:00:00.000Z", 800), // previous
+      dropRow("tools", "e2e", "2026-07-05T00:00:00.000Z", 200), // same name, other repo, stable
+      dropRow("tools", "e2e", "2026-07-06T00:00:00.000Z", 200),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      repository: "weaviate",
+      job_name: "e2e",
+      prevExecuted: 800,
+      currExecuted: 600,
+    });
+  });
+
+  it("sorts flagged jobs by drop magnitude, largest first", () => {
+    const out = detectExecutedDrops([
+      dropRow("r", "small", "2026-07-05T00:00:00.000Z", 100),
+      dropRow("r", "small", "2026-07-06T00:00:00.000Z", 85), // −15%
+      dropRow("r", "big", "2026-07-05T00:00:00.000Z", 100),
+      dropRow("r", "big", "2026-07-06T00:00:00.000Z", 40), // −60%
+    ]);
+    expect(out.map((d) => d.job_name)).toEqual(["big", "small"]);
   });
 });

@@ -21,11 +21,14 @@ import {
   deriveKpis,
   rollupRunsByMinor,
   bucketRunsByDay,
+  detectExecutedDrops,
   type FlakeRow,
   type StatusGroup,
   type RunRow,
   type TrendPoint,
   type TrendRunRow,
+  type ExecutedDrop,
+  type ExecutedDropRow,
 } from "../analysis";
 import type {
   DashboardKpis,
@@ -534,6 +537,61 @@ export async function fetchRunTrend(
   }
 
   return bucketRunsByDay(rows);
+}
+
+/**
+ * Expected-vs-executed drops (WS2 H3). Pages the windowed TestRun rows and hands
+ * them to the pure `detectExecutedDrops` — which flags jobs whose latest run ran
+ * meaningfully fewer tests than the run before. Windowed by started_at so a job
+ * needs at least two runs in the range to be evaluated.
+ */
+export async function fetchExecutedDrops(
+  sinceIso?: string,
+): Promise<ExecutedDrop[]> {
+  const client = await getClient();
+  const runs = runsCol(client);
+  const since = sinceIso ? new Date(sinceIso) : undefined;
+  const filter = since
+    ? runs.filter.byProperty("started_at").greaterOrEqual(since)
+    : undefined;
+
+  const rows: ExecutedDropRow[] = [];
+  let offset = 0;
+  while (rows.length < TREND_MAX_ROWS) {
+    const pageSize = Math.min(TREND_PAGE_SIZE, TREND_MAX_ROWS - rows.length);
+    const res = await runs.query.fetchObjects({
+      limit: pageSize,
+      offset,
+      filters: filter,
+      sort: runs.sort.byCreationTime(true),
+      returnProperties: [
+        "repository",
+        "job_name",
+        "started_at",
+        "tests_total",
+        "tests_skipped",
+        "run_id",
+        "job_url",
+      ],
+    });
+    const page = res.objects as unknown as RawObject[];
+    for (const o of page) {
+      const p = o.properties;
+      rows.push({
+        repository: (p.repository as string) ?? "",
+        job_name: (p.job_name as string) ?? "",
+        started_at: normalizeDate(p.started_at),
+        tests_total: (p.tests_total as number) ?? 0,
+        tests_skipped: (p.tests_skipped as number) ?? 0,
+        run_id: (p.run_id as string) ?? "",
+        job_url: (p.job_url as string) || (p.run_url as string) || "",
+      });
+    }
+    if (page.length < pageSize) break;
+    offset += page.length;
+  }
+
+  return detectExecutedDrops(rows);
 }
 
 export async function fetchFlakyTests(

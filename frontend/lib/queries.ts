@@ -26,12 +26,12 @@ import {
   type TargetVector,
   type FlakesWindow,
 } from "./constants";
-import type { TrendPoint } from "./analysis";
+import type { TrendPoint, ExecutedDrop } from "./analysis";
 
 // Re-exports so existing `import { ... } from "@/lib/queries"` sites keep
 // working without edits.
 export { isoDaysAgo } from "./analysis";
-export type { TrendPoint } from "./analysis";
+export type { TrendPoint, ExecutedDrop } from "./analysis";
 export { TARGET_VECTORS, DEFAULT_TARGET_VECTOR } from "./constants";
 export type { TargetVector, FlakesWindow } from "./constants";
 export type { RunFilters, TrendFilters } from "./types";
@@ -201,6 +201,19 @@ export async function fetchRunTrend(
     `/api/trend${qs ? `?${qs}` : ""}`,
     API_TIMEOUTS_MS.default,
     "Fetch trend",
+  );
+}
+
+export async function fetchExecutedDrops(
+  sinceIso?: string,
+): Promise<ExecutedDrop[]> {
+  const p = new URLSearchParams();
+  if (sinceIso) p.set("since", sinceIso);
+  const qs = p.toString();
+  return apiGet<ExecutedDrop[]>(
+    `/api/drops${qs ? `?${qs}` : ""}`,
+    API_TIMEOUTS_MS.default,
+    "Fetch coverage drops",
   );
 }
 
