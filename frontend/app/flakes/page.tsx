@@ -217,6 +217,7 @@ function FlakeTable({
               <th className="text-left px-5 py-2 font-medium">Test</th>
               <th className="text-left px-3 py-2 font-medium">Suite</th>
               <th className="text-left px-3 py-2 font-medium">Version</th>
+              <th className="text-left px-3 py-2 font-medium">Job</th>
               <th className="text-right px-3 py-2 font-medium">Flakiness</th>
               <th className="text-right px-3 py-2 font-medium">Runs</th>
               <th className="text-right px-3 py-2 font-medium">Pass rate</th>
@@ -235,7 +236,7 @@ function FlakeTable({
           <tbody>
             {rows.map((r) => (
               <FlakeRow
-                key={`${r.test_suite}|${r.name}|${r.version_minor ?? ""}`}
+                key={`${r.test_suite}|${r.name}|${r.version_minor ?? ""}|${r.job_name}`}
                 row={r}
               />
             ))}
@@ -271,6 +272,11 @@ function FlakeRow({ row }: { row: FlakyTest }) {
       </td>
       <td className="px-3 py-2.5 text-[12px] text-wv-fog-muted font-mono tabular-nums">
         {row.version_minor ?? "—"}
+      </td>
+      <td className="px-3 py-2.5 text-[12px] text-wv-fog-muted font-mono">
+        <span className="block max-w-[220px] truncate" title={row.job_name}>
+          {row.job_name || "—"}
+        </span>
       </td>
       <td className="px-3 py-2.5 text-right tabular-nums">
         <span className={`font-mono ${tone}`}>{scorePct}%</span>

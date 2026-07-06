@@ -23,7 +23,15 @@ const row = (
   status: TestCaseStatus,
   framework = "pytest",
   version_minor: string | null = "1.37",
-): FlakeRow => ({ test_suite, name, status, framework, version_minor });
+  job_name = "job-a",
+): FlakeRow => ({
+  test_suite,
+  name,
+  status,
+  framework,
+  version_minor,
+  job_name,
+});
 
 describe("isoDaysAgo", () => {
   it("returns a UTC-midnight ISO string", () => {
@@ -144,6 +152,38 @@ describe("computeFlaky", () => {
       name: "y",
       version_minor: "1.37",
       transitions: 2,
+    });
+  });
+
+  it("does NOT flag a test that's deterministic per job (fails only in one job)", () => {
+    // Same test, same version, two jobs (e.g. matrix cells): passes in job-a,
+    // fails in job-b. Interleaved by time it looks flaky; per-job it's stable.
+    const rows = [
+      row("s", "x", "passed", "pytest", "1.37", "job-a"),
+      row("s", "x", "failed", "pytest", "1.37", "job-b"),
+      row("s", "x", "passed", "pytest", "1.37", "job-a"),
+      row("s", "x", "failed", "pytest", "1.37", "job-b"),
+      row("s", "x", "passed", "pytest", "1.37", "job-a"),
+      row("s", "x", "failed", "pytest", "1.37", "job-b"),
+    ];
+    expect(computeFlaky(rows)).toEqual([]);
+  });
+
+  it("scopes flakiness to a job and labels the row with it", () => {
+    const rows = [
+      row("s", "y", "passed", "pytest", "1.37", "job-a"),
+      row("s", "y", "failed", "pytest", "1.37", "job-a"),
+      row("s", "y", "passed", "pytest", "1.37", "job-a"),
+      row("s", "y", "passed", "pytest", "1.37", "job-b"),
+      row("s", "y", "passed", "pytest", "1.37", "job-b"),
+      row("s", "y", "passed", "pytest", "1.37", "job-b"),
+    ];
+    const out = computeFlaky(rows);
+    expect(out).toHaveLength(1); // only job-a flaked
+    expect(out[0]).toMatchObject({
+      name: "y",
+      version_minor: "1.37",
+      job_name: "job-a",
     });
   });
 });

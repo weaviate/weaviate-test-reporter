@@ -690,10 +690,41 @@ export async function fetchFlakyTests(
 ): Promise<FlakyTest[]> {
   const client = await getClient();
   const cases = casesCol(client);
+  const runs = runsCol(client);
   const days = window === "7d" ? 7 : 30;
   const since = new Date(isoDaysAgo(days));
   // `?? 3` wouldn't catch NaN (only null/undefined), so guard for finiteness.
   const minRuns = Number.isFinite(opts.minRuns) ? (opts.minRuns as number) : 3;
+
+  // Flakiness is scoped per (suite, name, version_minor, job_name) — both live
+  // on the TestRun, not the TestCase. Rather than resolve the belongsToRun
+  // cross-ref TARGET for every case (up to 200k — the perf/timeout culprit),
+  // build a small run-uuid -> {version, job} map ONCE (a window holds far fewer
+  // runs than cases) and read only the cheap reference beacon per case.
+  const runMeta = new Map<string, { version: string | null; job: string }>();
+  {
+    const runFilter = runs.filter
+      .byProperty("started_at")
+      .greaterOrEqual(since);
+    let ro = 0;
+    while (runMeta.size < FLAKES_MAX_ROWS) {
+      const res = await runs.query.fetchObjects({
+        limit: FLAKES_PAGE_SIZE,
+        offset: ro,
+        filters: runFilter,
+        returnProperties: ["version_minor", "job_name"],
+      });
+      const page = res.objects as unknown as RawObject[];
+      for (const o of page) {
+        runMeta.set(o.uuid, {
+          version: (o.properties.version_minor as string | null) ?? null,
+          job: (o.properties.job_name as string) ?? "",
+        });
+      }
+      if (page.length < FLAKES_PAGE_SIZE) break;
+      ro += page.length;
+    }
+  }
 
   const windowFilter = Filters.and(
     // Window by the real run start (run_started_at, WS1 D1), not object
@@ -723,20 +754,21 @@ export async function fetchFlakyTests(
       filters: windowFilter,
       sort,
       returnProperties: ["name", "test_suite", "framework", "status"],
-      // Pull the run's minor version so flakiness is scoped per version (R3).
-      returnReferences: [
-        { linkOn: "belongsToRun", returnProperties: ["version_minor"] },
-      ],
+      // uuid-only reference — the belongsToRun beacon is stored ON the case, so
+      // this loads no TestRun target. version/job are joined from runMeta.
+      returnReferences: [{ linkOn: "belongsToRun" }],
     });
     const page = res.objects as unknown as RawObject[];
     for (const o of page) {
       const p = o.properties;
-      const rp = o.references?.belongsToRun?.objects?.[0]?.properties ?? {};
+      const runUuid = o.references?.belongsToRun?.objects?.[0]?.uuid;
+      const meta = runUuid ? runMeta.get(runUuid) : undefined;
       rows.push({
         test_suite: (p.test_suite as string) ?? "",
         name: (p.name as string) ?? "",
         framework: (p.framework as string) ?? "",
-        version_minor: (rp.version_minor as string | null) ?? null,
+        version_minor: meta?.version ?? null,
+        job_name: meta?.job ?? "",
         status: p.status as TestCaseStatus,
       });
     }

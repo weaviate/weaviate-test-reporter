@@ -38,19 +38,23 @@ export type FlakeRow = {
   name: string;
   framework: string;
   version_minor: string | null;
+  job_name: string;
   status: TestCaseStatus;
 };
 
 /**
- * Group rows by `(test_suite, name, version_minor)` and compute per-test-per-
- * version flakiness (WS3 R3). Grouping by version means a test that's
- * DETERMINISTIC per version — e.g. fails only on 1.36 because a feature isn't
- * gated there — is no longer mislabeled flaky by cross-version pass↔fail flips;
- * only within-version flips count.
+ * Group rows by `(test_suite, name, version_minor, job_name)` and compute
+ * per-test flakiness within that stable context (WS3 R3). Grouping by version
+ * AND job means a test that's DETERMINISTIC for a given version/config — e.g.
+ * fails only on 1.36, or only in the `replicas-3` job — is no longer mislabeled
+ * flaky by cross-version/cross-job flips. A CI run fans out into many jobs
+ * (matrix cells, upgrade/downgrade legs), each a distinct TestCase for the same
+ * `{suite, name}`; without the job in the key those all collapse into one group
+ * and inflate `total_runs`. Only WITHIN-context flips count.
  *
  * Rows MUST already be ordered by `(test_suite, name, run_started_at)` so each
- * group's status sequence is chronological — a version subsequence of a
- * time-ordered (suite, name) run inherits that order, so no version sort is
+ * group's status sequence is chronological — a (version, job) subsequence of a
+ * time-ordered (suite, name) run inherits that order, so no extra sort is
  * needed. `flakiness_score = transitions / (runs - 1)`. Groups with fewer than
  * `minRuns` observations, or zero transitions (all-passed / all-failed), drop.
  */
@@ -60,11 +64,12 @@ export function computeFlaky(rows: FlakeRow[], minRuns = 3): FlakyTest[] {
     name: string;
     framework: string;
     version_minor: string | null;
+    job_name: string;
     statuses: TestCaseStatus[];
   };
   const groups = new Map<string, Acc>();
   for (const r of rows) {
-    const key = `${r.test_suite}${FLAKES_KEY_SEP}${r.name}${FLAKES_KEY_SEP}${r.version_minor ?? ""}`;
+    const key = `${r.test_suite}${FLAKES_KEY_SEP}${r.name}${FLAKES_KEY_SEP}${r.version_minor ?? ""}${FLAKES_KEY_SEP}${r.job_name}`;
     let acc = groups.get(key);
     if (!acc) {
       acc = {
@@ -72,6 +77,7 @@ export function computeFlaky(rows: FlakeRow[], minRuns = 3): FlakyTest[] {
         name: r.name,
         framework: r.framework,
         version_minor: r.version_minor,
+        job_name: r.job_name,
         statuses: [],
       };
       groups.set(key, acc);
@@ -98,6 +104,7 @@ export function computeFlaky(rows: FlakeRow[], minRuns = 3): FlakyTest[] {
       name: g.name,
       framework: g.framework,
       version_minor: g.version_minor,
+      job_name: g.job_name,
       total_runs: total,
       passed,
       failed,
