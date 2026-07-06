@@ -641,10 +641,17 @@ export async function fetchTestHistory(
       offset,
       filters: filter,
       sort: cases.sort.byProperty("run_started_at", true),
+      // version_minor / branch / job_name are denormalized onto the case
+      // (WS3 R3) — read them directly. The belongsToRun ref stays only for the
+      // run-level per-point details we did NOT denormalize (run status / id /
+      // CI URL); history is a single-test query, so the ref is cheap here.
       returnProperties: [
         "status",
         "framework",
         "run_started_at",
+        "version_minor",
+        "branch",
+        "job_name",
         "error_message",
         "failure_type",
         "duration_ms",
@@ -652,15 +659,7 @@ export async function fetchTestHistory(
       returnReferences: [
         {
           linkOn: "belongsToRun",
-          returnProperties: [
-            "version_minor",
-            "branch",
-            "job_name",
-            "status",
-            "run_id",
-            "run_url",
-            "job_url",
-          ],
+          returnProperties: ["status", "run_id", "run_url", "job_url"],
         },
       ],
     });
@@ -672,9 +671,9 @@ export async function fetchTestHistory(
       points.push({
         status: p.status as TestCaseStatus,
         runStartedAt: normalizeDate(p.run_started_at),
-        versionMinor: (rp.version_minor as string | null) ?? null,
-        branch: (rp.branch as string | null) ?? null,
-        jobName: (rp.job_name as string) ?? "",
+        versionMinor: (p.version_minor as string | null) ?? null,
+        branch: (p.branch as string | null) ?? null,
+        jobName: (p.job_name as string) ?? "",
         runStatus: (rp.status as string) ?? "",
         runId: (rp.run_id as string) ?? "",
         jobUrl: (rp.job_url as string) || (rp.run_url as string) || "",
