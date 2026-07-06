@@ -11,6 +11,14 @@ import { TestHistoryView } from "@/components/TestHistoryView";
 import { useAsync } from "@/lib/useAsync";
 import { fetchTestHistory } from "@/lib/queries";
 
+// Known deep-link origins → the "← Back to …" target. An unknown or
+// directly-opened URL falls back to the Test Explorer.
+const BACK_SOURCES: Record<string, { label: string; href: string }> = {
+  flakes: { label: "Flakes", href: "/flakes" },
+  explorer: { label: "Test Explorer", href: "/" },
+};
+const DEFAULT_BACK = { label: "Test Explorer", href: "/" };
+
 export default function TestHistoryPage() {
   // useSearchParams needs a Suspense boundary (params are request-time only).
   return (
@@ -26,12 +34,8 @@ function TestHistoryBody() {
   const name = params.get("name") ?? "";
   const enabled = Boolean(suite && name);
 
-  // Where the user came from — for the "← Back to …" link. Anything other than
-  // the Flakes page (incl. a directly-opened URL) returns to the Test Explorer.
-  const back =
-    params.get("from") === "flakes"
-      ? { label: "Flakes", href: "/flakes" }
-      : { label: "Test Explorer", href: "/" };
+  // "← Back to …" target, keyed on the deep-link's `from` marker.
+  const back = BACK_SOURCES[params.get("from") ?? ""] ?? DEFAULT_BACK;
 
   const history = useAsync(
     () => (enabled ? fetchTestHistory(suite, name) : Promise.resolve(null)),
