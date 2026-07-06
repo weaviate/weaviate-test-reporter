@@ -188,6 +188,10 @@ def test_ensure_test_case_creates_with_named_vector_config():
         "passed_on_retry",
         "initial_status",
         "failure_fingerprint",
+        # WS3 R3: denormalized run identity (version/job/branch scoping).
+        "version_minor",
+        "job_name",
+        "branch",
     }
     assert prop_names == expected
 
@@ -204,8 +208,18 @@ def test_test_case_index_flags_match_schema_doc():
         assert props[v].indexFilterable is False, f"{v} should not be filterable"
         assert props[v].skip_vectorization is False, f"{v} must source a vector"
 
-    # Filterable text fields opt OUT of vectorization.
-    for f in ("test_suite", "framework", "status", "failure_type", "initial_status"):
+    # Filterable text fields opt OUT of vectorization. WS3 R3 adds the
+    # denormalized run identity (version_minor / job_name / branch).
+    for f in (
+        "test_suite",
+        "framework",
+        "status",
+        "failure_type",
+        "initial_status",
+        "version_minor",
+        "job_name",
+        "branch",
+    ):
         assert props[f].indexFilterable is True, f"{f} should be filterable"
         assert props[f].indexSearchable is False, f"{f} should not be searchable"
         assert props[f].skip_vectorization is True
@@ -520,6 +534,8 @@ _WS1_CASE_PROPS = {
     "initial_status",
     "failure_fingerprint",
 }
+# WS3 R3: denormalized run identity added to TestCase.
+_WS3_CASE_PROPS = {"version_minor", "job_name", "branch"}
 
 
 def test_ensure_test_case_properties_is_idempotent_on_current_spec():
@@ -535,6 +551,7 @@ def test_ensure_test_case_properties_is_idempotent_on_current_spec():
         "stack_trace",
         "failure_type",
         *_WS1_CASE_PROPS,
+        *_WS3_CASE_PROPS,
     }
     client, collection = _mock_existing_collection(full_case_spec_names)
 
@@ -543,9 +560,9 @@ def test_ensure_test_case_properties_is_idempotent_on_current_spec():
     collection.config.add_property.assert_not_called()
 
 
-def test_ensure_test_case_properties_adds_missing_ws1_props():
+def test_ensure_test_case_properties_adds_missing_spec_props():
     """A TestCase collection that pre-dates WS1 — the additive migration
-    must add the five D1/D3/D4 case-level fields."""
+    must add every later case-level field (WS1 D1/D3/D4 + WS3 R3 identity)."""
     pre_ws1 = {
         "name",
         "test_suite",
@@ -560,9 +577,33 @@ def test_ensure_test_case_properties_adds_missing_ws1_props():
 
     ensure_test_case_properties(client)
 
-    assert collection.config.add_property.call_count == len(_WS1_CASE_PROPS)
+    expected = _WS1_CASE_PROPS | _WS3_CASE_PROPS
+    assert collection.config.add_property.call_count == len(expected)
     added_names = {call.args[0].name for call in collection.config.add_property.call_args_list}
-    assert added_names == _WS1_CASE_PROPS
+    assert added_names == expected
+
+
+def test_ensure_test_case_properties_adds_missing_ws3_props():
+    """A post-WS1 TestCase collection gains ONLY the WS3 R3 identity fields
+    (version_minor / job_name / branch) — the additive migration is minimal."""
+    pre_ws3 = {
+        "name",
+        "test_suite",
+        "framework",
+        "status",
+        "duration_ms",
+        "error_message",
+        "stack_trace",
+        "failure_type",
+        *_WS1_CASE_PROPS,
+    }
+    client, collection = _mock_existing_collection(pre_ws3)
+
+    ensure_test_case_properties(client)
+
+    assert collection.config.add_property.call_count == len(_WS3_CASE_PROPS)
+    added_names = {call.args[0].name for call in collection.config.add_property.call_args_list}
+    assert added_names == _WS3_CASE_PROPS
 
 
 # Silence unused-import lint when wvcc isn't directly referenced.

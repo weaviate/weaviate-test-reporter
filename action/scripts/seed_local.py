@@ -368,6 +368,8 @@ def _insert_run(client: weaviate.WeaviateClient, run_idx: int, cases: list[Parse
         workflow_run_attempt=attempt,
         job_name=job_name,
         run_started_at=timestamp,
+        version_minor=version_minor,
+        branch=branch,
     )
     return run_uuid, status, len(cases)
 

@@ -241,7 +241,13 @@ def _retry_wait(retry_state: Any) -> float:
     return min(2**attempt, 8)
 
 
-def _case_properties(c: ParsedCase, run_started_at: str | None = None) -> dict[str, Any]:
+def _case_properties(
+    c: ParsedCase,
+    run_started_at: str | None = None,
+    version_minor: str | None = None,
+    job_name: str | None = None,
+    branch: str | None = None,
+) -> dict[str, Any]:
     props: dict[str, Any] = {
         "name": c.name,
         "test_suite": c.test_suite,
@@ -263,6 +269,17 @@ def _case_properties(c: ParsedCase, run_started_at: str | None = None) -> dict[s
     # didn't resolve it, keeping the property optional on legacy rows.
     if run_started_at is not None:
         props["run_started_at"] = run_started_at
+    # WS3 R3: denormalize the run's version / job / branch onto every case so the
+    # flakes full-scan and per-test history group + filter directly on TestCase —
+    # no belongsToRun hop on the hot path. version_minor is omitted (null) when
+    # the run carried no version_under_test, mirroring the TestRun; job_name and
+    # branch are always known when a run is ingested.
+    if version_minor is not None:
+        props["version_minor"] = version_minor
+    if job_name is not None:
+        props["job_name"] = job_name
+    if branch is not None:
+        props["branch"] = branch
     return props
 
 
@@ -281,12 +298,16 @@ def ingest_test_cases(
     workflow_run_attempt: int,
     job_name: str,
     run_started_at: str | None = None,
+    version_minor: str | None = None,
+    branch: str | None = None,
 ) -> tuple[int, int]:
     """Server-side streaming batch insert. Returns (successful, failed).
 
     Re-uses the parent run UUID as the belongsToRun cross-reference for
     every TestCase so downstream queries can fetch all cases of a run in
-    a single hop. `run_started_at` (WS1 D1) is denormalized onto each case.
+    a single hop. `run_started_at` (WS1 D1) and `version_minor` / `job_name` /
+    `branch` (WS3 R3) are denormalized onto each case so the flakes + history
+    scans group/filter without hopping through the reference.
     """
     collection = client.collections.get(TEST_CASE)
     submitted = 0
@@ -301,7 +322,13 @@ def ingest_test_cases(
                 c.name,
             )
             batch.add_object(
-                properties=_case_properties(c, run_started_at=run_started_at),
+                properties=_case_properties(
+                    c,
+                    run_started_at=run_started_at,
+                    version_minor=version_minor,
+                    job_name=job_name,
+                    branch=branch,
+                ),
                 uuid=uid,
                 references={"belongsToRun": run_uuid},
             )
