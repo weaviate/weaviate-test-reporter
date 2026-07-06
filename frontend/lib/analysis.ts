@@ -502,6 +502,7 @@ export type TestHistoryPoint = {
   runStartedAt: string; // UTC ISO of the run (WS1 D1)
   versionMinor: string | null;
   branch: string | null;
+  jobName: string; // the CI job (matrix cell / upgrade leg) this ran in
   runStatus: string; // the run's overall status
   runId: string;
   jobUrl: string; // deep-link to the CI job
@@ -571,4 +572,34 @@ export function buildTestHistory(
     flakinessScore: pf > 1 ? transitions / (pf - 1) : 0,
     points: sorted,
   };
+}
+
+export type JobHistory = { job: string; points: TestHistoryPoint[] };
+
+/**
+ * Split a test's history into one series per CI job (WS3 R3). A test runs once
+ * per job per run (matrix cells / upgrade legs), so a single interleaved
+ * timeline mixes configs; per-job series read as coherent run-over-run
+ * sequences. Points are assumed already chronological (as `buildTestHistory`
+ * returns them) and keep that order within each series; series are ordered by
+ * most-recent activity first.
+ */
+export function groupHistoryByJob(points: TestHistoryPoint[]): JobHistory[] {
+  const byJob = new Map<string, TestHistoryPoint[]>();
+  for (const p of points) {
+    const key = p.jobName || "";
+    const list = byJob.get(key);
+    if (list) list.push(p);
+    else byJob.set(key, [p]);
+  }
+  const series = [...byJob.entries()].map(([job, pts]) => ({
+    job,
+    points: pts,
+  }));
+  series.sort((a, b) => {
+    const la = a.points[a.points.length - 1]?.runStartedAt ?? "";
+    const lb = b.points[b.points.length - 1]?.runStartedAt ?? "";
+    return la < lb ? 1 : la > lb ? -1 : 0;
+  });
+  return series;
 }

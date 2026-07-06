@@ -9,6 +9,7 @@ import {
   passRateDomain,
   detectExecutedDrops,
   buildTestHistory,
+  groupHistoryByJob,
   FLAKES_RECENT_STATUSES,
   type FlakeRow,
   type TrendRunRow,
@@ -706,6 +707,7 @@ describe("buildTestHistory", () => {
     runStartedAt,
     versionMinor: "1.37",
     branch: "main",
+    jobName: "job-a",
     runStatus: status === "failed" ? "failure" : "success",
     runId: `run-${runStartedAt}`,
     jobUrl: "https://ci/job",
@@ -764,5 +766,57 @@ describe("buildTestHistory", () => {
     const h = buildTestHistory(meta, []);
     expect(h).toMatchObject({ totalRuns: 0, passed: 0, failed: 0, points: [] });
     expect(h.flakinessScore).toBe(0);
+  });
+});
+
+describe("groupHistoryByJob", () => {
+  const pt = (
+    jobName: string,
+    runStartedAt: string,
+    status: TestCaseStatus = "passed",
+  ): TestHistoryPoint => ({
+    status,
+    runStartedAt,
+    versionMinor: "1.37",
+    branch: "main",
+    jobName,
+    runStatus: "success",
+    runId: `${jobName}-${runStartedAt}`,
+    jobUrl: "",
+    errorMessage: null,
+    failureType: null,
+    durationMs: 0,
+  });
+
+  it("splits points into one series per job, preserving order within a job", () => {
+    const series = groupHistoryByJob([
+      pt("job-a", "2026-07-01T00:00:00.000Z"),
+      pt("job-b", "2026-07-01T00:00:00.000Z"),
+      pt("job-a", "2026-07-02T00:00:00.000Z"),
+    ]);
+    expect(series.map((s) => s.job).sort()).toEqual(["job-a", "job-b"]);
+    const a = series.find((s) => s.job === "job-a")!;
+    expect(a.points.map((p) => p.runStartedAt)).toEqual([
+      "2026-07-01T00:00:00.000Z",
+      "2026-07-02T00:00:00.000Z",
+    ]);
+  });
+
+  it("orders series by most-recent activity first", () => {
+    const series = groupHistoryByJob([
+      pt("old-job", "2026-07-01T00:00:00.000Z"),
+      pt("new-job", "2026-07-05T00:00:00.000Z"),
+    ]);
+    expect(series.map((s) => s.job)).toEqual(["new-job", "old-job"]);
+  });
+
+  it("buckets a missing job name under a single empty-key series", () => {
+    const series = groupHistoryByJob([pt("", "2026-07-01T00:00:00.000Z")]);
+    expect(series).toHaveLength(1);
+    expect(series[0].job).toBe("");
+  });
+
+  it("returns [] for no points", () => {
+    expect(groupHistoryByJob([])).toEqual([]);
   });
 });

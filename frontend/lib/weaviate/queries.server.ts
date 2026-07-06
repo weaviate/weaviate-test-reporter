@@ -655,6 +655,7 @@ export async function fetchTestHistory(
           returnProperties: [
             "version_minor",
             "branch",
+            "job_name",
             "status",
             "run_id",
             "run_url",
@@ -673,6 +674,7 @@ export async function fetchTestHistory(
         runStartedAt: normalizeDate(p.run_started_at),
         versionMinor: (rp.version_minor as string | null) ?? null,
         branch: (rp.branch as string | null) ?? null,
+        jobName: (rp.job_name as string) ?? "",
         runStatus: (rp.status as string) ?? "",
         runId: (rp.run_id as string) ?? "",
         jobUrl: (rp.job_url as string) || (rp.run_url as string) || "",
