@@ -1,8 +1,9 @@
 "use client";
 
 import { Suspense } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { History } from "lucide-react";
+import { ArrowLeft, History } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorState, LoadingState } from "@/components/States";
@@ -24,6 +25,13 @@ function TestHistoryBody() {
   const suite = params.get("suite") ?? "";
   const name = params.get("name") ?? "";
   const enabled = Boolean(suite && name);
+
+  // Where the user came from — for the "← Back to …" link. Anything other than
+  // the Flakes page (incl. a directly-opened URL) returns to the Test Explorer.
+  const back =
+    params.get("from") === "flakes"
+      ? { label: "Flakes", href: "/flakes" }
+      : { label: "Test Explorer", href: "/" };
 
   const history = useAsync(
     () => (enabled ? fetchTestHistory(suite, name) : Promise.resolve(null)),
@@ -51,6 +59,16 @@ function TestHistoryBody() {
 
   return (
     <>
+      <div className="px-8 pt-6">
+        <Link
+          href={back.href}
+          className="inline-flex items-center gap-1.5 text-[13px] text-wv-fog-muted hover:text-wv-fog transition-colors"
+          data-testid="test-history-back"
+        >
+          <ArrowLeft size={14} strokeWidth={1.75} />
+          Back to {back.label}
+        </Link>
+      </div>
       <PageHeader eyebrow="Test history" title={name} description={suite} />
       <section className="px-8 py-8">
         {history.loading ? (

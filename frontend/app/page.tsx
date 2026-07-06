@@ -62,7 +62,7 @@ function ExpandedRunBody({ run }: { run: TestRun }) {
             >
               <div className="flex items-center justify-between gap-3 mb-1.5">
                 <Link
-                  href={`/tests?suite=${encodeURIComponent(c.test_suite)}&name=${encodeURIComponent(c.name)}`}
+                  href={`/tests?suite=${encodeURIComponent(c.test_suite)}&name=${encodeURIComponent(c.name)}&from=explorer`}
                   className="min-w-0 flex-1 font-mono text-[13px] text-wv-fog hover:text-wv-green transition-colors truncate"
                   data-testid="case-history-link"
                   title="Open this test's history"
