@@ -28,43 +28,62 @@ export function isoDaysAgo(days: number): string {
 // ---------- flakes ----------
 
 export const FLAKES_RECENT_STATUSES = 20;
-// `__SEP__` cannot appear in a JUnit `name` / `classname` (those are XML
-// attribute values), so this is a collision-free group-key delimiter. A space
-// would NOT be safe — pytest parametrize ids like `test_x[a, b]` contain them.
-export const FLAKES_KEY_SEP = "__SEP__";
 
 export type FlakeRow = {
   test_suite: string;
   name: string;
   framework: string;
+  version_minor: string | null;
+  job_name: string;
   status: TestCaseStatus;
 };
 
 /**
- * Group rows by `(test_suite, name)` and compute per-test flakiness.
+ * Group rows by `(test_suite, name, version_minor, job_name)` and compute
+ * per-test flakiness within that stable context (WS3 R3). Grouping by version
+ * AND job means a test that's DETERMINISTIC for a given version/config — e.g.
+ * fails only on 1.36, or only in the `replicas-3` job — is no longer mislabeled
+ * flaky by cross-version/cross-job flips. A CI run fans out into many jobs
+ * (matrix cells, upgrade/downgrade legs), each a distinct TestCase for the same
+ * `{suite, name}`; without the job in the key those all collapse into one group
+ * and inflate `total_runs`. Only WITHIN-context flips count.
  *
- * Rows MUST already be ordered by `(test_suite, name, creationTime)` so each
- * test's status sequence is contiguous and chronological — the caller fetches
- * them with exactly that sort. `flakiness_score = transitions / (runs - 1)`.
- * Tests with fewer than `minRuns` observations, or zero status transitions
- * (all-passed / all-failed), are dropped.
+ * Rows MUST already be ordered so each group's status subsequence is in
+ * run_started_at order — the caller sorts by `(test_suite, name,
+ * run_started_at)`: the leading keys keep offset pagination stable (every case
+ * in a run shares run_started_at, so a single-key sort would tie-collide and
+ * skip/dupe rows), and the trailing time key makes each group chronological.
+ * Grouping is by Map, so array contiguity isn't required. `flakiness_score =
+ * transitions / (runs - 1)`. Groups with < `minRuns` obs, or 0 transitions, drop.
  */
 export function computeFlaky(rows: FlakeRow[], minRuns = 3): FlakyTest[] {
   type Acc = {
     test_suite: string;
     name: string;
     framework: string;
+    version_minor: string | null;
+    job_name: string;
     statuses: TestCaseStatus[];
   };
   const groups = new Map<string, Acc>();
   for (const r of rows) {
-    const key = `${r.test_suite}${FLAKES_KEY_SEP}${r.name}`;
+    // Structured key rather than a delimiter-joined string: job_name is
+    // workflow input and could contain any separator, so JSON-encoding the
+    // tuple keeps the (suite, name, version, job) composite collision-free.
+    const key = JSON.stringify([
+      r.test_suite,
+      r.name,
+      r.version_minor ?? "",
+      r.job_name,
+    ]);
     let acc = groups.get(key);
     if (!acc) {
       acc = {
         test_suite: r.test_suite,
         name: r.name,
         framework: r.framework,
+        version_minor: r.version_minor,
+        job_name: r.job_name,
         statuses: [],
       };
       groups.set(key, acc);
@@ -90,6 +109,8 @@ export function computeFlaky(rows: FlakeRow[], minRuns = 3): FlakyTest[] {
       test_suite: g.test_suite,
       name: g.name,
       framework: g.framework,
+      version_minor: g.version_minor,
+      job_name: g.job_name,
       total_runs: total,
       passed,
       failed,
@@ -433,7 +454,7 @@ export function detectExecutedDrops(rows: ExecutedDropRow[]): ExecutedDrop[] {
   const byJob = new Map<string, ExecutedDropRow[]>();
   for (const r of rows) {
     if (!r.started_at) continue; // can't order it
-    const key = `${r.repository}${FLAKES_KEY_SEP}${r.job_name}`;
+    const key = JSON.stringify([r.repository, r.job_name]);
     const list = byJob.get(key);
     if (list) list.push(r);
     else byJob.set(key, [r]);

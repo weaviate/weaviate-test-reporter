@@ -152,6 +152,13 @@ export type FlakyTest = {
   test_suite: string;
   name: string;
   framework: string;
+  /** Minor version this flakiness is scoped to (WS3 R3), or null when the run
+   *  carried no version_under_test. */
+  version_minor: string | null;
+  /** CI job this flakiness is scoped to (WS3 R3). A test runs once per job per
+   *  run (matrix cells / upgrade legs), so flakiness is per (suite, name,
+   *  version, job) — otherwise cross-job differences read as flakiness. */
+  job_name: string;
   total_runs: number;
   passed: number;
   failed: number;

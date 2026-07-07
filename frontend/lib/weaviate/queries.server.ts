@@ -99,6 +99,10 @@ type CaseProps = {
   stack_trace: string;
   failure_type: string;
   run_started_at: Date;
+  // WS3 R3: denormalized run identity (flakes/history scope without a ref hop).
+  version_minor: string;
+  job_name: string;
+  branch: string;
   belongsToRun: CrossReference<RunProps>;
 };
 
@@ -689,7 +693,12 @@ export async function fetchFlakyTests(
   opts: { minRuns?: number } = {},
 ): Promise<FlakyTest[]> {
   const client = await getClient();
-  const cases = casesCol(client);
+  // Bulk flakiness scan reads at the default ONE consistency, NOT the QUORUM
+  // used for the /versions pass-rate. Flakes is a trailing-window trend, so a
+  // read lagging the very latest run by a replica-hop is fine — whereas QUORUM
+  // makes every read in a large multi-page scan wait for a replica majority,
+  // a real latency multiplier here.
+  const cases = client.collections.get<CaseProps>(COLLECTIONS.TEST_CASE);
   const days = window === "7d" ? 7 : 30;
   const since = new Date(isoDaysAgo(days));
   // `?? 3` wouldn't catch NaN (only null/undefined), so guard for finiteness.
@@ -706,8 +715,13 @@ export async function fetchFlakyTests(
       cases.filter.byProperty("status").equal("failed"),
     ),
   );
-  // Stable sort across pages so each (suite, name) sequence stays contiguous
-  // and in true run order when pages are concatenated.
+  // Sort by (test_suite, name, run_started_at). run_started_at ALONE is NOT
+  // safe: EVERY case in a run shares that timestamp, so a single-key sort makes
+  // huge tie-groups and offset pagination goes unstable across page boundaries
+  // — cases get skipped/duplicated and run counts inflate. The (suite, name)
+  // keys make the order near-unique per row so pagination stays stable;
+  // computeFlaky only needs each group chronological, which the trailing
+  // run_started_at key provides.
   const sort = cases.sort
     .byProperty("test_suite", true)
     .byProperty("name", true)
@@ -722,7 +736,17 @@ export async function fetchFlakyTests(
       offset,
       filters: windowFilter,
       sort,
-      returnProperties: ["name", "test_suite", "framework", "status"],
+      // version_minor + job_name are denormalized onto the case (WS3 R3), so
+      // flakiness groups per (suite, name, version, job) from a plain property
+      // scan — no belongsToRun hop, no run-map join.
+      returnProperties: [
+        "name",
+        "test_suite",
+        "framework",
+        "status",
+        "version_minor",
+        "job_name",
+      ],
     });
     const page = res.objects as unknown as RawObject[];
     for (const o of page) {
@@ -731,6 +755,8 @@ export async function fetchFlakyTests(
         test_suite: (p.test_suite as string) ?? "",
         name: (p.name as string) ?? "",
         framework: (p.framework as string) ?? "",
+        version_minor: (p.version_minor as string | null) ?? null,
+        job_name: (p.job_name as string) ?? "",
         status: p.status as TestCaseStatus,
       });
     }

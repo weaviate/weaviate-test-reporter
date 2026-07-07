@@ -26,14 +26,22 @@ const WINDOWS: { id: FlakesWindow; label: string }[] = [
 
 export default function FlakesPage() {
   const [window, setWindow] = useState<FlakesWindow>("7d");
+  const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
   const flakes = useAsync(() => fetchFlakyTests(window), [window]);
+
+  const data = flakes.data ?? [];
+  const versionGroups = groupByVersion(data);
+  const filtered =
+    selectedVersion === null
+      ? data
+      : data.filter((r) => (r.version_minor ?? "") === selectedVersion);
 
   return (
     <>
       <PageHeader
         eyebrow="Flakes"
         title="Tests that flip"
-        description="Ranked by flakiness score (transitions per observation). Stable tests and anything under 3 runs in the window are filtered out."
+        description="Ranked by flakiness score (transitions per observation), computed per version. Stable tests and anything under 3 runs in the window are filtered out."
         right={
           <div
             className="inline-flex rounded-md border border-wv-navy-3/60 overflow-hidden"
@@ -43,7 +51,10 @@ export default function FlakesPage() {
               <button
                 key={w.id}
                 type="button"
-                onClick={() => setWindow(w.id)}
+                onClick={() => {
+                  setWindow(w.id);
+                  setSelectedVersion(null);
+                }}
                 aria-pressed={window === w.id}
                 className={[
                   "px-3 py-1.5 text-sm transition-colors",
@@ -59,26 +70,140 @@ export default function FlakesPage() {
         }
       />
 
-      <section className="px-8 py-8">
+      <section className="px-8 py-8 space-y-5">
         {flakes.loading ? (
           <LoadingState label="Scanning the window for status flips…" />
         ) : flakes.error ? (
           <ErrorState error={flakes.error} />
-        ) : !flakes.data || flakes.data.length === 0 ? (
+        ) : data.length === 0 ? (
           <EmptyState
             Icon={ActivitySquare}
             title="No flakes in this window"
             description="Either everything has been stable (great!) or there aren't enough runs yet. Try a longer window."
           />
         ) : (
-          <FlakeTable rows={flakes.data} />
+          <>
+            <VersionBar
+              groups={versionGroups}
+              total={data.length}
+              selected={selectedVersion}
+              onSelect={setSelectedVersion}
+            />
+            <FlakeTable
+              rows={filtered}
+              selectedLabel={
+                selectedVersion === null ? null : versionLabel(selectedVersion)
+              }
+            />
+          </>
         )}
       </section>
     </>
   );
 }
 
-function FlakeTable({ rows }: { rows: FlakyTest[] }) {
+function versionLabel(key: string): string {
+  return key === "" ? "no version" : key;
+}
+
+/** Distinct versions present in the flake rows, with per-version counts; newest
+ *  minor first. Powers the "By version" boxes. */
+function groupByVersion(
+  rows: FlakyTest[],
+): { key: string; label: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    const k = r.version_minor ?? "";
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([key, count]) => ({ key, label: versionLabel(key), count }))
+    .sort((a, b) => {
+      // "no version" ("") always last; otherwise numeric-aware descending so
+      // 1.10 sorts above 1.9 (a plain string compare would flip them).
+      if (a.key === "") return 1;
+      if (b.key === "") return -1;
+      return b.key.localeCompare(a.key, undefined, { numeric: true });
+    });
+}
+
+function VersionBar({
+  groups,
+  total,
+  selected,
+  onSelect,
+}: {
+  groups: { key: string; label: string; count: number }[];
+  total: number;
+  selected: string | null;
+  onSelect: (v: string | null) => void;
+}) {
+  // Only worth showing when there's more than one version to slice by.
+  if (groups.length <= 1) return null;
+  return (
+    <div
+      className="flex flex-wrap items-center gap-2"
+      data-testid="flakes-version-bar"
+    >
+      <span className="mr-1 text-[11px] uppercase tracking-[0.18em] font-mono text-wv-fog-muted">
+        By version
+      </span>
+      <VersionChip
+        label="All versions"
+        count={total}
+        active={selected === null}
+        onClick={() => onSelect(null)}
+      />
+      {groups.map((g) => (
+        <VersionChip
+          key={g.key}
+          label={g.label}
+          count={g.count}
+          active={selected === g.key}
+          onClick={() => onSelect(g.key)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function VersionChip({
+  label,
+  count,
+  active,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      data-testid={`flakes-version-chip-${label}`}
+      className={[
+        "inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[13px] transition-colors",
+        active
+          ? "border-wv-green/60 bg-wv-green/10 text-wv-fog"
+          : "border-wv-navy-3/60 text-wv-fog-muted hover:text-wv-fog hover:border-wv-navy-3",
+      ].join(" ")}
+    >
+      <span className="font-mono">{label}</span>
+      <span className="tabular-nums text-wv-fog-muted">{count}</span>
+    </button>
+  );
+}
+
+function FlakeTable({
+  rows,
+  selectedLabel,
+}: {
+  rows: FlakyTest[];
+  selectedLabel: string | null;
+}) {
   return (
     <div
       className="rounded-lg border border-wv-navy-3/60 bg-wv-navy-2/40 backdrop-blur-sm overflow-hidden"
@@ -88,6 +213,7 @@ function FlakeTable({ rows }: { rows: FlakyTest[] }) {
         <Zap size={14} strokeWidth={1.75} />
         <span data-testid="flakes-count">
           {rows.length} flak{rows.length === 1 ? "y test" : "y tests"}
+          {selectedLabel ? ` on ${selectedLabel}` : ""}
         </span>
       </header>
       <div className="overflow-x-auto">
@@ -96,6 +222,8 @@ function FlakeTable({ rows }: { rows: FlakyTest[] }) {
             <tr className="text-[11px] uppercase tracking-[0.18em] font-mono text-wv-fog-muted">
               <th className="text-left px-5 py-2 font-medium">Test</th>
               <th className="text-left px-3 py-2 font-medium">Suite</th>
+              <th className="text-left px-3 py-2 font-medium">Version</th>
+              <th className="text-left px-3 py-2 font-medium">Job</th>
               <th className="text-right px-3 py-2 font-medium">Flakiness</th>
               <th className="text-right px-3 py-2 font-medium">Runs</th>
               <th className="text-right px-3 py-2 font-medium">Pass rate</th>
@@ -113,7 +241,10 @@ function FlakeTable({ rows }: { rows: FlakyTest[] }) {
           </thead>
           <tbody>
             {rows.map((r) => (
-              <FlakeRow key={`${r.test_suite}|${r.name}`} row={r} />
+              <FlakeRow
+                key={`${r.test_suite}|${r.name}|${r.version_minor ?? ""}|${r.job_name}`}
+                row={r}
+              />
             ))}
           </tbody>
         </table>
@@ -144,6 +275,14 @@ function FlakeRow({ row }: { row: FlakyTest }) {
       </td>
       <td className="px-3 py-2.5 text-[12px] text-wv-fog-muted font-mono">
         {row.test_suite}
+      </td>
+      <td className="px-3 py-2.5 text-[12px] text-wv-fog-muted font-mono tabular-nums">
+        {row.version_minor ?? "—"}
+      </td>
+      <td className="px-3 py-2.5 text-[12px] text-wv-fog-muted font-mono">
+        <span className="block max-w-[220px] truncate" title={row.job_name}>
+          {row.job_name || "—"}
+        </span>
       </td>
       <td className="px-3 py-2.5 text-right tabular-nums">
         <span className={`font-mono ${tone}`}>{scorePct}%</span>
