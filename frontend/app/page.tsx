@@ -18,8 +18,10 @@ import { useAsync } from "@/lib/useAsync";
 import {
   fetchCasesForRun,
   fetchRecentRuns,
+  fetchRunById,
   type RunFilters,
 } from "@/lib/queries";
+import { RECENT_RUNS_LIMIT } from "@/lib/constants";
 import type { TestRun } from "@/lib/types";
 import { summarizeRunCounts } from "@/lib/analysis";
 
@@ -49,6 +51,19 @@ function ExpandedRunBody({ run }: { run: TestRun }) {
   );
   return (
     <div className="bg-wv-ink/30 border-t border-wv-navy-3/40 px-5 py-4">
+      {run.job_url ? (
+        <div className="mb-3 flex justify-end">
+          <a
+            href={run.job_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-[12px] text-wv-fog-muted hover:text-wv-fog transition-colors"
+          >
+            View CI job
+            <ArrowUpRight size={12} strokeWidth={1.75} />
+          </a>
+        </div>
+      ) : null}
       {cases.loading ? (
         <LoadingState label="Loading failed cases…" />
       ) : cases.error ? (
@@ -255,17 +270,40 @@ function TestExplorerBody() {
   const [filters, setFilters] = useState<RunFilters>(() =>
     initialFiltersFromURL(searchParams),
   );
+  // Paginate by growing the limit; useAsync keeps prior data during the
+  // refetch, so "Load more" doesn't flash the list.
+  const [limit, setLimit] = useState(RECENT_RUNS_LIMIT);
   const runs = useAsync(
-    () => fetchRecentRuns(filters, 50),
+    () => fetchRecentRuns(filters, limit),
     [
       filters.search ?? "",
       (filters.repositories ?? []).join("|"),
       (filters.statuses ?? []).join("|"),
       (filters.versionMinors ?? []).join("|"),
       (filters.versionFulls ?? []).join("|"),
+      limit,
     ],
   );
   const [expanded, setExpanded] = useState<string | null>(null);
+
+  // Deep-link from Agent citations (`/?run=<uuid>`): pin that run above the
+  // list, auto-expanded, even when it's older than the loaded page.
+  const pinnedUuid = searchParams.get("run");
+  const pinned = useAsync(
+    () => (pinnedUuid ? fetchRunById(pinnedUuid) : Promise.resolve(null)),
+    [pinnedUuid ?? ""],
+  );
+  const [pinnedExpanded, setPinnedExpanded] = useState(true);
+
+  // A new filter query starts back at the first page.
+  const handleFilterChange = (next: RunFilters) => {
+    setFilters(next);
+    setLimit(RECENT_RUNS_LIMIT);
+  };
+
+  // Don't render the pinned run twice.
+  const listRuns = (runs.data ?? []).filter((r) => r.uuid !== pinnedUuid);
+  const canLoadMore = !!runs.data && runs.data.length >= limit && limit < 1000;
 
   return (
     <>
@@ -296,27 +334,62 @@ function TestExplorerBody() {
         style={{ animationDelay: "80ms" }}
       >
         <div className="mb-5">
-          <RunFilterBar filters={filters} onChange={setFilters} />
+          <RunFilterBar filters={filters} onChange={handleFilterChange} />
         </div>
+
+        {pinnedUuid ? (
+          <div className="mb-5" data-testid="pinned-run">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-[11px] uppercase tracking-[0.2em] font-mono text-wv-fog-muted">
+                Linked run
+              </p>
+              <Link
+                href="/"
+                className="text-[12px] text-wv-fog-muted hover:text-wv-fog transition-colors"
+              >
+                clear
+              </Link>
+            </div>
+            <div className="rounded-lg border border-wv-green/40 bg-wv-navy-2/40 overflow-hidden">
+              {pinned.loading ? (
+                <LoadingState label="Loading linked run…" />
+              ) : pinned.error ? (
+                <div className="p-4">
+                  <ErrorState error={pinned.error} />
+                </div>
+              ) : pinned.data ? (
+                <RunRow
+                  run={pinned.data}
+                  expanded={pinnedExpanded}
+                  onToggle={() => setPinnedExpanded((v) => !v)}
+                />
+              ) : (
+                <p className="px-5 py-4 text-[13px] text-wv-fog-muted">
+                  That run wasn&apos;t found — it may have aged out of the
+                  index.
+                </p>
+              )}
+            </div>
+          </div>
+        ) : null}
 
         <div className="rounded-lg border border-wv-navy-3/60 bg-wv-navy-2/40 backdrop-blur-sm overflow-hidden">
           <header className="flex items-center gap-3 px-5 py-3 border-b border-wv-navy-3/40 text-[11px] uppercase tracking-[0.2em] font-mono text-wv-fog-muted">
             <GitCommitHorizontal size={14} strokeWidth={1.75} />
             <span data-testid="run-count-label">
-              TestRun ·{" "}
-              {runs.data ? `${runs.data.length} most recent` : "loading"}
+              TestRun · {runs.data ? `${listRuns.length} shown` : "loading"}
             </span>
           </header>
 
-          {runs.loading ? (
+          {runs.loading && !runs.data ? (
             <LoadingState />
           ) : runs.error ? (
             <div className="p-4">
               <ErrorState error={runs.error} />
             </div>
-          ) : runs.data && runs.data.length > 0 ? (
+          ) : listRuns.length > 0 ? (
             <div>
-              {runs.data.map((r) => (
+              {listRuns.map((r) => (
                 <RunRow
                   key={r.uuid}
                   run={r}
@@ -329,6 +402,10 @@ function TestExplorerBody() {
                 />
               ))}
             </div>
+          ) : pinnedUuid ? (
+            <p className="px-5 py-6 text-[13px] text-wv-fog-muted">
+              No other runs match — showing only the linked run above.
+            </p>
           ) : (
             <EmptyState
               Icon={FlaskConical}
@@ -337,6 +414,25 @@ function TestExplorerBody() {
             />
           )}
         </div>
+
+        {canLoadMore ? (
+          <div className="mt-4 flex justify-center">
+            <button
+              type="button"
+              onClick={() => setLimit((l) => l + RECENT_RUNS_LIMIT)}
+              disabled={runs.loading}
+              data-testid="load-more-runs"
+              className="
+                inline-flex items-center gap-2 px-5 py-2 rounded-md text-sm
+                text-wv-fog-muted hover:text-wv-fog
+                border border-wv-navy-3/60 hover:border-wv-navy-3
+                disabled:opacity-50 disabled:cursor-not-allowed transition-colors
+              "
+            >
+              {runs.loading ? "Loading…" : "Load more"}
+            </button>
+          </div>
+        ) : null}
       </section>
     </>
   );

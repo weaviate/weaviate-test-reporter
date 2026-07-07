@@ -293,6 +293,16 @@ export async function fetchRecentRuns(
   return (res.objects as unknown as RawObject[]).map(asTestRun);
 }
 
+/** Fetch a single TestRun by UUID (R5): powers the `/?run=<uuid>` deep-link from
+ *  Agent citations, so a linked run is shown even when it's older than the
+ *  loaded page. Returns null when no run has that id. */
+export async function fetchRunById(uuid: string): Promise<TestRun | null> {
+  const client = await getClient();
+  const runs = runsCol(client);
+  const obj = await runs.query.fetchObjectById(uuid);
+  return obj ? asTestRun(obj as unknown as RawObject) : null;
+}
+
 function anyEqual(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   col: any,
