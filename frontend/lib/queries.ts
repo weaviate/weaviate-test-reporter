@@ -225,8 +225,10 @@ export async function fetchExecutedDrops(
 export async function fetchTestHistory(
   testSuite: string,
   name: string,
+  versionMinor?: string,
 ): Promise<TestHistory> {
   const p = new URLSearchParams({ suite: testSuite, name });
+  if (versionMinor) p.set("version", versionMinor);
   return apiGet<TestHistory>(
     `/api/test-history?${p.toString()}`,
     API_TIMEOUTS_MS.default,

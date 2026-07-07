@@ -619,14 +619,23 @@ export async function fetchExecutedDrops(
 export async function fetchTestHistory(
   testSuite: string,
   name: string,
+  versionMinor?: string,
 ): Promise<TestHistory> {
   const client = await getClient();
   const cases = casesCol(client);
 
-  const filter = Filters.and(
+  // Optionally scope to a version. The Flakes page is per (suite, name, version,
+  // job), so a version-scoped history reconciles with the flakes row and keeps
+  // each job strip single-version. Unscoped (from the Test Explorer) = the full
+  // cross-version picture.
+  const ops = [
     cases.filter.byProperty("test_suite").equal(testSuite),
     cases.filter.byProperty("name").equal(name),
-  );
+  ];
+  if (versionMinor) {
+    ops.push(cases.filter.byProperty("version_minor").equal(versionMinor));
+  }
+  const filter = Filters.and(...ops);
 
   const points: TestHistoryPoint[] = [];
   let framework = "";

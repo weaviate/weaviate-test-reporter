@@ -266,7 +266,7 @@ function FlakeRow({ row }: { row: FlakyTest }) {
     >
       <td className="px-5 py-2.5 font-mono text-[13px]">
         <Link
-          href={`/tests?suite=${encodeURIComponent(row.test_suite)}&name=${encodeURIComponent(row.name)}&from=flakes`}
+          href={`/tests?suite=${encodeURIComponent(row.test_suite)}&name=${encodeURIComponent(row.name)}${row.version_minor ? `&version=${encodeURIComponent(row.version_minor)}` : ""}&from=flakes`}
           className="text-wv-fog hover:text-wv-green transition-colors"
           data-testid="flake-history-link"
         >
