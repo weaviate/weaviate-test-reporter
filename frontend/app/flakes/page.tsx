@@ -118,7 +118,13 @@ function groupByVersion(
   }
   return [...counts.entries()]
     .map(([key, count]) => ({ key, label: versionLabel(key), count }))
-    .sort((a, b) => (a.key < b.key ? 1 : -1));
+    .sort((a, b) => {
+      // "no version" ("") always last; otherwise numeric-aware descending so
+      // 1.10 sorts above 1.9 (a plain string compare would flip them).
+      if (a.key === "") return 1;
+      if (b.key === "") return -1;
+      return b.key.localeCompare(a.key, undefined, { numeric: true });
+    });
 }
 
 function VersionBar({

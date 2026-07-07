@@ -28,10 +28,6 @@ export function isoDaysAgo(days: number): string {
 // ---------- flakes ----------
 
 export const FLAKES_RECENT_STATUSES = 20;
-// `__SEP__` cannot appear in a JUnit `name` / `classname` (those are XML
-// attribute values), so this is a collision-free group-key delimiter. A space
-// would NOT be safe — pytest parametrize ids like `test_x[a, b]` contain them.
-export const FLAKES_KEY_SEP = "__SEP__";
 
 export type FlakeRow = {
   test_suite: string;
@@ -71,7 +67,15 @@ export function computeFlaky(rows: FlakeRow[], minRuns = 3): FlakyTest[] {
   };
   const groups = new Map<string, Acc>();
   for (const r of rows) {
-    const key = `${r.test_suite}${FLAKES_KEY_SEP}${r.name}${FLAKES_KEY_SEP}${r.version_minor ?? ""}${FLAKES_KEY_SEP}${r.job_name}`;
+    // Structured key rather than a delimiter-joined string: job_name is
+    // workflow input and could contain any separator, so JSON-encoding the
+    // tuple keeps the (suite, name, version, job) composite collision-free.
+    const key = JSON.stringify([
+      r.test_suite,
+      r.name,
+      r.version_minor ?? "",
+      r.job_name,
+    ]);
     let acc = groups.get(key);
     if (!acc) {
       acc = {
@@ -450,7 +454,7 @@ export function detectExecutedDrops(rows: ExecutedDropRow[]): ExecutedDrop[] {
   const byJob = new Map<string, ExecutedDropRow[]>();
   for (const r of rows) {
     if (!r.started_at) continue; // can't order it
-    const key = `${r.repository}${FLAKES_KEY_SEP}${r.job_name}`;
+    const key = JSON.stringify([r.repository, r.job_name]);
     const list = byJob.get(key);
     if (list) list.push(r);
     else byJob.set(key, [r]);
