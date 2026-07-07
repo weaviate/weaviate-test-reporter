@@ -764,10 +764,11 @@ async function _fetchFlakyTests(
       // version_minor + job_name are denormalized onto the case (WS3 R3), so
       // flakiness groups per (suite, name, version, job) from a plain property
       // scan — no belongsToRun hop, no run-map join.
+      // framework isn't shown on the Flakes page and isn't part of the group
+      // key — omit it to shave the per-row payload on this large scan.
       returnProperties: [
         "name",
         "test_suite",
-        "framework",
         "status",
         "version_minor",
         "job_name",
@@ -779,7 +780,7 @@ async function _fetchFlakyTests(
       rows.push({
         test_suite: (p.test_suite as string) ?? "",
         name: (p.name as string) ?? "",
-        framework: (p.framework as string) ?? "",
+        framework: "", // not fetched (unused on the Flakes page)
         version_minor: (p.version_minor as string | null) ?? null,
         job_name: (p.job_name as string) ?? "",
         status: p.status as TestCaseStatus,
