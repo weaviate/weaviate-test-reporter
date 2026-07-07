@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { AlertTriangle, ArrowUpRight, CheckCircle2 } from "lucide-react";
+import { flakeGroupKey } from "@/lib/analysis";
 import type { RegressionReport } from "@/lib/queries";
 
 const fmtDate = (iso: string): string => (iso ? iso.slice(0, 10) : "—");
@@ -46,7 +47,7 @@ export function NewRegressions({ report }: { report: RegressionReport }) {
       </header>
       {report.regressions.map((r) => (
         <Link
-          key={`${r.test_suite}|${r.name}|${r.version_minor ?? ""}|${r.job_name}`}
+          key={flakeGroupKey(r.test_suite, r.name, r.version_minor, r.job_name)}
           href={`/tests?suite=${encodeURIComponent(r.test_suite)}&name=${encodeURIComponent(r.name)}${r.version_minor ? `&version=${encodeURIComponent(r.version_minor)}` : ""}&from=dashboard`}
           className="flex items-start gap-4 px-5 py-3 border-b border-wv-navy-3/40 last:border-b-0 hover:bg-wv-navy-2/60 transition-colors"
           data-testid="regression-row"

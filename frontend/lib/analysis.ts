@@ -250,17 +250,16 @@ export function detectRegressions(
   }
 
   // Most failures first; ties broken by earliest onset (older regressions
-  // first — they've been broken longer) then name for determinism.
-  regressions.sort(
-    (a, b) =>
-      b.failCount - a.failCount ||
-      (a.firstFailedAt < b.firstFailedAt
-        ? -1
-        : a.firstFailedAt > b.firstFailedAt
-          ? 1
-          : 0) ||
-      (a.name < b.name ? -1 : a.name > b.name ? 1 : 0),
-  );
+  // first — they've been broken longer), then the full identity key for a
+  // TOTAL order (unique per NEW regression, so no insertion-order dependence).
+  regressions.sort((a, b) => {
+    if (b.failCount !== a.failCount) return b.failCount - a.failCount;
+    if (a.firstFailedAt !== b.firstFailedAt)
+      return a.firstFailedAt < b.firstFailedAt ? -1 : 1;
+    const ka = flakeGroupKey(a.test_suite, a.name, a.version_minor, a.job_name);
+    const kb = flakeGroupKey(b.test_suite, b.name, b.version_minor, b.job_name);
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
 
   return {
     regressions,

@@ -807,11 +807,17 @@ export async function fetchRegressions(
       cases.filter.byProperty("status").equal("failed"),
     ),
   );
-  // Multi-key sort (run_started_at alone tie-collides — every case in a run
-  // shares it) so pagination is stable AND each flake group is chronological.
+  // Sort by the full identity + time. run_started_at alone tie-collides (every
+  // case in a run shares it), and even (suite, name, run_started_at) still ties
+  // across version/job contexts at the same run start (matrix fan-out) — which
+  // would let offset pagination skip/dupe rows and distort flakyKeys /
+  // currentFailed. Adding version_minor + job_name makes the order near-unique
+  // per row (stable pagination) and keeps each group chronological.
   const currentSort = cases.sort
     .byProperty("test_suite", true)
     .byProperty("name", true)
+    .byProperty("version_minor", true)
+    .byProperty("job_name", true)
     .byProperty("run_started_at", true);
 
   const flakeRows: FlakeRow[] = [];
