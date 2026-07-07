@@ -129,6 +129,14 @@ export async function fetchRecentRuns(
   );
 }
 
+export async function fetchRunById(uuid: string): Promise<TestRun | null> {
+  return apiGet<TestRun | null>(
+    `/api/run?uuid=${encodeURIComponent(uuid)}`,
+    API_TIMEOUTS_MS.default,
+    "Fetch run",
+  );
+}
+
 export async function fetchDistinctRunValues(
   property:
     | "repository"
