@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   fetchRecentRuns,
+  fetchRunById,
   fetchDistinctRunValues,
   fetchCasesForRun,
   semanticSearch,
@@ -63,6 +64,18 @@ describe("fetchRecentRuns", () => {
     const out = await fetchRecentRuns();
     expect(lastUrl().searchParams.has("search")).toBe(false);
     expect(out).toEqual(runs);
+  });
+});
+
+describe("fetchRunById", () => {
+  it("encodes the uuid and hits /api/run", async () => {
+    fetchMock.mockResolvedValue(res({ uuid: "run-1" }));
+    // A uuid with special chars proves the value is URL-encoded.
+    const out = await fetchRunById("a/b?c d");
+    const u = lastUrl();
+    expect(u.pathname).toBe("/api/run");
+    expect(u.searchParams.get("uuid")).toBe("a/b?c d");
+    expect(out).toEqual({ uuid: "run-1" });
   });
 });
 
@@ -141,7 +154,9 @@ describe("fetchFlakyTests", () => {
 
 describe("error handling", () => {
   it("throws with the route's { error } message on a non-OK response", async () => {
-    fetchMock.mockResolvedValue(res({ error: "Weaviate exploded" }, false, 500));
+    fetchMock.mockResolvedValue(
+      res({ error: "Weaviate exploded" }, false, 500),
+    );
     await expect(fetchVersionRollupSafe()).rejects.toThrow(/Weaviate exploded/);
   });
 });

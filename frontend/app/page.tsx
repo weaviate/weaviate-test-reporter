@@ -25,6 +25,10 @@ import { RECENT_RUNS_LIMIT } from "@/lib/constants";
 import type { TestRun } from "@/lib/types";
 import { summarizeRunCounts } from "@/lib/analysis";
 
+// Matches the server-side clamp in fetchRecentRuns — the Explorer never pages
+// past this many runs.
+const MAX_RUNS = 1000;
+
 function formatTimestamp(iso: string): string {
   if (!iso) return "—";
   const date = new Date(iso);
@@ -294,6 +298,14 @@ function TestExplorerBody() {
     [pinnedUuid ?? ""],
   );
   const [pinnedExpanded, setPinnedExpanded] = useState(true);
+  // A different linked run should open expanded regardless of a prior toggle.
+  // React's "adjust state during render on a key change" pattern — resets
+  // synchronously without a cascading effect.
+  const [lastPinnedUuid, setLastPinnedUuid] = useState(pinnedUuid);
+  if (pinnedUuid !== lastPinnedUuid) {
+    setLastPinnedUuid(pinnedUuid);
+    setPinnedExpanded(true);
+  }
 
   // A new filter query starts back at the first page.
   const handleFilterChange = (next: RunFilters) => {
@@ -301,9 +313,16 @@ function TestExplorerBody() {
     setLimit(RECENT_RUNS_LIMIT);
   };
 
+  // "clear" removes only the run pin, preserving any filter deep-link params.
+  const clearParams = new URLSearchParams(searchParams?.toString() ?? "");
+  clearParams.delete("run");
+  const clearQs = clearParams.toString();
+  const clearHref = clearQs ? `/?${clearQs}` : "/";
+
   // Don't render the pinned run twice.
   const listRuns = (runs.data ?? []).filter((r) => r.uuid !== pinnedUuid);
-  const canLoadMore = !!runs.data && runs.data.length >= limit && limit < 1000;
+  const canLoadMore =
+    !!runs.data && runs.data.length >= limit && limit < MAX_RUNS;
 
   return (
     <>
@@ -344,7 +363,7 @@ function TestExplorerBody() {
                 Linked run
               </p>
               <Link
-                href="/"
+                href={clearHref}
                 className="text-[12px] text-wv-fog-muted hover:text-wv-fog transition-colors"
               >
                 clear
@@ -419,7 +438,9 @@ function TestExplorerBody() {
           <div className="mt-4 flex justify-center">
             <button
               type="button"
-              onClick={() => setLimit((l) => l + RECENT_RUNS_LIMIT)}
+              onClick={() =>
+                setLimit((l) => Math.min(l + RECENT_RUNS_LIMIT, MAX_RUNS))
+              }
               disabled={runs.loading}
               data-testid="load-more-runs"
               className="
