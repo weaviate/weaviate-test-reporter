@@ -9,11 +9,13 @@ import { TrendCharts } from "@/components/TrendCharts";
 import { TrendFilterBar } from "@/components/TrendFilterBar";
 import { ExecutedDrops } from "@/components/ExecutedDrops";
 import { NewRegressions } from "@/components/NewRegressions";
+import { FailureClusters } from "@/components/FailureClusters";
 import { useAsync } from "@/lib/useAsync";
 import {
   fetchDashboardKpis,
   fetchExecutedDrops,
   fetchRegressions,
+  fetchFailureClusters,
   fetchRunTrend,
   isoDaysAgo,
 } from "@/lib/queries";
@@ -73,6 +75,7 @@ export default function DashboardPage() {
   // meaningful prior window — fall back to 7d there.
   const regDays = range.days > 0 ? range.days : 7;
   const regressions = useAsync(() => fetchRegressions(regDays), [regDays]);
+  const clusters = useAsync(() => fetchFailureClusters(regDays), [regDays]);
   const [trendFilters, setTrendFilters] = useState<TrendFilters>({});
   const trend = useAsync(
     () => fetchRunTrend(sinceIso, trendFilters),
@@ -181,6 +184,25 @@ export default function DashboardPage() {
             <ErrorState error={regressions.error} />
           ) : regressions.data ? (
             <NewRegressions report={regressions.data} />
+          ) : null}
+        </div>
+
+        <div>
+          <div className="mb-4">
+            <p className="text-[11px] uppercase tracking-[0.2em] font-mono text-wv-fog-muted">
+              Failure clusters
+            </p>
+            <p className="mt-1 text-[12px] text-wv-fog-muted">
+              Failures grouped by root-cause fingerprint — one shared failure
+              hitting many tests (“DB reset ×47”) collapses into a single row.
+            </p>
+          </div>
+          {clusters.loading ? (
+            <LoadingState label="Clustering failures by fingerprint…" />
+          ) : clusters.error ? (
+            <ErrorState error={clusters.error} />
+          ) : clusters.data ? (
+            <FailureClusters report={clusters.data} />
           ) : null}
         </div>
 

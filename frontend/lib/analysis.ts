@@ -269,6 +269,130 @@ export function detectRegressions(
   };
 }
 
+// ---------- failure clustering by fingerprint (R4) ----------
+
+/** A failing TestCase for clustering (D4 fingerprint + identity + context). */
+export type ClusterRow = {
+  failure_fingerprint: string | null;
+  test_suite: string;
+  name: string;
+  error_message: string | null;
+  failure_type: string | null;
+  run_started_at: string; // UTC ISO
+};
+
+/** A cluster of identical failures sharing one D4 `failure_fingerprint`. */
+export type FailureCluster = {
+  fingerprint: string;
+  occurrences: number; // total failures with this fingerprint
+  affectedTests: number; // distinct (suite, name)
+  affectedSuites: number; // distinct suite
+  sampleError: string | null; // representative error (most recent occurrence)
+  sampleFailureType: string | null;
+  firstSeen: string; // UTC ISO
+  lastSeen: string; // UTC ISO
+};
+
+export type ClusterReport = {
+  clusters: FailureCluster[]; // ranked by affectedTests desc, then occurrences
+  uncategorized: number; // failures with no fingerprint (can't be clustered)
+  totalFailures: number; // all failures scanned in the window
+};
+
+/**
+ * Group failures by their D4 `failure_fingerprint` (exact hash of the
+ * normalized trace) to collapse mass-failure noise (WS3 R4): a shared root
+ * cause failing many tests ("DB reset ×47") becomes ONE cluster. Only
+ * fingerprints hitting at least `minTests` DISTINCT tests are surfaced — a
+ * single test failing repeatedly isn't mass-failure (it's flakes/regression
+ * territory). Failures with no fingerprint (null/empty — e.g. no stack trace)
+ * are counted as `uncategorized`, not clustered. Exact-hash only — no fuzzy /
+ * vector similarity (that would duplicate Semantic Search). Pure + window-
+ * agnostic; the caller windows the input.
+ */
+export function clusterFailures(
+  rows: ClusterRow[],
+  minTests = 2,
+): ClusterReport {
+  type Acc = {
+    fingerprint: string;
+    occurrences: number;
+    tests: Set<string>; // distinct (suite, name)
+    suites: Set<string>;
+    lastAt: string;
+    sampleError: string | null;
+    sampleFailureType: string | null;
+    firstSeen: string;
+    lastSeen: string;
+  };
+  const groups = new Map<string, Acc>();
+  let uncategorized = 0;
+
+  for (const r of rows) {
+    const fp = r.failure_fingerprint;
+    if (!fp) {
+      uncategorized++;
+      continue;
+    }
+    let acc = groups.get(fp);
+    if (!acc) {
+      acc = {
+        fingerprint: fp,
+        occurrences: 0,
+        tests: new Set(),
+        suites: new Set(),
+        lastAt: r.run_started_at,
+        sampleError: r.error_message,
+        sampleFailureType: r.failure_type,
+        firstSeen: r.run_started_at,
+        lastSeen: r.run_started_at,
+      };
+      groups.set(fp, acc);
+    }
+    acc.occurrences++;
+    acc.tests.add(`${r.test_suite} ${r.name}`);
+    acc.suites.add(r.test_suite);
+    if (r.run_started_at < acc.firstSeen) acc.firstSeen = r.run_started_at;
+    if (r.run_started_at >= acc.lastAt) {
+      // Keep the most-recent occurrence's error as the representative.
+      acc.lastAt = r.run_started_at;
+      acc.lastSeen = r.run_started_at;
+      acc.sampleError = r.error_message;
+      acc.sampleFailureType = r.failure_type;
+    }
+  }
+
+  const clusters: FailureCluster[] = [];
+  for (const g of groups.values()) {
+    if (g.tests.size < minTests) continue; // not mass-failure — skip singletons
+    clusters.push({
+      fingerprint: g.fingerprint,
+      occurrences: g.occurrences,
+      affectedTests: g.tests.size,
+      affectedSuites: g.suites.size,
+      sampleError: g.sampleError,
+      sampleFailureType: g.sampleFailureType,
+      firstSeen: g.firstSeen,
+      lastSeen: g.lastSeen,
+    });
+  }
+
+  // Biggest blast radius first (distinct tests), then total occurrences, then
+  // fingerprint for a total, stable order.
+  clusters.sort(
+    (a, b) =>
+      b.affectedTests - a.affectedTests ||
+      b.occurrences - a.occurrences ||
+      (a.fingerprint < b.fingerprint
+        ? -1
+        : a.fingerprint > b.fingerprint
+          ? 1
+          : 0),
+  );
+
+  return { clusters, uncategorized, totalFailures: rows.length };
+}
+
 // ---------- dashboard KPIs ----------
 
 export type StatusGroup = { value: string; count: number };
