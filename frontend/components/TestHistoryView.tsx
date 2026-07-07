@@ -60,8 +60,11 @@ export function TestHistoryView({ history }: { history: TestHistory }) {
         ) : (
           <div className="space-y-2.5" data-testid="history-timeline">
             {groupHistoryByJob(history.points).map(({ job, points }) => (
+              // Key on the raw job (unique per series; "" = the no-job bucket),
+              // prefixed so the key is non-empty and can't collide with a real
+              // job literally named "—" (the display placeholder below).
               <div
-                key={job || "—"}
+                key={`job:${job}`}
                 className="flex items-start gap-3"
                 data-testid="history-job-series"
               >
