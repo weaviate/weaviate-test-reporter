@@ -11,10 +11,12 @@ import {
   buildTestHistory,
   groupHistoryByJob,
   detectRegressions,
+  clusterFailures,
   flakeGroupKey,
   FLAKES_RECENT_STATUSES,
   type FlakeRow,
   type RegressionRow,
+  type ClusterRow,
   type TrendRunRow,
   type ExecutedDropRow,
   type TestHistoryPoint,
@@ -934,6 +936,119 @@ describe("detectRegressions", () => {
       newCount: 0,
       knownFlakyCount: 0,
       recurringCount: 0,
+    });
+  });
+});
+
+describe("clusterFailures", () => {
+  const cr = (
+    fingerprint: string | null,
+    over: Partial<ClusterRow> = {},
+  ): ClusterRow => ({
+    failure_fingerprint: fingerprint,
+    test_suite: "e2e",
+    name: "test_x",
+    error_message: null,
+    failure_type: null,
+    run_started_at: "2026-07-06T00:00:00.000Z",
+    ...over,
+  });
+
+  it("clusters failures sharing a fingerprint that hit >= 2 distinct tests", () => {
+    const rows = [
+      cr("fp1", { test_suite: "s", name: "a" }),
+      cr("fp1", { test_suite: "s", name: "b" }),
+      cr("fp1", { test_suite: "t", name: "c" }),
+    ];
+    const rep = clusterFailures(rows);
+    expect(rep.clusters).toHaveLength(1);
+    expect(rep.clusters[0]).toMatchObject({
+      fingerprint: "fp1",
+      occurrences: 3,
+      affectedTests: 3, // (s,a) (s,b) (t,c)
+      affectedSuites: 2, // s, t
+    });
+    expect(rep.totalFailures).toBe(3);
+    expect(rep.uncategorized).toBe(0);
+  });
+
+  it("excludes a singleton fingerprint (only one distinct test) from clusters", () => {
+    // Same test failing 4x with the same fingerprint — not mass-failure.
+    const rows = [
+      cr("fp1", { name: "only" }),
+      cr("fp1", { name: "only" }),
+      cr("fp1", { name: "only" }),
+      cr("fp1", { name: "only" }),
+    ];
+    const rep = clusterFailures(rows);
+    expect(rep.clusters).toEqual([]);
+    expect(rep.totalFailures).toBe(4);
+  });
+
+  it("counts null / empty fingerprints as uncategorized, not clustered", () => {
+    const rows = [
+      cr(null, { name: "a" }),
+      cr("", { name: "b" }),
+      cr("fp1", { name: "c" }),
+      cr("fp1", { name: "d" }),
+    ];
+    const rep = clusterFailures(rows);
+    expect(rep.uncategorized).toBe(2);
+    expect(rep.clusters).toHaveLength(1);
+    expect(rep.clusters[0].affectedTests).toBe(2);
+    expect(rep.totalFailures).toBe(4);
+  });
+
+  it("takes the sample error/type from the most-recent occurrence and tracks first/last seen", () => {
+    const rows = [
+      cr("fp1", {
+        name: "a",
+        run_started_at: "2026-07-04T00:00:00.000Z",
+        error_message: "old",
+      }),
+      cr("fp1", {
+        name: "b",
+        run_started_at: "2026-07-06T00:00:00.000Z",
+        error_message: "newest",
+        failure_type: "TimeoutError",
+      }),
+      cr("fp1", {
+        name: "c",
+        run_started_at: "2026-07-05T00:00:00.000Z",
+        error_message: "middle",
+      }),
+    ];
+    const [c] = clusterFailures(rows).clusters;
+    expect(c).toMatchObject({
+      sampleError: "newest",
+      sampleFailureType: "TimeoutError",
+      firstSeen: "2026-07-04T00:00:00.000Z",
+      lastSeen: "2026-07-06T00:00:00.000Z",
+    });
+  });
+
+  it("sorts clusters by affected-tests descending", () => {
+    const rows = [
+      // fp-small: 2 tests
+      cr("fp-small", { name: "a" }),
+      cr("fp-small", { name: "b" }),
+      // fp-big: 3 tests
+      cr("fp-big", { name: "c" }),
+      cr("fp-big", { name: "d" }),
+      cr("fp-big", { name: "e" }),
+    ];
+    const rep = clusterFailures(rows);
+    expect(rep.clusters.map((c) => c.fingerprint)).toEqual([
+      "fp-big",
+      "fp-small",
+    ]);
+  });
+
+  it("empty input → empty report", () => {
+    expect(clusterFailures([])).toEqual({
+      clusters: [],
+      uncategorized: 0,
+      totalFailures: 0,
     });
   });
 });

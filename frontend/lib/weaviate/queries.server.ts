@@ -23,11 +23,14 @@ import {
   bucketRunsByDay,
   detectExecutedDrops,
   detectRegressions,
+  clusterFailures,
   flakeGroupKey,
   buildTestHistory,
   type FlakeRow,
   type RegressionRow,
   type RegressionReport,
+  type ClusterRow,
+  type ClusterReport,
   type StatusGroup,
   type RunRow,
   type TrendPoint,
@@ -102,6 +105,7 @@ type CaseProps = {
   error_message: string;
   stack_trace: string;
   failure_type: string;
+  failure_fingerprint: string; // WS1 D4: exact-match dedup key (R4 clustering)
   run_started_at: Date;
   // WS3 R3: denormalized run identity (flakes/history scope without a ref hop).
   version_minor: string;
@@ -918,4 +922,65 @@ export async function fetchRegressions(
   }
 
   return detectRegressions(currentFailed, priorFailedKeys, flakyKeys);
+}
+
+/**
+ * Failure clustering (WS3 R4): scan the window's failed cases and group them by
+ * the D4 `failure_fingerprint` to collapse mass-failure noise. One scan off the
+ * denormalized fields; `clusterFailures` does the grouping. ONE consistency.
+ */
+export async function fetchFailureClusters(
+  opts: { days?: number } = {},
+): Promise<ClusterReport> {
+  const days = Number.isFinite(opts.days) ? (opts.days as number) : 7;
+  const client = await getClient();
+  const cases = client.collections.get<CaseProps>(COLLECTIONS.TEST_CASE);
+  const since = new Date(isoDaysAgo(days));
+
+  const filter = Filters.and(
+    cases.filter.byProperty("run_started_at").greaterOrEqual(since),
+    cases.filter.byProperty("status").equal("failed"),
+  );
+
+  const rows: ClusterRow[] = [];
+  let offset = 0;
+  let scanned = 0;
+  while (scanned < FLAKES_MAX_ROWS) {
+    // Cap the last page to the remaining budget so the hard ceiling is exact
+    // (a constant page size could over-fetch up to FLAKES_PAGE_SIZE-1 rows).
+    const pageSize = Math.min(FLAKES_PAGE_SIZE, FLAKES_MAX_ROWS - scanned);
+    const res = await cases.query.fetchObjects({
+      limit: pageSize,
+      offset,
+      filters: filter,
+      // Clustering is order-agnostic; a near-unique creation-time sort just
+      // keeps offset pagination from skipping/duping rows across page bounds.
+      sort: cases.sort.byCreationTime(true),
+      returnProperties: [
+        "failure_fingerprint",
+        "test_suite",
+        "name",
+        "error_message",
+        "failure_type",
+        "run_started_at",
+      ],
+    });
+    const page = res.objects as unknown as RawObject[];
+    for (const o of page) {
+      const p = o.properties;
+      rows.push({
+        failure_fingerprint: (p.failure_fingerprint as string | null) ?? null,
+        test_suite: (p.test_suite as string) ?? "",
+        name: (p.name as string) ?? "",
+        error_message: (p.error_message as string | null) ?? null,
+        failure_type: (p.failure_type as string | null) ?? null,
+        run_started_at: normalizeDate(p.run_started_at),
+      });
+    }
+    scanned += page.length;
+    if (page.length < pageSize) break;
+    offset += page.length;
+  }
+
+  return clusterFailures(rows);
 }

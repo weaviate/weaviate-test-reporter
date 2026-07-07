@@ -31,6 +31,7 @@ import type {
   ExecutedDrop,
   TestHistory,
   RegressionReport,
+  ClusterReport,
 } from "./analysis";
 
 // Re-exports so existing `import { ... } from "@/lib/queries"` sites keep
@@ -43,6 +44,8 @@ export type {
   TestHistoryPoint,
   RegressionReport,
   NewRegression,
+  ClusterReport,
+  FailureCluster,
 } from "./analysis";
 export { TARGET_VECTORS, DEFAULT_TARGET_VECTOR } from "./constants";
 export type { TargetVector, FlakesWindow } from "./constants";
@@ -240,6 +243,20 @@ export async function fetchRegressions(
     // Two windowed case scans (like flakes) — use the longer flakes timeout.
     API_TIMEOUTS_MS.flakes,
     "Fetch regressions",
+  );
+}
+
+export async function fetchFailureClusters(
+  days?: number,
+): Promise<ClusterReport> {
+  const p = new URLSearchParams();
+  if (days != null) p.set("days", String(days));
+  const qs = p.toString();
+  return apiGet<ClusterReport>(
+    `/api/clusters${qs ? `?${qs}` : ""}`,
+    // A full windowed failed-case scan — use the longer flakes timeout.
+    API_TIMEOUTS_MS.flakes,
+    "Fetch failure clusters",
   );
 }
 
