@@ -2,6 +2,7 @@
 
 import { ArrowUpRight } from "lucide-react";
 import type { TestHistory } from "@/lib/queries";
+import { groupHistoryByJob } from "@/lib/analysis";
 
 const cellTone = (status: string): string =>
   status === "passed"
@@ -50,28 +51,47 @@ export function TestHistoryView({ history }: { history: TestHistory }) {
 
       <div>
         <p className="mb-3 text-[11px] uppercase tracking-[0.2em] font-mono text-wv-fog-muted">
-          Timeline (oldest → newest)
+          Timeline by job (oldest → newest)
         </p>
         {history.points.length === 0 ? (
           <p className="text-[13px] text-wv-fog-muted">
             No runs recorded for this test.
           </p>
         ) : (
-          <div className="flex flex-wrap gap-1" data-testid="history-timeline">
-            {history.points.map((p, i) => {
-              const label = `${p.status} · ${fmtDate(p.runStartedAt)}${context(p)}`;
-              return (
-                <a
-                  key={`${p.runId}-${i}`}
-                  href={p.jobUrl || undefined}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title={label}
-                  aria-label={label}
-                  className={`h-6 w-3 rounded-sm ${cellTone(p.status)} transition-shadow hover:ring-2 hover:ring-wv-fog/40`}
-                />
-              );
-            })}
+          <div className="space-y-2.5" data-testid="history-timeline">
+            {groupHistoryByJob(history.points).map(({ job, points }) => (
+              // Key on the raw job (unique per series; "" = the no-job bucket),
+              // prefixed so the key is non-empty and can't collide with a real
+              // job literally named "—" (the display placeholder below).
+              <div
+                key={`job:${job}`}
+                className="flex items-start gap-3"
+                data-testid="history-job-series"
+              >
+                <span
+                  className="w-52 shrink-0 truncate pt-0.5 text-[12px] font-mono text-wv-fog-muted"
+                  title={job || "no job"}
+                >
+                  {job || "— no job"}
+                </span>
+                <div className="flex flex-wrap gap-1">
+                  {points.map((p, i) => {
+                    const label = `${p.status} · ${fmtDate(p.runStartedAt)}${context(p)}`;
+                    return (
+                      <a
+                        key={`${p.runId}-${i}`}
+                        href={p.jobUrl || undefined}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={label}
+                        aria-label={label}
+                        className={`h-6 w-3 rounded-sm ${cellTone(p.status)} transition-shadow hover:ring-2 hover:ring-wv-fog/40`}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>

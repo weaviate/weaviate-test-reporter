@@ -32,14 +32,20 @@ function TestHistoryBody() {
   const params = useSearchParams();
   const suite = params.get("suite") ?? "";
   const name = params.get("name") ?? "";
+  // Optional version scope (set by the per-version Flakes deep-link) — keeps the
+  // history reconciled with the flakes row it came from.
+  const version = params.get("version") ?? "";
   const enabled = Boolean(suite && name);
 
   // "← Back to …" target, keyed on the deep-link's `from` marker.
   const back = BACK_SOURCES[params.get("from") ?? ""] ?? DEFAULT_BACK;
 
   const history = useAsync(
-    () => (enabled ? fetchTestHistory(suite, name) : Promise.resolve(null)),
-    [suite, name],
+    () =>
+      enabled
+        ? fetchTestHistory(suite, name, version || undefined)
+        : Promise.resolve(null),
+    [suite, name, version],
   );
 
   if (!enabled) {
@@ -73,7 +79,11 @@ function TestHistoryBody() {
           Back to {back.label}
         </Link>
       </div>
-      <PageHeader eyebrow="Test history" title={name} description={suite} />
+      <PageHeader
+        eyebrow="Test history"
+        title={name}
+        description={version ? `${suite}  ·  ${version} only` : suite}
+      />
       <section className="px-8 py-8">
         {history.loading ? (
           <LoadingState label="Loading history…" />
