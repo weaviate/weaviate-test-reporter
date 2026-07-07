@@ -8,10 +8,12 @@ import { ErrorState, LoadingState } from "@/components/States";
 import { TrendCharts } from "@/components/TrendCharts";
 import { TrendFilterBar } from "@/components/TrendFilterBar";
 import { ExecutedDrops } from "@/components/ExecutedDrops";
+import { NewRegressions } from "@/components/NewRegressions";
 import { useAsync } from "@/lib/useAsync";
 import {
   fetchDashboardKpis,
   fetchExecutedDrops,
+  fetchRegressions,
   fetchRunTrend,
   isoDaysAgo,
 } from "@/lib/queries";
@@ -67,6 +69,10 @@ export default function DashboardPage() {
     () => fetchExecutedDrops(sinceIso),
     [sinceIso ?? "all"],
   );
+  // Regressions compare a window to the window before it, so "all time" has no
+  // meaningful prior window — fall back to 7d there.
+  const regDays = range.days > 0 ? range.days : 7;
+  const regressions = useAsync(() => fetchRegressions(regDays), [regDays]);
   const [trendFilters, setTrendFilters] = useState<TrendFilters>({});
   const trend = useAsync(
     () => fetchRunTrend(sinceIso, trendFilters),
@@ -158,6 +164,25 @@ export default function DashboardPage() {
             </div>
           </>
         ) : null}
+
+        <div>
+          <div className="mb-4">
+            <p className="text-[11px] uppercase tracking-[0.2em] font-mono text-wv-fog-muted">
+              New regressions
+            </p>
+            <p className="mt-1 text-[12px] text-wv-fog-muted">
+              Tests that started failing this window and weren&apos;t failing
+              before — known flakes and already-recurring failures suppressed.
+            </p>
+          </div>
+          {regressions.loading ? (
+            <LoadingState label="Classifying new vs known failures…" />
+          ) : regressions.error ? (
+            <ErrorState error={regressions.error} />
+          ) : regressions.data ? (
+            <NewRegressions report={regressions.data} />
+          ) : null}
+        </div>
 
         <div>
           <div className="mb-4">
