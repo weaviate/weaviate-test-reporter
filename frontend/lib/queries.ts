@@ -26,7 +26,12 @@ import {
   type TargetVector,
   type FlakesWindow,
 } from "./constants";
-import type { TrendPoint, ExecutedDrop, TestHistory } from "./analysis";
+import type {
+  TrendPoint,
+  ExecutedDrop,
+  TestHistory,
+  RegressionReport,
+} from "./analysis";
 
 // Re-exports so existing `import { ... } from "@/lib/queries"` sites keep
 // working without edits.
@@ -36,6 +41,8 @@ export type {
   ExecutedDrop,
   TestHistory,
   TestHistoryPoint,
+  RegressionReport,
+  NewRegression,
 } from "./analysis";
 export { TARGET_VECTORS, DEFAULT_TARGET_VECTOR } from "./constants";
 export type { TargetVector, FlakesWindow } from "./constants";
@@ -219,6 +226,20 @@ export async function fetchExecutedDrops(
     `/api/drops${qs ? `?${qs}` : ""}`,
     API_TIMEOUTS_MS.default,
     "Fetch executed drops",
+  );
+}
+
+export async function fetchRegressions(
+  days?: number,
+): Promise<RegressionReport> {
+  const p = new URLSearchParams();
+  if (days != null) p.set("days", String(days));
+  const qs = p.toString();
+  return apiGet<RegressionReport>(
+    `/api/regressions${qs ? `?${qs}` : ""}`,
+    // Two windowed case scans (like flakes) — use the longer flakes timeout.
+    API_TIMEOUTS_MS.flakes,
+    "Fetch regressions",
   );
 }
 

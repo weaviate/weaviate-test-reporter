@@ -10,8 +10,11 @@ import {
   detectExecutedDrops,
   buildTestHistory,
   groupHistoryByJob,
+  detectRegressions,
+  flakeGroupKey,
   FLAKES_RECENT_STATUSES,
   type FlakeRow,
+  type RegressionRow,
   type TrendRunRow,
   type ExecutedDropRow,
   type TestHistoryPoint,
@@ -818,5 +821,119 @@ describe("groupHistoryByJob", () => {
 
   it("returns [] for no points", () => {
     expect(groupHistoryByJob([])).toEqual([]);
+  });
+});
+
+describe("detectRegressions", () => {
+  const rr = (
+    name: string,
+    over: Partial<RegressionRow> = {},
+  ): RegressionRow => ({
+    test_suite: "e2e",
+    name,
+    version_minor: "1.39",
+    job_name: "job-a",
+    run_started_at: "2026-07-06T00:00:00.000Z",
+    error_message: null,
+    failure_type: null,
+    ...over,
+  });
+  const key = (r: RegressionRow) =>
+    flakeGroupKey(r.test_suite, r.name, r.version_minor, r.job_name);
+
+  it("flags a fresh failure (no prior failure, not flaky) as NEW", () => {
+    const rep = detectRegressions([rr("test_x")], new Set(), new Set());
+    expect(rep.newCount).toBe(1);
+    expect(rep.regressions[0]).toMatchObject({ name: "test_x", failCount: 1 });
+    expect(rep.knownFlakyCount).toBe(0);
+    expect(rep.recurringCount).toBe(0);
+  });
+
+  it("does NOT flag a recurring failure (failed in the prior window)", () => {
+    const row = rr("test_x");
+    const rep = detectRegressions([row], new Set([key(row)]), new Set());
+    expect(rep.newCount).toBe(0);
+    expect(rep.recurringCount).toBe(1);
+    expect(rep.regressions).toEqual([]);
+  });
+
+  it("suppresses a known flake even if it didn't fail in the prior window", () => {
+    const row = rr("test_x");
+    const rep = detectRegressions([row], new Set(), new Set([key(row)]));
+    expect(rep.newCount).toBe(0);
+    expect(rep.knownFlakyCount).toBe(1);
+  });
+
+  it("flaky takes precedence over recurring", () => {
+    const row = rr("test_x");
+    const rep = detectRegressions(
+      [row],
+      new Set([key(row)]),
+      new Set([key(row)]),
+    );
+    expect(rep.knownFlakyCount).toBe(1);
+    expect(rep.recurringCount).toBe(0);
+    expect(rep.newCount).toBe(0);
+  });
+
+  it("aggregates failCount, earliest onset, and the most-recent error per group", () => {
+    const rows = [
+      rr("test_x", {
+        run_started_at: "2026-07-04T00:00:00.000Z",
+        error_message: "first",
+      }),
+      rr("test_x", {
+        run_started_at: "2026-07-06T00:00:00.000Z",
+        error_message: "latest",
+        failure_type: "TimeoutError",
+      }),
+      rr("test_x", {
+        run_started_at: "2026-07-05T00:00:00.000Z",
+        error_message: "middle",
+      }),
+    ];
+    const rep = detectRegressions(rows, new Set(), new Set());
+    expect(rep.regressions[0]).toMatchObject({
+      failCount: 3,
+      firstFailedAt: "2026-07-04T00:00:00.000Z",
+      lastErrorMessage: "latest",
+      lastFailureType: "TimeoutError",
+    });
+  });
+
+  it("scopes by (suite, name, version, job): same name, different version = separate verdicts", () => {
+    const onV39 = rr("test_x", { version_minor: "1.39" });
+    const onV38 = rr("test_x", { version_minor: "1.38" });
+    // 1.38 failed before (recurring); 1.39 is fresh (NEW).
+    const rep = detectRegressions(
+      [onV39, onV38],
+      new Set([key(onV38)]),
+      new Set(),
+    );
+    expect(rep.newCount).toBe(1);
+    expect(rep.recurringCount).toBe(1);
+    expect(rep.regressions[0].version_minor).toBe("1.39");
+  });
+
+  it("sorts NEW regressions by failCount descending", () => {
+    const rows = [
+      rr("low"),
+      rr("high"),
+      rr("high"),
+      rr("high"),
+      rr("mid"),
+      rr("mid"),
+    ];
+    const rep = detectRegressions(rows, new Set(), new Set());
+    expect(rep.regressions.map((r) => r.name)).toEqual(["high", "mid", "low"]);
+  });
+
+  it("empty current window → empty report", () => {
+    expect(detectRegressions([], new Set(), new Set())).toEqual({
+      regressions: [],
+      newCount: 0,
+      knownFlakyCount: 0,
+      recurringCount: 0,
+    });
   });
 });

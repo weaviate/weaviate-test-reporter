@@ -16,6 +16,7 @@ import { fetchTestHistory } from "@/lib/queries";
 const BACK_SOURCES: Record<string, { label: string; href: string }> = {
   flakes: { label: "Flakes", href: "/flakes" },
   explorer: { label: "Test Explorer", href: "/" },
+  dashboard: { label: "Dashboard", href: "/dashboard" },
 };
 const DEFAULT_BACK = { label: "Test Explorer", href: "/" };
 

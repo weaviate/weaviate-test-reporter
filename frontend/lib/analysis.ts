@@ -38,6 +38,19 @@ export type FlakeRow = {
   status: TestCaseStatus;
 };
 
+/** Collision-free composite key for a test in its stable context
+ *  `(suite, name, version_minor, job_name)`. JSON-encoded because `job_name` is
+ *  workflow input and could contain any delimiter. Shared by `computeFlaky` and
+ *  `detectRegressions` so their groupings match exactly. */
+export function flakeGroupKey(
+  test_suite: string,
+  name: string,
+  version_minor: string | null,
+  job_name: string,
+): string {
+  return JSON.stringify([test_suite, name, version_minor ?? "", job_name]);
+}
+
 /**
  * Group rows by `(test_suite, name, version_minor, job_name)` and compute
  * per-test flakiness within that stable context (WS3 R3). Grouping by version
@@ -67,15 +80,12 @@ export function computeFlaky(rows: FlakeRow[], minRuns = 3): FlakyTest[] {
   };
   const groups = new Map<string, Acc>();
   for (const r of rows) {
-    // Structured key rather than a delimiter-joined string: job_name is
-    // workflow input and could contain any separator, so JSON-encoding the
-    // tuple keeps the (suite, name, version, job) composite collision-free.
-    const key = JSON.stringify([
+    const key = flakeGroupKey(
       r.test_suite,
       r.name,
-      r.version_minor ?? "",
+      r.version_minor,
       r.job_name,
-    ]);
+    );
     let acc = groups.get(key);
     if (!acc) {
       acc = {
@@ -125,6 +135,138 @@ export function computeFlaky(rows: FlakeRow[], minRuns = 3): FlakyTest[] {
       b.flakiness_score - a.flakiness_score || b.total_runs - a.total_runs,
   );
   return out;
+}
+
+// ---------- regressions: NEW vs known (R2) ----------
+
+/** A failing TestCase in the current window (denormalized fields). */
+export type RegressionRow = {
+  test_suite: string;
+  name: string;
+  version_minor: string | null;
+  job_name: string;
+  run_started_at: string; // UTC ISO
+  error_message: string | null;
+  failure_type: string | null;
+};
+
+/** A NEW regression: a `(suite, name, version, job)` failing in the current
+ *  window that did NOT fail in the prior window and is not a known flake. */
+export type NewRegression = {
+  test_suite: string;
+  name: string;
+  version_minor: string | null;
+  job_name: string;
+  failCount: number; // failures in the current window
+  firstFailedAt: string; // earliest failure in the current window (UTC ISO)
+  lastErrorMessage: string | null; // from the most recent failure
+  lastFailureType: string | null;
+};
+
+export type RegressionReport = {
+  regressions: NewRegression[]; // the NEW ones, most failures first
+  newCount: number;
+  knownFlakyCount: number; // failing now but a known flake (suppressed)
+  recurringCount: number; // failing now + failed in the prior window (not flaky)
+};
+
+/**
+ * Classify the current window's failures into NEW regressions vs already-known
+ * noise (WS3 R2). A failing `(suite, name, version_minor, job_name)` group is:
+ *   - **known-flaky** if its key is in `flakyKeys` (the R3 transition-density
+ *     list) — suppressed, even if it didn't fail in the prior window;
+ *   - **recurring** else if its key is in `priorFailedKeys` (it failed before,
+ *     so it's not a fresh regression);
+ *   - **NEW** otherwise — failing now, no prior failure, not flaky ⇒ the
+ *     actionable regression.
+ * Precedence is flaky → recurring → NEW, so every group lands in exactly one
+ * bucket. Pure + window-agnostic: the caller windows the inputs. Keys are built
+ * with `flakeGroupKey`, matching `computeFlaky` exactly.
+ */
+export function detectRegressions(
+  currentFailed: RegressionRow[],
+  priorFailedKeys: Set<string>,
+  flakyKeys: Set<string>,
+): RegressionReport {
+  type Acc = {
+    row: RegressionRow; // representative (identity fields)
+    failCount: number;
+    firstFailedAt: string;
+    lastAt: string;
+    lastErrorMessage: string | null;
+    lastFailureType: string | null;
+  };
+  const groups = new Map<string, Acc>();
+  for (const r of currentFailed) {
+    const key = flakeGroupKey(
+      r.test_suite,
+      r.name,
+      r.version_minor,
+      r.job_name,
+    );
+    const acc = groups.get(key);
+    if (!acc) {
+      groups.set(key, {
+        row: r,
+        failCount: 1,
+        firstFailedAt: r.run_started_at,
+        lastAt: r.run_started_at,
+        lastErrorMessage: r.error_message,
+        lastFailureType: r.failure_type,
+      });
+    } else {
+      acc.failCount++;
+      if (r.run_started_at < acc.firstFailedAt)
+        acc.firstFailedAt = r.run_started_at;
+      // Keep the most-recent failure's error for display.
+      if (r.run_started_at >= acc.lastAt) {
+        acc.lastAt = r.run_started_at;
+        acc.lastErrorMessage = r.error_message;
+        acc.lastFailureType = r.failure_type;
+      }
+    }
+  }
+
+  const regressions: NewRegression[] = [];
+  let knownFlakyCount = 0;
+  let recurringCount = 0;
+  for (const [key, g] of groups) {
+    if (flakyKeys.has(key)) {
+      knownFlakyCount++;
+    } else if (priorFailedKeys.has(key)) {
+      recurringCount++;
+    } else {
+      regressions.push({
+        test_suite: g.row.test_suite,
+        name: g.row.name,
+        version_minor: g.row.version_minor,
+        job_name: g.row.job_name,
+        failCount: g.failCount,
+        firstFailedAt: g.firstFailedAt,
+        lastErrorMessage: g.lastErrorMessage,
+        lastFailureType: g.lastFailureType,
+      });
+    }
+  }
+
+  // Most failures first; ties broken by earliest onset (older regressions
+  // first — they've been broken longer), then the full identity key for a
+  // TOTAL order (unique per NEW regression, so no insertion-order dependence).
+  regressions.sort((a, b) => {
+    if (b.failCount !== a.failCount) return b.failCount - a.failCount;
+    if (a.firstFailedAt !== b.firstFailedAt)
+      return a.firstFailedAt < b.firstFailedAt ? -1 : 1;
+    const ka = flakeGroupKey(a.test_suite, a.name, a.version_minor, a.job_name);
+    const kb = flakeGroupKey(b.test_suite, b.name, b.version_minor, b.job_name);
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
+
+  return {
+    regressions,
+    newCount: regressions.length,
+    knownFlakyCount,
+    recurringCount,
+  };
 }
 
 // ---------- dashboard KPIs ----------
