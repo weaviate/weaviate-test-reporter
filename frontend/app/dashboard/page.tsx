@@ -10,6 +10,7 @@ import { TrendFilterBar } from "@/components/TrendFilterBar";
 import { ExecutedDrops } from "@/components/ExecutedDrops";
 import { NewRegressions } from "@/components/NewRegressions";
 import { FailureClusters } from "@/components/FailureClusters";
+import { CacheHint } from "@/components/CacheHint";
 import { useAsync } from "@/lib/useAsync";
 import {
   fetchDashboardKpis,
@@ -119,6 +120,9 @@ export default function DashboardPage() {
       />
 
       <section className="px-8 py-8 space-y-8">
+        <div className="-mb-4 flex justify-end">
+          <CacheHint />
+        </div>
         {kpis.loading ? (
           <LoadingState label="Aggregating Weaviate metrics…" />
         ) : kpis.error ? (

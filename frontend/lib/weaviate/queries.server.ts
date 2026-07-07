@@ -1,4 +1,5 @@
 import "server-only";
+import { unstable_cache } from "next/cache";
 import {
   Filters,
   type FilterValue,
@@ -238,7 +239,7 @@ function mapGroups(
 
 // ---------- queries ----------
 
-export async function fetchRecentRuns(
+async function _fetchRecentRuns(
   filters: RunFilters = {},
   limit = RECENT_RUNS_LIMIT,
 ): Promise<TestRun[]> {
@@ -313,7 +314,7 @@ function anyEqual(
   return parts.length === 1 ? parts[0] : Filters.or(...parts);
 }
 
-export async function fetchDistinctRunValues(
+async function _fetchDistinctRunValues(
   property:
     | "repository"
     | "branch"
@@ -330,7 +331,7 @@ export async function fetchDistinctRunValues(
   return mapGroups(result).sort((a, b) => b.count - a.count);
 }
 
-export async function fetchVersionRollup(): Promise<VersionRollup[]> {
+async function _fetchVersionRollup(): Promise<VersionRollup[]> {
   const client = await getClient();
   const runs = runsCol(client);
 
@@ -427,9 +428,7 @@ export async function semanticSearch(
   return (res.objects as unknown as RawObject[]).map(asTestCase);
 }
 
-export async function fetchDashboardKpis(
-  sinceIso?: string,
-): Promise<DashboardKpis> {
+async function _fetchDashboardKpis(sinceIso?: string): Promise<DashboardKpis> {
   const client = await getClient();
   const runs = runsCol(client);
   const cases = casesCol(client);
@@ -497,7 +496,7 @@ export async function fetchDashboardKpis(
  * the actual TestRun rows and buckets them in a pure function — deterministic,
  * unlike Weaviate's approximate date-grouped Aggregate.
  */
-export async function fetchRunTrend(
+async function _fetchRunTrend(
   sinceIso?: string,
   filters: TrendFilters = {},
 ): Promise<TrendPoint[]> {
@@ -576,9 +575,7 @@ export async function fetchRunTrend(
  * meaningfully fewer tests than the run before. Windowed by started_at so a job
  * needs at least two runs in the range to be evaluated.
  */
-export async function fetchExecutedDrops(
-  sinceIso?: string,
-): Promise<ExecutedDrop[]> {
+async function _fetchExecutedDrops(sinceIso?: string): Promise<ExecutedDrop[]> {
   const client = await getClient();
   const runs = runsCol(client);
   const since = sinceIso ? new Date(sinceIso) : undefined;
@@ -634,7 +631,7 @@ export async function fetchExecutedDrops(
  * and pulls each run's version / branch / status / CI link through the
  * `belongsToRun` cross-reference, then shapes it with the pure `buildTestHistory`.
  */
-export async function fetchTestHistory(
+async function _fetchTestHistory(
   testSuite: string,
   name: string,
   versionMinor?: string,
@@ -716,7 +713,7 @@ export async function fetchTestHistory(
   return buildTestHistory({ testSuite, name, framework }, points);
 }
 
-export async function fetchFlakyTests(
+async function _fetchFlakyTests(
   window: FlakesWindow,
   opts: { minRuns?: number } = {},
 ): Promise<FlakyTest[]> {
@@ -804,7 +801,7 @@ export async function fetchFlakyTests(
  * `detectRegressions` then buckets each failing (suite, name, version, job).
  * ONE consistency (trailing trend, like the flakes scan).
  */
-export async function fetchRegressions(
+async function _fetchRegressions(
   opts: { days?: number } = {},
 ): Promise<RegressionReport> {
   const days = Number.isFinite(opts.days) ? (opts.days as number) : 7;
@@ -939,7 +936,7 @@ export async function fetchRegressions(
  * the D4 `failure_fingerprint` to collapse mass-failure noise. One scan off the
  * denormalized fields; `clusterFailures` does the grouping. ONE consistency.
  */
-export async function fetchFailureClusters(
+async function _fetchFailureClusters(
   opts: { days?: number } = {},
 ): Promise<ClusterReport> {
   const days = Number.isFinite(opts.days) ? (opts.days as number) : 7;
@@ -994,3 +991,67 @@ export async function fetchFailureClusters(
 
   return clusterFailures(rows);
 }
+
+// ---------- R6: server result cache ----------
+
+// The read queries above page through large TestCase/TestRun sets (Flakes /
+// Regressions / Clusters each scan up to 200k rows) and re-run on every visit
+// because the /api/* routes are force-dynamic. The data is weekly, read-only,
+// and identical for every user, so we memoize each result per-args with
+// unstable_cache: the heavy scan runs at most once per REVALIDATE window
+// (~hourly) instead of per request. unstable_cache keys on the function's
+// arguments + keyParts, so different windows/filters get distinct entries. The
+// query bodies stay wrapped as `_fetchX` above for readability.
+const CACHE_REVALIDATE_S = 3600;
+const cacheOpts = { revalidate: CACHE_REVALIDATE_S };
+
+export const fetchRecentRuns = unstable_cache(
+  _fetchRecentRuns,
+  ["fetchRecentRuns"],
+  cacheOpts,
+);
+export const fetchDistinctRunValues = unstable_cache(
+  _fetchDistinctRunValues,
+  ["fetchDistinctRunValues"],
+  cacheOpts,
+);
+export const fetchVersionRollup = unstable_cache(
+  _fetchVersionRollup,
+  ["fetchVersionRollup"],
+  cacheOpts,
+);
+export const fetchDashboardKpis = unstable_cache(
+  _fetchDashboardKpis,
+  ["fetchDashboardKpis"],
+  cacheOpts,
+);
+export const fetchRunTrend = unstable_cache(
+  _fetchRunTrend,
+  ["fetchRunTrend"],
+  cacheOpts,
+);
+export const fetchExecutedDrops = unstable_cache(
+  _fetchExecutedDrops,
+  ["fetchExecutedDrops"],
+  cacheOpts,
+);
+export const fetchTestHistory = unstable_cache(
+  _fetchTestHistory,
+  ["fetchTestHistory"],
+  cacheOpts,
+);
+export const fetchFlakyTests = unstable_cache(
+  _fetchFlakyTests,
+  ["fetchFlakyTests"],
+  cacheOpts,
+);
+export const fetchRegressions = unstable_cache(
+  _fetchRegressions,
+  ["fetchRegressions"],
+  cacheOpts,
+);
+export const fetchFailureClusters = unstable_cache(
+  _fetchFailureClusters,
+  ["fetchFailureClusters"],
+  cacheOpts,
+);
