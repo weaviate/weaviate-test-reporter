@@ -946,8 +946,11 @@ export async function fetchFailureClusters(
   let offset = 0;
   let scanned = 0;
   while (scanned < FLAKES_MAX_ROWS) {
+    // Cap the last page to the remaining budget so the hard ceiling is exact
+    // (a constant page size could over-fetch up to FLAKES_PAGE_SIZE-1 rows).
+    const pageSize = Math.min(FLAKES_PAGE_SIZE, FLAKES_MAX_ROWS - scanned);
     const res = await cases.query.fetchObjects({
-      limit: FLAKES_PAGE_SIZE,
+      limit: pageSize,
       offset,
       filters: filter,
       // Clustering is order-agnostic; a near-unique creation-time sort just
@@ -975,7 +978,7 @@ export async function fetchFailureClusters(
       });
     }
     scanned += page.length;
-    if (page.length < FLAKES_PAGE_SIZE) break;
+    if (page.length < pageSize) break;
     offset += page.length;
   }
 

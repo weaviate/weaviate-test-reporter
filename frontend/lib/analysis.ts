@@ -350,7 +350,8 @@ export function clusterFailures(
       groups.set(fp, acc);
     }
     acc.occurrences++;
-    acc.tests.add(`${r.test_suite} ${r.name}`);
+    // JSON-encoded (suite, name): collision-free and no control byte in source.
+    acc.tests.add(JSON.stringify([r.test_suite, r.name]));
     acc.suites.add(r.test_suite);
     if (r.run_started_at < acc.firstSeen) acc.firstSeen = r.run_started_at;
     if (r.run_started_at >= acc.lastAt) {
