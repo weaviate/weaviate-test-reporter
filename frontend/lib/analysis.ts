@@ -166,27 +166,27 @@ export type NewRegression = {
 export type RegressionReport = {
   regressions: NewRegression[]; // the NEW ones, most failures first
   newCount: number;
-  knownFlakyCount: number; // failing now but a known flake (suppressed)
-  recurringCount: number; // failing now + failed in the prior window (not flaky)
+  recurringCount: number; // failing now + failed in the prior window (already-known)
 };
 
 /**
  * Classify the current window's failures into NEW regressions vs already-known
- * noise (WS3 R2). A failing `(suite, name, version_minor, job_name)` group is:
- *   - **known-flaky** if its key is in `flakyKeys` (the R3 transition-density
- *     list) — suppressed, even if it didn't fail in the prior window;
- *   - **recurring** else if its key is in `priorFailedKeys` (it failed before,
- *     so it's not a fresh regression);
- *   - **NEW** otherwise — failing now, no prior failure, not flaky ⇒ the
- *     actionable regression.
- * Precedence is flaky → recurring → NEW, so every group lands in exactly one
- * bucket. Pure + window-agnostic: the caller windows the inputs. Keys are built
- * with `flakeGroupKey`, matching `computeFlaky` exactly.
+ * failures (WS3 R2). A failing `(suite, name, version_minor, job_name)` group is:
+ *   - **recurring** if its key is in `priorFailedKeys` (it failed in the prior
+ *     window too, so it's not a fresh regression). Persistently-flaky tests land
+ *     here — they fail intermittently across windows.
+ *   - **NEW** otherwise — failing now, no failure in the prior window ⇒ the
+ *     actionable regression. A test that *just* started flaking (green before)
+ *     surfaces here, which is the point: newly-unreliable is newly-actionable.
+ * Pure + window-agnostic: the caller windows the inputs. Keys are built with
+ * `flakeGroupKey`, matching `computeFlaky` exactly.
+ *
+ * Uses only FAILED cases in both windows (no passed-case scan), so it stays
+ * cheap even on very large case sets — see `fetchRegressions`.
  */
 export function detectRegressions(
   currentFailed: RegressionRow[],
   priorFailedKeys: Set<string>,
-  flakyKeys: Set<string>,
 ): RegressionReport {
   type Acc = {
     row: RegressionRow; // representative (identity fields)
@@ -228,12 +228,9 @@ export function detectRegressions(
   }
 
   const regressions: NewRegression[] = [];
-  let knownFlakyCount = 0;
   let recurringCount = 0;
   for (const [key, g] of groups) {
-    if (flakyKeys.has(key)) {
-      knownFlakyCount++;
-    } else if (priorFailedKeys.has(key)) {
+    if (priorFailedKeys.has(key)) {
       recurringCount++;
     } else {
       regressions.push({
@@ -264,7 +261,6 @@ export function detectRegressions(
   return {
     regressions,
     newCount: regressions.length,
-    knownFlakyCount,
     recurringCount,
   };
 }
