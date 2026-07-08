@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { ErrorState, LoadingState } from "@/components/States";
 import { fetchFlakyTests, type FlakesWindow } from "@/lib/queries";
 import { useAsync } from "@/lib/useAsync";
+import { CacheHint } from "@/components/CacheHint";
 import type { FlakyTest, TestCaseStatus } from "@/lib/types";
 
 /**
@@ -71,6 +72,9 @@ export default function FlakesPage() {
       />
 
       <section className="px-8 py-8 space-y-5">
+        <div className="flex justify-end">
+          <CacheHint />
+        </div>
         {flakes.loading ? (
           <LoadingState label="Scanning the window for status flips…" />
         ) : flakes.error ? (

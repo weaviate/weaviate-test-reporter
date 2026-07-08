@@ -18,8 +18,9 @@ import {
  * is reused across route-handler invocations in production.
  */
 type ClientCache = { promise?: Promise<WeaviateClient> };
-const cache: ClientCache = ((globalThis as Record<string, unknown>)
-  .__weaviateClientCache as ClientCache) ?? {};
+const cache: ClientCache =
+  ((globalThis as Record<string, unknown>)
+    .__weaviateClientCache as ClientCache) ?? {};
 (globalThis as Record<string, unknown>).__weaviateClientCache = cache;
 
 async function connect(): Promise<WeaviateClient> {
@@ -44,11 +45,20 @@ async function connect(): Promise<WeaviateClient> {
     : undefined;
   const authCredentials = apiKey ? new ApiKey(apiKey) : undefined;
 
+  // Raise the query timeout (default 30s) to match the client's flakes timeout.
+  // The heavy read scans (Flakes/Regressions/Clusters page through up to 200k
+  // rows) can exceed 30s on a slow link; a cold query that ABORTS never lands
+  // in unstable_cache, so the cache would never warm. Letting it complete once
+  // (even slowly) means every subsequent visit is served from cache. Fast paths
+  // (prod, co-located with the cluster) finish well under this ceiling.
+  const timeout = { init: 15, query: 120, insert: 90 };
+
   if (isWeaviateCloudUrl(url)) {
     return weaviate.connectToWeaviateCloud(url, {
       authCredentials,
       headers,
       skipInitChecks: true,
+      timeout,
     });
   }
 
@@ -58,11 +68,7 @@ async function connect(): Promise<WeaviateClient> {
   const parsed = new URL(url);
   const httpSecure = parsed.protocol === "https:";
   const httpHost = parsed.hostname;
-  const httpPort = parsed.port
-    ? Number(parsed.port)
-    : httpSecure
-      ? 443
-      : 80;
+  const httpPort = parsed.port ? Number(parsed.port) : httpSecure ? 443 : 80;
   const grpcHost = serverEnv.grpcHost || httpHost;
   // `serverEnv.grpcPort` defaults to "" when unset; Number("") === 0, so
   // guard for truthiness before parsing to avoid silently using port 0.
@@ -79,6 +85,7 @@ async function connect(): Promise<WeaviateClient> {
     authCredentials,
     headers,
     skipInitChecks: true,
+    timeout,
   });
 }
 
