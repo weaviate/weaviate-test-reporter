@@ -9,13 +9,12 @@ const fmtDate = (iso: string): string => (iso ? iso.slice(0, 10) : "—");
 
 /**
  * NEW regressions (WS3 R2): tests that started failing in the current window
- * and did NOT fail in the prior window. Recurring failures (they also failed in
- * the prior window — including persistently-flaky tests) are counted separately,
- * not surfaced as NEW. A dumb visual layer; the parent fetches + handles
+ * and did NOT fail in the prior window — with known flakes and already-recurring
+ * failures suppressed. A dumb visual layer; the parent fetches + handles
  * loading/error. Each row deep-links to the test's version-scoped history.
  */
 export function NewRegressions({ report }: { report: RegressionReport }) {
-  const recurring = report.recurringCount;
+  const known = report.knownFlakyCount + report.recurringCount;
 
   if (report.newCount === 0) {
     return (
@@ -25,8 +24,8 @@ export function NewRegressions({ report }: { report: RegressionReport }) {
       >
         <CheckCircle2 size={16} className="text-wv-green shrink-0" />
         No new test failures this window
-        {recurring > 0
-          ? ` — ${recurring} recurring failure${recurring === 1 ? "" : "s"} (also failing before).`
+        {known > 0
+          ? ` — ${known} already-known failing (flaky / recurring).`
           : "."}
       </div>
     );
@@ -42,7 +41,8 @@ export function NewRegressions({ report }: { report: RegressionReport }) {
           {report.newCount} NEW
         </span>
         <span className="text-wv-fog-muted">
-          · {recurring} recurring (also failing before)
+          · {known} known suppressed ({report.knownFlakyCount} flaky,{" "}
+          {report.recurringCount} recurring)
         </span>
       </header>
       {report.regressions.map((r) => (

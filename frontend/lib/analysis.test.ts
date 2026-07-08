@@ -843,29 +843,39 @@ describe("detectRegressions", () => {
   const key = (r: RegressionRow) =>
     flakeGroupKey(r.test_suite, r.name, r.version_minor, r.job_name);
 
-  it("flags a fresh failure (no prior failure) as NEW", () => {
-    const rep = detectRegressions([rr("test_x")], new Set());
+  it("flags a fresh failure (no prior failure, not flaky) as NEW", () => {
+    const rep = detectRegressions([rr("test_x")], new Set(), new Set());
     expect(rep.newCount).toBe(1);
     expect(rep.regressions[0]).toMatchObject({ name: "test_x", failCount: 1 });
+    expect(rep.knownFlakyCount).toBe(0);
     expect(rep.recurringCount).toBe(0);
   });
 
   it("does NOT flag a recurring failure (failed in the prior window)", () => {
     const row = rr("test_x");
-    const rep = detectRegressions([row], new Set([key(row)]));
+    const rep = detectRegressions([row], new Set([key(row)]), new Set());
     expect(rep.newCount).toBe(0);
     expect(rep.recurringCount).toBe(1);
     expect(rep.regressions).toEqual([]);
   });
 
-  it("surfaces a newly-flaky test (failing now, green in the prior window) as NEW", () => {
-    // No flaky-suppression scan anymore: a test that just started flaking is a
-    // fresh, actionable problem, so it belongs in NEW. It only falls out of NEW
-    // once it also fails in the prior window (→ recurring).
+  it("suppresses a known flake even if it didn't fail in the prior window", () => {
     const row = rr("test_x");
-    const rep = detectRegressions([row], new Set());
-    expect(rep.newCount).toBe(1);
+    const rep = detectRegressions([row], new Set(), new Set([key(row)]));
+    expect(rep.newCount).toBe(0);
+    expect(rep.knownFlakyCount).toBe(1);
+  });
+
+  it("flaky takes precedence over recurring", () => {
+    const row = rr("test_x");
+    const rep = detectRegressions(
+      [row],
+      new Set([key(row)]),
+      new Set([key(row)]),
+    );
+    expect(rep.knownFlakyCount).toBe(1);
     expect(rep.recurringCount).toBe(0);
+    expect(rep.newCount).toBe(0);
   });
 
   it("aggregates failCount, earliest onset, and the most-recent error per group", () => {
@@ -884,7 +894,7 @@ describe("detectRegressions", () => {
         error_message: "middle",
       }),
     ];
-    const rep = detectRegressions(rows, new Set());
+    const rep = detectRegressions(rows, new Set(), new Set());
     expect(rep.regressions[0]).toMatchObject({
       failCount: 3,
       firstFailedAt: "2026-07-04T00:00:00.000Z",
@@ -897,7 +907,11 @@ describe("detectRegressions", () => {
     const onV39 = rr("test_x", { version_minor: "1.39" });
     const onV38 = rr("test_x", { version_minor: "1.38" });
     // 1.38 failed before (recurring); 1.39 is fresh (NEW).
-    const rep = detectRegressions([onV39, onV38], new Set([key(onV38)]));
+    const rep = detectRegressions(
+      [onV39, onV38],
+      new Set([key(onV38)]),
+      new Set(),
+    );
     expect(rep.newCount).toBe(1);
     expect(rep.recurringCount).toBe(1);
     expect(rep.regressions[0].version_minor).toBe("1.39");
@@ -912,14 +926,15 @@ describe("detectRegressions", () => {
       rr("mid"),
       rr("mid"),
     ];
-    const rep = detectRegressions(rows, new Set());
+    const rep = detectRegressions(rows, new Set(), new Set());
     expect(rep.regressions.map((r) => r.name)).toEqual(["high", "mid", "low"]);
   });
 
   it("empty current window → empty report", () => {
-    expect(detectRegressions([], new Set())).toEqual({
+    expect(detectRegressions([], new Set(), new Set())).toEqual({
       regressions: [],
       newCount: 0,
+      knownFlakyCount: 0,
       recurringCount: 0,
     });
   });

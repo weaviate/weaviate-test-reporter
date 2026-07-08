@@ -811,21 +811,20 @@ async function _fetchRegressions(
   const since = new Date(isoDaysAgo(days));
   const priorSince = new Date(isoDaysAgo(2 * days));
 
-  // ---- Scan 1: current window, FAILED only → the failures ----
-  // Failures are a small minority of cases, so scanning failed-only (instead of
-  // passed+failed for a flakes set) is ~an order of magnitude less data — the
-  // main perf lever for this section. "Known-flaky" suppression is dropped:
-  // persistently-flaky tests fail in the prior window too and land in
-  // `recurring`; a test that JUST started flaking surfaces as NEW (intended).
+  // ---- Scan 1: current window (passed+failed) → flakes set + failures ----
   const currentFilter = Filters.and(
     cases.filter.byProperty("run_started_at").greaterOrEqual(since),
-    cases.filter.byProperty("status").equal("failed"),
+    Filters.or(
+      cases.filter.byProperty("status").equal("passed"),
+      cases.filter.byProperty("status").equal("failed"),
+    ),
   );
-  // Multi-key sort so offset pagination is stable: run_started_at alone
-  // tie-collides (every case in a run shares it) and even (suite, name,
-  // run_started_at) ties across version/job at the same run start (matrix
-  // fan-out) — which would let pagination skip/dupe rows and distort
-  // currentFailed. version_minor + job_name makes the order near-unique per row.
+  // Sort by the full identity + time. run_started_at alone tie-collides (every
+  // case in a run shares it), and even (suite, name, run_started_at) still ties
+  // across version/job contexts at the same run start (matrix fan-out) — which
+  // would let offset pagination skip/dupe rows and distort flakyKeys /
+  // currentFailed. Adding version_minor + job_name makes the order near-unique
+  // per row (stable pagination) and keeps each group chronological.
   const currentSort = cases.sort
     .byProperty("test_suite", true)
     .byProperty("name", true)
@@ -833,13 +832,13 @@ async function _fetchRegressions(
     .byProperty("job_name", true)
     .byProperty("run_started_at", true);
 
+  const flakeRows: FlakeRow[] = [];
   const currentFailed: RegressionRow[] = [];
   let offset = 0;
-  let currentScanned = 0;
-  while (currentScanned < FLAKES_MAX_ROWS) {
+  while (flakeRows.length < FLAKES_MAX_ROWS) {
     const pageSize = Math.min(
       FLAKES_PAGE_SIZE,
-      FLAKES_MAX_ROWS - currentScanned,
+      FLAKES_MAX_ROWS - flakeRows.length,
     );
     const res = await cases.query.fetchObjects({
       limit: pageSize,
@@ -851,6 +850,7 @@ async function _fetchRegressions(
         "test_suite",
         "version_minor",
         "job_name",
+        "status",
         "run_started_at",
         "error_message",
         "failure_type",
@@ -859,20 +859,39 @@ async function _fetchRegressions(
     const page = res.objects as unknown as RawObject[];
     for (const o of page) {
       const p = o.properties;
-      currentFailed.push({
-        test_suite: (p.test_suite as string) ?? "",
-        name: (p.name as string) ?? "",
-        version_minor: (p.version_minor as string | null) ?? null,
-        job_name: (p.job_name as string) ?? "",
-        run_started_at: normalizeDate(p.run_started_at),
-        error_message: (p.error_message as string | null) ?? null,
-        failure_type: (p.failure_type as string | null) ?? null,
+      const suite = (p.test_suite as string) ?? "";
+      const name = (p.name as string) ?? "";
+      const version_minor = (p.version_minor as string | null) ?? null;
+      const job_name = (p.job_name as string) ?? "";
+      const status = p.status as TestCaseStatus;
+      flakeRows.push({
+        test_suite: suite,
+        name,
+        framework: "",
+        version_minor,
+        job_name,
+        status,
       });
+      if (status === "failed") {
+        currentFailed.push({
+          test_suite: suite,
+          name,
+          version_minor,
+          job_name,
+          run_started_at: normalizeDate(p.run_started_at),
+          error_message: (p.error_message as string | null) ?? null,
+          failure_type: (p.failure_type as string | null) ?? null,
+        });
+      }
     }
-    currentScanned += page.length;
     if (page.length < pageSize) break;
     offset += page.length;
   }
+  const flakyKeys = new Set(
+    computeFlaky(flakeRows).map((f) =>
+      flakeGroupKey(f.test_suite, f.name, f.version_minor, f.job_name),
+    ),
+  );
 
   // ---- Scan 2: prior window (failed only) → key set ----
   const priorFilter = Filters.and(
@@ -910,7 +929,7 @@ async function _fetchRegressions(
     po += page.length;
   }
 
-  return detectRegressions(currentFailed, priorFailedKeys);
+  return detectRegressions(currentFailed, priorFailedKeys, flakyKeys);
 }
 
 /**
