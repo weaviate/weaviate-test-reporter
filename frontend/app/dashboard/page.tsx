@@ -173,21 +173,44 @@ export default function DashboardPage() {
         ) : null}
 
         <div>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-[11px] uppercase tracking-[0.2em] font-mono text-wv-fog-muted">
+              Trends
+            </p>
+            <TrendFilterBar filters={trendFilters} onChange={setTrendFilters} />
+          </div>
+
+          {trend.loading ? (
+            <LoadingState label="Charting run history…" />
+          ) : trend.error ? (
+            <ErrorState error={trend.error} />
+          ) : trend.data && trend.data.length > 0 ? (
+            <TrendCharts data={trend.data} />
+          ) : trend.data ? (
+            <EmptyState
+              Icon={TrendingUp}
+              title="No runs to chart"
+              description="No runs match the current window and filters — widen the range, clear filters, or ingest more runs."
+            />
+          ) : null}
+        </div>
+
+        <div>
           <div className="mb-4">
             <p className="text-[11px] uppercase tracking-[0.2em] font-mono text-wv-fog-muted">
-              New regressions
+              Expected vs executed
             </p>
             <p className="mt-1 text-[12px] text-wv-fog-muted">
-              Tests that started failing this window and weren&apos;t failing
-              before — known flakes and already-recurring failures suppressed.
+              Jobs whose latest run executed fewer tests than the run before — a
+              silent test-collapse.
             </p>
           </div>
-          {regressions.loading ? (
-            <LoadingState label="Classifying new vs known failures…" />
-          ) : regressions.error ? (
-            <ErrorState error={regressions.error} />
-          ) : regressions.data ? (
-            <NewRegressions report={regressions.data} />
+          {drops.loading ? (
+            <LoadingState label="Checking for executed drops…" />
+          ) : drops.error ? (
+            <ErrorState error={drops.error} />
+          ) : drops.data ? (
+            <ExecutedDrops drops={drops.data} />
           ) : null}
         </div>
 
@@ -213,42 +236,19 @@ export default function DashboardPage() {
         <div>
           <div className="mb-4">
             <p className="text-[11px] uppercase tracking-[0.2em] font-mono text-wv-fog-muted">
-              Expected vs executed
+              New regressions
             </p>
             <p className="mt-1 text-[12px] text-wv-fog-muted">
-              Jobs whose latest run executed fewer tests than the run before — a
-              silent test-collapse.
+              Tests that started failing this window and weren&apos;t failing
+              before — known flakes and already-recurring failures suppressed.
             </p>
           </div>
-          {drops.loading ? (
-            <LoadingState label="Checking for executed drops…" />
-          ) : drops.error ? (
-            <ErrorState error={drops.error} />
-          ) : drops.data ? (
-            <ExecutedDrops drops={drops.data} />
-          ) : null}
-        </div>
-
-        <div>
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <p className="text-[11px] uppercase tracking-[0.2em] font-mono text-wv-fog-muted">
-              Trends
-            </p>
-            <TrendFilterBar filters={trendFilters} onChange={setTrendFilters} />
-          </div>
-
-          {trend.loading ? (
-            <LoadingState label="Charting run history…" />
-          ) : trend.error ? (
-            <ErrorState error={trend.error} />
-          ) : trend.data && trend.data.length > 0 ? (
-            <TrendCharts data={trend.data} />
-          ) : trend.data ? (
-            <EmptyState
-              Icon={TrendingUp}
-              title="No runs to chart"
-              description="No runs match the current window and filters — widen the range, clear filters, or ingest more runs."
-            />
+          {regressions.loading ? (
+            <LoadingState label="Classifying new vs known failures…" />
+          ) : regressions.error ? (
+            <ErrorState error={regressions.error} />
+          ) : regressions.data ? (
+            <NewRegressions report={regressions.data} />
           ) : null}
         </div>
       </section>
