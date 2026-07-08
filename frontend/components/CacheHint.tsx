@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * Subtle freshness note for the cached read views (WS3 R6). The data is
  * memoized server-side (~hourly) and served with stale-while-revalidate, so

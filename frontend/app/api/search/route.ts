@@ -30,7 +30,9 @@ export async function POST(req: Request): Promise<Response> {
     ? (body.limit as number)
     : undefined;
   const failedOnly = Boolean(body.failedOnly);
-  return handle(() =>
-    semanticSearch(body.query as string, { limit, failedOnly, targetVector }),
+  return handle(
+    () =>
+      semanticSearch(body.query as string, { limit, failedOnly, targetVector }),
+    req,
   );
 }
