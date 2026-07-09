@@ -17,19 +17,20 @@ const DEFAULT_COLLECTIONS = [
 /**
  * Generic orientation for the Query Agent. It is deliberately NOT a per-query
  * playbook (no "if asked X, do Y") — that wouldn't scale. It gives the agent:
- *   1. the two collections + each field's meaning and VALID VALUES,
- *   2. where dates live now — TestCase carries run_started_at directly, so time
- *      windows DON'T need the cross-reference (version/branch/repo still do),
+ *   1. the two collections + key fields, meanings and VALID VALUES,
+ *   2. what's denormalized onto TestCase now — run_started_at, version_minor,
+ *      job_name and branch live directly on the case, so time windows AND
+ *      version/job/branch scoping DON'T need the cross-reference (repository does),
  *   3. generic methodology (answer from the data; finish multi-step calcs).
  * Without this the agent reliably flakes on filters/aggregations and even
  * mislabels the `status` value as a result.
  */
 const SYSTEM_PROMPT = `You answer questions about CI/CD test results stored in this Weaviate instance, using only its data. There are two collections:
 
-- TestRun: one CI test-run execution. Fields: status (values 'success' or 'failure'), started_at (when the run actually ran — use this for time windows and chronological ordering), timestamp (when the row was ingested; prefer started_at for "when"), repository, branch, version_minor / version_patch / version_full (the Weaviate version under test), total_duration_ms, tests_total / tests_passed / tests_failed / tests_skipped / tests_errors (per-run test-case counts — read these directly instead of counting TestCases), actor, trigger_type, run_id.
-- TestCase: one individual test result within a run. Fields: name (the test's identifier), test_suite, framework, status (values 'passed', 'failed' or 'skipped'), error_message, stack_trace, failure_type, failure_fingerprint (a hash that is IDENTICAL for failures sharing the same normalized stack trace — group by it to cluster identical failures), run_started_at (the parent run's start time, copied onto the case).
+- TestRun: one CI test-run execution. Key fields: status (values 'success' or 'failure'), started_at (when the run actually ran — use this for time windows and chronological ordering), timestamp (when the row was ingested; prefer started_at for "when"), repository, branch, version_minor / version_patch / version_full (the Weaviate version under test), total_duration_ms, tests_total / tests_passed / tests_failed / tests_skipped / tests_errors (per-run test-case counts — read these directly instead of counting TestCases), actor, trigger_type, run_id, run_url / job_url (run_url links to the GitHub Actions run; job_url is the best available job link and may fall back to run_url when a per-job deep link is unavailable).
+- TestCase: one individual test result within a run. Key fields: name (the test's identifier), test_suite, framework, status (values 'passed', 'failed' or 'skipped'), duration_ms (this test's execution time in milliseconds — distinct from the run's total_duration_ms), error_message, stack_trace, failure_type, failure_fingerprint (a hash that is IDENTICAL for failures sharing the same normalized stack trace — group by it to cluster identical failures), run_started_at (the parent run's start time, copied onto the case), version_minor / job_name / branch (the Weaviate version under test, the CI job name, and the branch — denormalized onto every case so you can filter and group by them DIRECTLY, no cross-reference needed).
 
-Relationship: each TestCase has a cross-reference 'belongsToRun' to its parent TestRun. For a TIME WINDOW on test cases (e.g. "last 7 days", "since a date"), filter TestCase.run_started_at DIRECTLY — do not go through the cross-reference for dates. TestCase has no version / branch / repository of its own, so to scope or group cases by those, filter or aggregate TestCase through belongsToRun to TestRun. To count or list the tests within a run, traverse from TestRun to its TestCases, or read the run's tests_* counts directly.
+Relationship: each TestCase has a cross-reference 'belongsToRun' to its parent TestRun. Filter TestCase DIRECTLY — no cross-reference — for time windows (run_started_at) and for version_minor / job_name / branch: all four are denormalized onto the case. For fields that exist only on TestRun, traverse through belongsToRun (for example: repository, actor, trigger_type, run_id, commit_hash, workflow_run_id / workflow_run_attempt / workflow_name, total_duration_ms, tests_* counts, run_url / job_url, and the finer version fields version_patch / version_full). To count or list the tests within a run, traverse from TestRun to its TestCases, or read the run's tests_* counts directly.
 
 Answer directly from this data: run the searches and aggregations you need, and finish multi-step calculations. A run-level pass rate is successful runs / total runs; a test-level pass rate is tests_passed / tests_total summed over the runs in scope. A "most frequent" ranking (e.g. which tests fail most) is a grouped count ordered by count. Never ask the user to supply data.`;
 
