@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { ActivitySquare, Zap } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
@@ -225,9 +225,7 @@ function FlakeTable({
           <thead>
             <tr className="text-[11px] uppercase tracking-[0.18em] font-mono text-wv-fog-muted">
               <th className="text-left px-5 py-2 font-medium">Test</th>
-              <th className="text-left px-3 py-2 font-medium">Suite</th>
               <th className="text-left px-3 py-2 font-medium">Version</th>
-              <th className="text-left px-3 py-2 font-medium">Job</th>
               <th className="text-right px-3 py-2 font-medium">Flakiness</th>
               <th className="text-right px-3 py-2 font-medium">Runs</th>
               <th className="text-right px-3 py-2 font-medium">Pass rate</th>
@@ -269,24 +267,18 @@ function FlakeRow({ row }: { row: FlakyTest }) {
       data-flake-name={row.name}
     >
       <td className="px-5 py-2.5 font-mono text-[13px]">
-        <Link
-          href={`/tests?suite=${encodeURIComponent(row.test_suite)}&name=${encodeURIComponent(row.name)}${row.version_minor ? `&version=${encodeURIComponent(row.version_minor)}` : ""}&from=flakes`}
-          className="text-wv-fog hover:text-wv-green transition-colors"
-          data-testid="flake-history-link"
-        >
-          {row.name}
-        </Link>
-      </td>
-      <td className="px-3 py-2.5 text-[12px] text-wv-fog-muted font-mono">
-        {row.test_suite}
+        <HoverMeta suite={row.test_suite} job={row.job_name}>
+          <Link
+            href={`/tests?suite=${encodeURIComponent(row.test_suite)}&name=${encodeURIComponent(row.name)}${row.version_minor ? `&version=${encodeURIComponent(row.version_minor)}` : ""}&from=flakes`}
+            className="text-wv-fog hover:text-wv-green transition-colors underline decoration-dotted decoration-wv-fog-muted/40 underline-offset-[3px]"
+            data-testid="flake-history-link"
+          >
+            {row.name}
+          </Link>
+        </HoverMeta>
       </td>
       <td className="px-3 py-2.5 text-[12px] text-wv-fog-muted font-mono tabular-nums">
         {row.version_minor ?? "—"}
-      </td>
-      <td className="px-3 py-2.5 text-[12px] text-wv-fog-muted font-mono">
-        <span className="block max-w-[220px] truncate" title={row.job_name}>
-          {row.job_name || "—"}
-        </span>
       </td>
       <td className="px-3 py-2.5 text-right tabular-nums">
         <span className={`font-mono ${tone}`}>{scorePct}%</span>
@@ -301,6 +293,63 @@ function FlakeRow({ row }: { row: FlakyTest }) {
         <StatusStrip statuses={row.recent_statuses} />
       </td>
     </tr>
+  );
+}
+
+/**
+ * Reveals a test's Suite + Job on hover/focus of its name, so the table doesn't
+ * need those two wide columns (and thus no horizontal scroll to read Version /
+ * Flakiness / Runs / Pass rate / Last N). Positioned `fixed` from the trigger's
+ * rect so it escapes the table's overflow-clipping ancestors.
+ */
+function HoverMeta({
+  suite,
+  job,
+  children,
+}: {
+  suite: string;
+  job: string;
+  children: ReactNode;
+}) {
+  const [box, setBox] = useState<{ left: number; top: number } | null>(null);
+  const open = (el: HTMLElement) => {
+    const r = el.getBoundingClientRect();
+    setBox({ left: r.left, top: r.bottom });
+  };
+  return (
+    <span
+      className="relative inline-flex max-w-full"
+      onMouseEnter={(e) => open(e.currentTarget)}
+      onMouseLeave={() => setBox(null)}
+      onFocus={(e) => open(e.currentTarget)}
+      onBlur={() => setBox(null)}
+    >
+      {children}
+      {box ? (
+        <span
+          role="tooltip"
+          className="fixed z-50 pointer-events-none rounded-md border border-wv-navy-3/70 bg-wv-navy px-3 py-2 shadow-lg"
+          style={{
+            left: box.left,
+            top: box.top + 6,
+            maxWidth: "min(90vw, 380px)",
+          }}
+        >
+          <span className="block text-[10px] uppercase tracking-[0.16em] font-mono text-wv-fog-muted">
+            Suite
+          </span>
+          <span className="block font-mono text-[12px] text-wv-fog break-all">
+            {suite || "—"}
+          </span>
+          <span className="mt-1.5 block text-[10px] uppercase tracking-[0.16em] font-mono text-wv-fog-muted">
+            Job
+          </span>
+          <span className="block font-mono text-[12px] text-wv-fog break-all">
+            {job || "—"}
+          </span>
+        </span>
+      ) : null}
+    </span>
   );
 }
 
