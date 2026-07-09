@@ -596,6 +596,11 @@ describe("detectExecutedDrops", () => {
       prevExecuted: 800,
       currExecuted: 600,
       dropPct: 0.25,
+      // both sides of the comparison are surfaced (baseline vs current run)
+      prevRunId: "e2e-2026-07-05T10:00:00.000Z",
+      prevStartedAt: "2026-07-05T10:00:00.000Z",
+      currRunId: "e2e-2026-07-06T10:00:00.000Z",
+      currStartedAt: "2026-07-06T10:00:00.000Z",
     });
   });
 
@@ -649,7 +654,7 @@ describe("detectExecutedDrops", () => {
     expect(out[0]).toMatchObject({ prevExecuted: 500, currExecuted: 200 });
   });
 
-  it("compares the two most recent runs regardless of input order; groups by (repo, job)", () => {
+  it("compares the two most recent runs regardless of input order; groups by (repo, job, version)", () => {
     const out = detectExecutedDrops([
       dropRow("weaviate", "e2e", "2026-07-01T00:00:00.000Z", 100), // older — ignored
       dropRow("weaviate", "e2e", "2026-07-06T00:00:00.000Z", 600), // latest
@@ -664,6 +669,37 @@ describe("detectExecutedDrops", () => {
       prevExecuted: 800,
       currExecuted: 600,
     });
+  });
+
+  it("evaluates EVERY version leg — catches a collapse on a non-newest version (WS-P C1)", () => {
+    // job "e2e" runs 1.36 and 1.37 each week; the 1.37 leg starts minutes later,
+    // so it is the job's overall-newest run. The 1.36 leg silently collapses
+    // 800→200. The old (repo, job)-only grouping evaluated ONLY list[0] (the
+    // stable 1.37 run) and never compared the 1.36 collapse — this is the bug.
+    const out = detectExecutedDrops([
+      dropRow("r", "e2e", "2026-07-01T10:00:00.000Z", 800, 0, "1.36"), // 1.36 prev
+      dropRow("r", "e2e", "2026-07-01T10:05:00.000Z", 700, 0, "1.37"), // 1.37 prev
+      dropRow("r", "e2e", "2026-07-08T10:00:00.000Z", 200, 0, "1.36"), // 1.36 latest — COLLAPSE
+      dropRow("r", "e2e", "2026-07-08T10:05:00.000Z", 700, 0, "1.37"), // 1.37 latest — stable, overall-newest
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      versionMinor: "1.36",
+      prevExecuted: 800,
+      currExecuted: 200,
+    });
+  });
+
+  it("flags multiple version legs of the same job independently", () => {
+    const out = detectExecutedDrops([
+      dropRow("r", "e2e", "2026-07-01T00:00:00.000Z", 800, 0, "1.36"),
+      dropRow("r", "e2e", "2026-07-08T00:00:00.000Z", 200, 0, "1.36"), // −75%
+      dropRow("r", "e2e", "2026-07-01T00:00:00.000Z", 600, 0, "1.37"),
+      dropRow("r", "e2e", "2026-07-08T00:00:00.000Z", 300, 0, "1.37"), // −50%
+    ]);
+    expect(out).toHaveLength(2);
+    // Sorted by drop magnitude, largest first.
+    expect(out.map((d) => d.versionMinor)).toEqual(["1.36", "1.37"]);
   });
 
   it("sorts flagged jobs by drop magnitude, largest first", () => {
