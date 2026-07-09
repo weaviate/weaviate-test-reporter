@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { ActivitySquare, Zap } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
@@ -225,9 +226,7 @@ function FlakeTable({
           <thead>
             <tr className="text-[11px] uppercase tracking-[0.18em] font-mono text-wv-fog-muted">
               <th className="text-left px-5 py-2 font-medium">Test</th>
-              <th className="text-left px-3 py-2 font-medium">Suite</th>
               <th className="text-left px-3 py-2 font-medium">Version</th>
-              <th className="text-left px-3 py-2 font-medium">Job</th>
               <th className="text-right px-3 py-2 font-medium">Flakiness</th>
               <th className="text-right px-3 py-2 font-medium">Runs</th>
               <th className="text-right px-3 py-2 font-medium">Pass rate</th>
@@ -269,24 +268,18 @@ function FlakeRow({ row }: { row: FlakyTest }) {
       data-flake-name={row.name}
     >
       <td className="px-5 py-2.5 font-mono text-[13px]">
-        <Link
-          href={`/tests?suite=${encodeURIComponent(row.test_suite)}&name=${encodeURIComponent(row.name)}${row.version_minor ? `&version=${encodeURIComponent(row.version_minor)}` : ""}&from=flakes`}
-          className="text-wv-fog hover:text-wv-green transition-colors"
-          data-testid="flake-history-link"
-        >
-          {row.name}
-        </Link>
-      </td>
-      <td className="px-3 py-2.5 text-[12px] text-wv-fog-muted font-mono">
-        {row.test_suite}
+        <HoverMeta suite={row.test_suite} job={row.job_name}>
+          <Link
+            href={`/tests?suite=${encodeURIComponent(row.test_suite)}&name=${encodeURIComponent(row.name)}${row.version_minor ? `&version=${encodeURIComponent(row.version_minor)}` : ""}&from=flakes`}
+            className="text-wv-fog hover:text-wv-green transition-colors underline decoration-dotted decoration-wv-fog-muted/40 underline-offset-[3px]"
+            data-testid="flake-history-link"
+          >
+            {row.name}
+          </Link>
+        </HoverMeta>
       </td>
       <td className="px-3 py-2.5 text-[12px] text-wv-fog-muted font-mono tabular-nums">
         {row.version_minor ?? "—"}
-      </td>
-      <td className="px-3 py-2.5 text-[12px] text-wv-fog-muted font-mono">
-        <span className="block max-w-[220px] truncate" title={row.job_name}>
-          {row.job_name || "—"}
-        </span>
       </td>
       <td className="px-3 py-2.5 text-right tabular-nums">
         <span className={`font-mono ${tone}`}>{scorePct}%</span>
@@ -301,6 +294,85 @@ function FlakeRow({ row }: { row: FlakyTest }) {
         <StatusStrip statuses={row.recent_statuses} />
       </td>
     </tr>
+  );
+}
+
+/**
+ * Reveals a test's Suite + Job on hover/focus of its name, so the table doesn't
+ * need those two wide columns (and thus no horizontal scroll to read Version /
+ * Flakiness / Runs / Pass rate / Last N). The popover is portaled to <body> and
+ * positioned `fixed` at the cursor (or, on keyboard focus, under the name) — a
+ * backdrop-filter ancestor would otherwise make `fixed` resolve to the card.
+ */
+function HoverMeta({
+  suite,
+  job,
+  children,
+}: {
+  suite: string;
+  job: string;
+  children: ReactNode;
+}) {
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  // Clamp the popover into the viewport: horizontally by its max width, and
+  // vertically by flipping above the anchor when it would overflow the bottom
+  // (worst-case ~2-line suite + 2-line job).
+  const TOOLTIP_MAX_H = 130;
+  const place = (left: number, anchorY: number, gap: number) => {
+    const below = anchorY + gap;
+    const top =
+      below + TOOLTIP_MAX_H > window.innerHeight
+        ? Math.max(8, anchorY - TOOLTIP_MAX_H - gap)
+        : below;
+    setPos({ left: Math.max(8, Math.min(left, window.innerWidth - 340)), top });
+  };
+  return (
+    <span
+      className="inline-flex max-w-full"
+      // Anchor to the cursor, not the (wide) name's left edge — otherwise the
+      // tooltip lands far from the pointer on long test names.
+      onMouseEnter={(e) => place(e.clientX + 14, e.clientY, 16)}
+      onMouseLeave={() => setPos(null)}
+      onFocus={(e) => {
+        // keyboard focus has no cursor — anchor just under the name instead.
+        const r = e.currentTarget.getBoundingClientRect();
+        place(r.left, r.bottom, 6);
+      }}
+      onBlur={() => setPos(null)}
+    >
+      {children}
+      {/* Portal to <body>: the flakes card uses backdrop-filter, which makes it
+          the containing block for position:fixed descendants — so a tooltip left
+          inside it would be offset by the card's origin. Rendering into body
+          restores true viewport-relative fixed positioning. */}
+      {pos
+        ? createPortal(
+            <span
+              role="tooltip"
+              className="fixed z-50 pointer-events-none rounded-md border border-wv-navy-3/70 bg-wv-navy px-3 py-2 shadow-lg"
+              style={{
+                left: pos.left,
+                top: pos.top,
+                maxWidth: "min(90vw, 340px)",
+              }}
+            >
+              <span className="block text-[10px] uppercase tracking-[0.16em] font-mono text-wv-fog-muted">
+                Suite
+              </span>
+              <span className="block font-mono text-[12px] text-wv-fog break-all">
+                {suite || "—"}
+              </span>
+              <span className="mt-1.5 block text-[10px] uppercase tracking-[0.16em] font-mono text-wv-fog-muted">
+                Job
+              </span>
+              <span className="block font-mono text-[12px] text-wv-fog break-all">
+                {job || "—"}
+              </span>
+            </span>,
+            document.body,
+          )
+        : null}
+    </span>
   );
 }
 
