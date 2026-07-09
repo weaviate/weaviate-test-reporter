@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { ActivitySquare, Zap } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
@@ -332,30 +333,37 @@ function HoverMeta({
       onBlur={() => setPos(null)}
     >
       {children}
-      {pos ? (
-        <span
-          role="tooltip"
-          className="fixed z-50 pointer-events-none rounded-md border border-wv-navy-3/70 bg-wv-navy px-3 py-2 shadow-lg"
-          style={{
-            left: pos.left,
-            top: pos.top,
-            maxWidth: "min(90vw, 340px)",
-          }}
-        >
-          <span className="block text-[10px] uppercase tracking-[0.16em] font-mono text-wv-fog-muted">
-            Suite
-          </span>
-          <span className="block font-mono text-[12px] text-wv-fog break-all">
-            {suite || "—"}
-          </span>
-          <span className="mt-1.5 block text-[10px] uppercase tracking-[0.16em] font-mono text-wv-fog-muted">
-            Job
-          </span>
-          <span className="block font-mono text-[12px] text-wv-fog break-all">
-            {job || "—"}
-          </span>
-        </span>
-      ) : null}
+      {/* Portal to <body>: the flakes card uses backdrop-filter, which makes it
+          the containing block for position:fixed descendants — so a tooltip left
+          inside it would be offset by the card's origin. Rendering into body
+          restores true viewport-relative fixed positioning. */}
+      {pos
+        ? createPortal(
+            <span
+              role="tooltip"
+              className="fixed z-50 pointer-events-none rounded-md border border-wv-navy-3/70 bg-wv-navy px-3 py-2 shadow-lg"
+              style={{
+                left: pos.left,
+                top: pos.top,
+                maxWidth: "min(90vw, 340px)",
+              }}
+            >
+              <span className="block text-[10px] uppercase tracking-[0.16em] font-mono text-wv-fog-muted">
+                Suite
+              </span>
+              <span className="block font-mono text-[12px] text-wv-fog break-all">
+                {suite || "—"}
+              </span>
+              <span className="mt-1.5 block text-[10px] uppercase tracking-[0.16em] font-mono text-wv-fog-muted">
+                Job
+              </span>
+              <span className="block font-mono text-[12px] text-wv-fog break-all">
+                {job || "—"}
+              </span>
+            </span>,
+            document.body,
+          )
+        : null}
     </span>
   );
 }
