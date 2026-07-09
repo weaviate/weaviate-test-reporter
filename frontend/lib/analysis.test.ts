@@ -596,6 +596,11 @@ describe("detectExecutedDrops", () => {
       prevExecuted: 800,
       currExecuted: 600,
       dropPct: 0.25,
+      // both sides of the comparison are surfaced (baseline vs current run)
+      prevRunId: "e2e-2026-07-05T10:00:00.000Z",
+      prevStartedAt: "2026-07-05T10:00:00.000Z",
+      currRunId: "e2e-2026-07-06T10:00:00.000Z",
+      currStartedAt: "2026-07-06T10:00:00.000Z",
     });
   });
 

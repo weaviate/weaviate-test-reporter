@@ -689,6 +689,11 @@ export type ExecutedDrop = {
   currStartedAt: string;
   currRunId: string;
   currJobUrl: string;
+  // The baseline run this was compared against (the previous run of the same
+  // (repo, job, version) leg) — so the UI can show both sides of the drop.
+  prevStartedAt: string;
+  prevRunId: string;
+  prevJobUrl: string;
 };
 
 /** Flag a job whose latest run executed ≥ this fraction fewer tests than the
@@ -763,6 +768,9 @@ export function detectExecutedDrops(rows: ExecutedDropRow[]): ExecutedDrop[] {
       currStartedAt: curr.started_at,
       currRunId: curr.run_id,
       currJobUrl: curr.job_url,
+      prevStartedAt: prev.started_at,
+      prevRunId: prev.run_id,
+      prevJobUrl: prev.job_url,
     });
   }
   return out.sort((a, b) => b.dropPct - a.dropPct);
