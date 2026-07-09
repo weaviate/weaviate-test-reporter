@@ -311,28 +311,35 @@ function HoverMeta({
   job: string;
   children: ReactNode;
 }) {
-  const [box, setBox] = useState<{ left: number; top: number } | null>(null);
-  const open = (el: HTMLElement) => {
-    const r = el.getBoundingClientRect();
-    setBox({ left: r.left, top: r.bottom });
-  };
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   return (
     <span
       className="relative inline-flex max-w-full"
-      onMouseEnter={(e) => open(e.currentTarget)}
-      onMouseLeave={() => setBox(null)}
-      onFocus={(e) => open(e.currentTarget)}
-      onBlur={() => setBox(null)}
+      // Anchor to the cursor, not the (wide) name's left edge — otherwise the
+      // tooltip lands far from the pointer on long test names.
+      onMouseEnter={(e) =>
+        setPos({
+          left: Math.max(8, Math.min(e.clientX + 14, window.innerWidth - 340)),
+          top: e.clientY + 16,
+        })
+      }
+      onMouseLeave={() => setPos(null)}
+      onFocus={(e) => {
+        // keyboard focus has no cursor — anchor just under the name instead.
+        const r = e.currentTarget.getBoundingClientRect();
+        setPos({ left: r.left, top: r.bottom + 6 });
+      }}
+      onBlur={() => setPos(null)}
     >
       {children}
-      {box ? (
+      {pos ? (
         <span
           role="tooltip"
           className="fixed z-50 pointer-events-none rounded-md border border-wv-navy-3/70 bg-wv-navy px-3 py-2 shadow-lg"
           style={{
-            left: box.left,
-            top: box.top + 6,
-            maxWidth: "min(90vw, 380px)",
+            left: pos.left,
+            top: pos.top,
+            maxWidth: "min(90vw, 340px)",
           }}
         >
           <span className="block text-[10px] uppercase tracking-[0.16em] font-mono text-wv-fog-muted">
