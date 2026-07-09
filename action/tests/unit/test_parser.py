@@ -529,6 +529,50 @@ def test_parse_summary_is_fail_safe_on_garbage(tmp_path: Path):
     assert summary.tests_total == 0
 
 
+# ---------- WS-P C4: partial-failure robustness (one bad attribute must not
+# ---------- abort the whole run / whole file) ----------
+
+
+def test_parse_summary_survives_a_non_numeric_count_attribute(tmp_path: Path):
+    """A single malformed <testsuite> count (tests="N/A") must not abort the run
+    summary. junitparser exposes counts as IntAttr, which RAISES on a non-numeric
+    value before _safe_int can coerce it — that one count degrades to 0, the
+    other suites' counts survive."""
+    xml = (
+        "<testsuites>"
+        '<testsuite name="a" tests="N/A" failures="1" errors="0" skipped="0">'
+        '<testcase name="t1" classname="a"/></testsuite>'
+        '<testsuite name="b" tests="3" failures="0" errors="0" skipped="1">'
+        '<testcase name="t2" classname="b"/></testsuite>'
+        "</testsuites>"
+    )
+    p = tmp_path / "bad_count.xml"
+    p.write_text(xml)
+    summary = parse_junit_summary(p)  # must not raise
+    assert summary.tests_total == 3  # "N/A" → 0, plus suite b's 3
+    assert summary.tests_failed == 1
+    assert summary.tests_skipped == 1
+
+
+def test_parse_file_survives_a_non_numeric_case_time(tmp_path: Path):
+    """A malformed testcase time="oops" must degrade to duration_ms=0 for that
+    one case, not abort the whole file's case stream. junitparser exposes `time`
+    as a FloatAttr that raises on a non-numeric value mid-iteration."""
+    xml = (
+        '<testsuites><testsuite name="s" tests="2">'
+        '<testcase name="good" classname="s" time="1.5"/>'
+        '<testcase name="bad" classname="s" time="oops"/>'
+        "</testsuite></testsuites>"
+    )
+    p = tmp_path / "bad_time.xml"
+    p.write_text(xml)
+    cases = list(parse_junit_file(p))  # must not raise / drop the file
+    assert len(cases) == 2
+    by_name = {c.name: c for c in cases}
+    assert by_name["good"].duration_ms == 1500
+    assert by_name["bad"].duration_ms == 0
+
+
 def test_merge_summaries_picks_min_timestamp_and_sums_counts():
     a = parse_junit_summary(FIXTURES / "timestamped_counts.xml")
     b = parse_junit_summary(FIXTURES / "surefire_reruns.xml")

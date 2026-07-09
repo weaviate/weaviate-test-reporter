@@ -167,6 +167,17 @@ def _count_reruns(case: JUnitTestCase) -> int:
         return 0
 
 
+def _safe_duration_ms(case: JUnitTestCase) -> int:
+    """Case duration in milliseconds. junitparser exposes `time` as a FloatAttr
+    that RAISES on a non-numeric value (e.g. time="oops"); left unguarded that
+    would abort the whole file's case stream mid-iteration. Degrade a bad/absent
+    duration to 0 for that one case instead."""
+    try:
+        return int(round((case.time or 0) * 1000))
+    except Exception:
+        return 0
+
+
 def _detect_framework(case: JUnitTestCase) -> str:
     """Best-effort framework detection from the case's classname/name.
 
@@ -230,7 +241,7 @@ def parse_junit_file(path: Path) -> Iterator[ParsedCase]:
                 test_suite=_pick_test_suite(case, fallback_suite_name),
                 framework=_detect_framework(case),
                 status=status,
-                duration_ms=int(round((case.time or 0) * 1000)),
+                duration_ms=_safe_duration_ms(case),
                 error_message=msg,
                 stack_trace=stack,
                 failure_type=ftype,
@@ -299,6 +310,18 @@ def _safe_int(value: object) -> int:
         return 0
 
 
+def _suite_count(suite: TestSuite, attr: str) -> int:
+    """Read a <testsuite> count attribute defensively. junitparser exposes these
+    as IntAttr, which RAISES on a non-numeric value (e.g. tests="N/A") — before
+    _safe_int can coerce it — so a single malformed attribute on one suite would
+    abort the whole run's summary. Degrade just that count to 0; the other suites
+    (and this suite's other counts) survive."""
+    try:
+        return _safe_int(getattr(suite, attr))
+    except Exception:
+        return 0
+
+
 def parse_junit_summary(path: Path) -> RunSummary:
     """Parse a JUnit file for its RUN-level aggregates only.
 
@@ -325,10 +348,10 @@ def parse_junit_summary(path: Path) -> RunSummary:
         # junitparser returns the XML attribute when present, else recomputes
         # from child cases — so these are populated even for dialects that omit
         # the summary attributes (WS1 D2 fallback happens for free here).
-        total += _safe_int(suite.tests)
-        failed += _safe_int(suite.failures)
-        errors += _safe_int(suite.errors)
-        skipped += _safe_int(suite.skipped)
+        total += _suite_count(suite, "tests")
+        failed += _suite_count(suite, "failures")
+        errors += _suite_count(suite, "errors")
+        skipped += _suite_count(suite, "skipped")
 
     return RunSummary(
         started_at=earliest,
