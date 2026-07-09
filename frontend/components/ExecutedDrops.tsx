@@ -174,15 +174,27 @@ function RunSide({
       >
         {fmtWhen(when)} · {runId}
       </p>
-      <a
-        href={jobUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="mt-2 inline-flex items-center gap-1 text-[12px] text-wv-fog-muted hover:text-wv-fog transition-colors"
-      >
-        View CI job
-        <ArrowUpRight size={12} strokeWidth={1.75} />
-      </a>
+      {jobUrl ? (
+        <a
+          href={jobUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 inline-flex items-center gap-1 text-[12px] text-wv-fog-muted hover:text-wv-fog transition-colors"
+        >
+          View CI job
+          <ArrowUpRight size={12} strokeWidth={1.75} />
+        </a>
+      ) : (
+        // No stored deep-link for this run (e.g. ingested before D5, or the
+        // jobs-API match failed). Show a disabled label instead of an <a href="">
+        // that would just reload the page.
+        <span
+          className="mt-2 inline-block text-[12px] text-wv-fog-muted/50"
+          title="This run has no stored CI job link."
+        >
+          no CI link
+        </span>
+      )}
     </div>
   );
 }
