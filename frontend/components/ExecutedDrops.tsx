@@ -30,7 +30,7 @@ export function ExecutedDrops({ drops }: { drops: ExecutedDrop[] }) {
     >
       {drops.map((d) => (
         <a
-          key={`${d.repository}/${d.job_name}`}
+          key={`${d.repository}/${d.job_name}/${d.versionMinor ?? ""}`}
           href={d.currJobUrl}
           target="_blank"
           rel="noopener noreferrer"

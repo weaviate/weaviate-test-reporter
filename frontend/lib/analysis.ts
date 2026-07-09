@@ -704,43 +704,49 @@ export const MIN_PREV_EXECUTED = 5;
  * tests_total − tests_skipped (clamped ≥ 0), the same "ran" definition as the
  * pass rate, so a jump in skips counts as a drop too.
  *
- * **Version-aware.** Tests are frequently skipped per version (a feature only
- * exists in 1.37+, so 1.36 runs legitimately execute fewer), so comparing
- * across versions is noise. For each (repository, job_name), the latest run is
- * compared only against the **most recent prior run of the SAME version_minor**.
- * A run on a brand-new version with no same-version predecessor is therefore not
- * evaluated — a version bump can never masquerade as a collapse.
+ * **Version-aware — per version leg.** Tests are frequently skipped per version
+ * (a feature only exists in 1.37+, so 1.36 runs legitimately execute fewer), so
+ * comparing across versions is noise. We group by
+ * `(repository, job_name, version_minor)` and evaluate the latest-vs-previous
+ * run **within each group**, so every version leg of a job is checked — not just
+ * the job's single overall-newest run. This matters because one job fans out
+ * across versions per weekly batch (e.g. the 1.37 leg starting minutes after the
+ * 1.36 leg): grouping only by (repo, job) and inspecting the newest run would
+ * silently miss a collapse on any version that isn't the overall-newest. A run
+ * on a brand-new version with no same-version predecessor still isn't evaluated —
+ * a version bump can never masquerade as a collapse.
  *
- * Pure + deterministic (house style). A job is flagged when its same-version
- * baseline executed at least MIN_PREV_EXECUTED tests AND the latest run dropped
- * by at least EXECUTED_DROP_THRESHOLD. Rows with no started_at, jobs with fewer
- * than two runs, and latest runs with no same-version baseline are skipped.
- * Output is sorted by drop magnitude, largest first.
+ * Pure + deterministic (house style). A leg is flagged when its previous
+ * same-version run executed at least MIN_PREV_EXECUTED tests AND the latest run
+ * dropped by at least EXECUTED_DROP_THRESHOLD. Rows with no started_at and legs
+ * with fewer than two runs are skipped. A single job can therefore surface more
+ * than one drop (one per collapsing version). Output is sorted by drop
+ * magnitude, largest first.
  */
 export function detectExecutedDrops(rows: ExecutedDropRow[]): ExecutedDrop[] {
-  const byJob = new Map<string, ExecutedDropRow[]>();
+  const byLeg = new Map<string, ExecutedDropRow[]>();
   for (const r of rows) {
     if (!r.started_at) continue; // can't order it
-    const key = JSON.stringify([r.repository, r.job_name]);
-    const list = byJob.get(key);
+    const key = JSON.stringify([
+      r.repository,
+      r.job_name,
+      r.version_minor ?? "",
+    ]);
+    const list = byLeg.get(key);
     if (list) list.push(r);
-    else byJob.set(key, [r]);
+    else byLeg.set(key, [r]);
   }
 
   const out: ExecutedDrop[] = [];
-  for (const list of byJob.values()) {
+  for (const list of byLeg.values()) {
     if (list.length < 2) continue;
     // Newest first (ISO strings sort chronologically).
     list.sort((a, b) =>
       a.started_at < b.started_at ? 1 : a.started_at > b.started_at ? -1 : 0,
     );
     const curr = list[0];
-    // Baseline = the most recent OLDER run of the SAME version_minor. Skip over
-    // any interleaved runs on a different version so 1.37-vs-1.36 never flags.
-    const prev = list
-      .slice(1)
-      .find((r) => r.version_minor === curr.version_minor);
-    if (!prev) continue; // no same-version baseline (e.g. first run on a version)
+    // Baseline = the previous run of this same (repo, job, version) leg.
+    const prev = list[1];
     const currExecuted = Math.max(0, curr.tests_total - curr.tests_skipped);
     const prevExecuted = Math.max(0, prev.tests_total - prev.tests_skipped);
     if (prevExecuted < MIN_PREV_EXECUTED) continue;
