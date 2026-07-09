@@ -300,8 +300,9 @@ function FlakeRow({ row }: { row: FlakyTest }) {
 /**
  * Reveals a test's Suite + Job on hover/focus of its name, so the table doesn't
  * need those two wide columns (and thus no horizontal scroll to read Version /
- * Flakiness / Runs / Pass rate / Last N). Positioned `fixed` from the trigger's
- * rect so it escapes the table's overflow-clipping ancestors.
+ * Flakiness / Runs / Pass rate / Last N). The popover is portaled to <body> and
+ * positioned `fixed` at the cursor (or, on keyboard focus, under the name) — a
+ * backdrop-filter ancestor would otherwise make `fixed` resolve to the card.
  */
 function HoverMeta({
   suite,
@@ -313,22 +314,29 @@ function HoverMeta({
   children: ReactNode;
 }) {
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  // Clamp the popover into the viewport: horizontally by its max width, and
+  // vertically by flipping above the anchor when it would overflow the bottom
+  // (worst-case ~2-line suite + 2-line job).
+  const TOOLTIP_MAX_H = 130;
+  const place = (left: number, anchorY: number, gap: number) => {
+    const below = anchorY + gap;
+    const top =
+      below + TOOLTIP_MAX_H > window.innerHeight
+        ? Math.max(8, anchorY - TOOLTIP_MAX_H - gap)
+        : below;
+    setPos({ left: Math.max(8, Math.min(left, window.innerWidth - 340)), top });
+  };
   return (
     <span
-      className="relative inline-flex max-w-full"
+      className="inline-flex max-w-full"
       // Anchor to the cursor, not the (wide) name's left edge — otherwise the
       // tooltip lands far from the pointer on long test names.
-      onMouseEnter={(e) =>
-        setPos({
-          left: Math.max(8, Math.min(e.clientX + 14, window.innerWidth - 340)),
-          top: e.clientY + 16,
-        })
-      }
+      onMouseEnter={(e) => place(e.clientX + 14, e.clientY, 16)}
       onMouseLeave={() => setPos(null)}
       onFocus={(e) => {
         // keyboard focus has no cursor — anchor just under the name instead.
         const r = e.currentTarget.getBoundingClientRect();
-        setPos({ left: r.left, top: r.bottom + 6 });
+        place(r.left, r.bottom, 6);
       }}
       onBlur={() => setPos(null)}
     >
