@@ -60,7 +60,9 @@ function toneAccent(tone: "good" | "bad" | "neutral"): string {
 }
 
 export default function DashboardPage() {
-  const [rangeId, setRangeId] = useState<RangeId>("7d");
+  // Default to 30d: at ~weekly CI a 7d window holds too few runs for the
+  // regression/flake/cluster sections to be meaningful (they read "all clear").
+  const [rangeId, setRangeId] = useState<RangeId>("30d");
   const range = RANGES.find((r) => r.id === rangeId)!;
   const sinceIso = range.days > 0 ? isoDaysAgo(range.days) : undefined;
 
@@ -73,8 +75,8 @@ export default function DashboardPage() {
     [sinceIso ?? "all"],
   );
   // Regressions compare a window to the window before it, so "all time" has no
-  // meaningful prior window — fall back to 7d there.
-  const regDays = range.days > 0 ? range.days : 7;
+  // meaningful prior window — fall back to 30d there (cadence-aware default).
+  const regDays = range.days > 0 ? range.days : 30;
   const regressions = useAsync(() => fetchRegressions(regDays), [regDays]);
   const clusters = useAsync(() => fetchFailureClusters(regDays), [regDays]);
   const [trendFilters, setTrendFilters] = useState<TrendFilters>({});

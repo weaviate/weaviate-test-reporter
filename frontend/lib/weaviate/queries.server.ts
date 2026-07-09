@@ -122,6 +122,13 @@ const GROUP_LIMIT = 1000;
 // stop on a partial page or once the hard ceiling is reached.
 const FLAKES_PAGE_SIZE = 5000;
 const FLAKES_MAX_ROWS = 200_000;
+// Regressions (R2) suppress known flakes, but flakiness needs ≥3 observations
+// (computeFlaky's minRuns). At ~weekly CI a short regression window (e.g. 7d)
+// holds too few runs per (suite,name,version,job) to ever detect a flake, so the
+// flake set would be near-empty and week-over-week flakes would surface as NEW.
+// Detect flakiness over at least this many trailing days, decoupled from the
+// regression window. ~4 weekly runs is enough to clear minRuns.
+const REGRESSION_FLAKE_MIN_DAYS = 28;
 // Version rollup pages actual TestRun rows (exact, deterministic counts) —
 // see rollupRunsByMinor for why we don't use approximate Aggregate groupBy.
 const VERSION_PAGE_SIZE = 1000;
@@ -795,24 +802,36 @@ async function _fetchFlakyTests(
 /**
  * Regression detection (WS3 R2): classify the current window's failures into
  * NEW / known-flaky / recurring. Two scans off the denormalized case fields:
- *   1. current window (passed+failed) → the flakes set (via computeFlaky) AND
- *      the current failures with their error/time;
+ *   1. flake window (passed+failed, ≥ REGRESSION_FLAKE_MIN_DAYS) → the flakes
+ *      set (via computeFlaky), AND the current failures (only those inside the
+ *      narrower regression window) with their error/time;
  *   2. prior window (failed only) → the set of keys that failed before.
  * `detectRegressions` then buckets each failing (suite, name, version, job).
+ * The flake window is decoupled from (and never narrower than) the regression
+ * window so flake suppression isn't structurally empty at weekly cadence.
  * ONE consistency (trailing trend, like the flakes scan).
  */
 async function _fetchRegressions(
   opts: { days?: number } = {},
 ): Promise<RegressionReport> {
   const days = Number.isFinite(opts.days) ? (opts.days as number) : 7;
+  // Detect flakiness over a WIDER trailing window than the regression window so
+  // the flake set isn't structurally empty at weekly cadence (see
+  // REGRESSION_FLAKE_MIN_DAYS). currentFailed is still limited to the regression
+  // window (`sinceIso`) below; only flakyKeys uses the wider scan.
+  const flakeDays = Math.max(days, REGRESSION_FLAKE_MIN_DAYS);
   const client = await getClient();
   const cases = client.collections.get<CaseProps>(COLLECTIONS.TEST_CASE);
-  const since = new Date(isoDaysAgo(days));
+  const sinceIso = isoDaysAgo(days);
+  const since = new Date(sinceIso);
+  const flakeSince = new Date(isoDaysAgo(flakeDays));
   const priorSince = new Date(isoDaysAgo(2 * days));
 
-  // ---- Scan 1: current window (passed+failed) → flakes set + failures ----
+  // ---- Scan 1: flake window (passed+failed) → flakes set + current failures --
+  // Scans the wider flake window; each failing row is added to currentFailed
+  // only if it falls inside the (narrower) regression window.
   const currentFilter = Filters.and(
-    cases.filter.byProperty("run_started_at").greaterOrEqual(since),
+    cases.filter.byProperty("run_started_at").greaterOrEqual(flakeSince),
     Filters.or(
       cases.filter.byProperty("status").equal("passed"),
       cases.filter.byProperty("status").equal("failed"),
@@ -871,13 +890,16 @@ async function _fetchRegressions(
         job_name,
         status,
       });
-      if (status === "failed") {
+      // currentFailed drives NEW-vs-recurring, which is scoped to the regression
+      // window — so exclude the wider flake window's older failures here.
+      const runStartedAt = normalizeDate(p.run_started_at);
+      if (status === "failed" && runStartedAt >= sinceIso) {
         currentFailed.push({
           test_suite: suite,
           name,
           version_minor,
           job_name,
-          run_started_at: normalizeDate(p.run_started_at),
+          run_started_at: runStartedAt,
           error_message: (p.error_message as string | null) ?? null,
           failure_type: (p.failure_type as string | null) ?? null,
         });

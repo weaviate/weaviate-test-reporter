@@ -23,11 +23,11 @@ test.describe("Flakes page", () => {
 
   test("switching the window triggers a refetch", async ({ page }) => {
     await page.goto("/flakes/");
-    // Default is 7d; click 30d. Either the table updates or empty
+    // Default is 30d; click 7d. Either the table updates or empty
     // state still shows — both are valid; the assertion is that the
     // pressed-state moves.
-    const thirty = page.getByRole("button", { name: /last 30 days/i });
-    await thirty.click();
-    await expect(thirty).toHaveAttribute("aria-pressed", "true");
+    const seven = page.getByRole("button", { name: /last 7 days/i });
+    await seven.click();
+    await expect(seven).toHaveAttribute("aria-pressed", "true");
   });
 });

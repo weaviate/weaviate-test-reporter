@@ -27,7 +27,9 @@ const WINDOWS: { id: FlakesWindow; label: string }[] = [
 ];
 
 export default function FlakesPage() {
-  const [window, setWindow] = useState<FlakesWindow>("7d");
+  // Default to 30d: at ~weekly CI a 7d window rarely holds the ≥3 runs per
+  // (suite,name,version,job) that flake detection needs, so it reads as empty.
+  const [window, setWindow] = useState<FlakesWindow>("30d");
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
   const flakes = useAsync(() => fetchFlakyTests(window), [window]);
 
