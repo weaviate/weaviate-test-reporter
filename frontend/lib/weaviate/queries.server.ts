@@ -603,6 +603,7 @@ async function _fetchExecutedDrops(sinceIso?: string): Promise<ExecutedDrop[]> {
         "job_url",
         "run_url",
         "workflow_run_id",
+        "workflow_run_attempt",
       ],
     });
     const page = res.objects as unknown as RawObject[];
@@ -619,6 +620,7 @@ async function _fetchExecutedDrops(sinceIso?: string): Promise<ExecutedDrop[]> {
         job_url: (p.job_url as string) || (p.run_url as string) || "",
         run_url: (p.run_url as string) ?? "",
         workflow_run_id: (p.workflow_run_id as string) ?? "",
+        workflow_run_attempt: (p.workflow_run_attempt as number) ?? 1,
       });
     }
     if (page.length < pageSize) break;
@@ -889,6 +891,10 @@ async function _fetchRegressions(
     if (page.length < pageSize) break;
     offset += page.length;
   }
+  // KEYS ONLY: this scan's sort puts version/job before the time key, so a
+  // multi-shard family group's statuses arrive shard-major, not chronological.
+  // Membership is order-invariant (see computeFlaky's order caveat); the
+  // scores/recent_statuses of THIS call are scrambled and must not be consumed.
   const flakyKeys = new Set(
     computeFlaky(flakeRows).map((f) =>
       flakeGroupKey(f.test_suite, f.name, f.version_minor, f.job_name),

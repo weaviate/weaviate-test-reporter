@@ -88,6 +88,12 @@ export function flakeGroupKey(
  * skip/dupe rows), and the trailing time key makes each group chronological.
  * Grouping is by Map, so array contiguity isn't required. `flakiness_score =
  * transitions / (runs - 1)`. Groups with < `minRuns` obs, or 0 transitions, drop.
+ *
+ * Order caveat: group MEMBERSHIP (transitions > 0, ≥ minRuns) is permutation-
+ * invariant — a mixed pass/fail sequence has ≥1 transition in any order — but
+ * `flakiness_score` and `recent_statuses` are only meaningful on chronological
+ * input. A caller whose sort interleaves other keys before the time key (e.g.
+ * the regressions scan's shard-major sort) may consume group keys ONLY.
  */
 export function computeFlaky(rows: FlakeRow[], minRuns = 3): FlakyTest[] {
   type Acc = {
@@ -702,6 +708,10 @@ export type ExecutedDropRow = {
   // family's executed counts are summed per batch before comparing. Empty /
   // absent (legacy rows) → the run is its own batch.
   workflow_run_id?: string;
+  // Re-runs mint a NEW TestRun per attempt under the SAME workflow_run_id
+  // (the action's UUID includes the attempt), so within a batch the latest
+  // attempt per shard replaces — never adds to — the earlier one.
+  workflow_run_attempt?: number;
   // Workflow-run page (shared by all shards) — the link a multi-shard batch
   // surfaces instead of one arbitrary shard's job_url.
   run_url?: string;
@@ -799,20 +809,37 @@ export function detectExecutedDrops(rows: ExecutedDropRow[]): ExecutedDrop[] {
     if (batches.size < 2) continue;
     const summed: Batch[] = [];
     for (const shard of batches.values()) {
+      // Latest attempt wins per raw shard: a "Re-run failed jobs" click adds
+      // attempt-2 rows under the same workflow_run_id, and summing both
+      // attempts would double-count the shard (inflating the baseline into a
+      // false drop the next night). Ties fall back to the later started_at.
+      const byShard = new Map<string, ExecutedDropRow>();
+      for (const r of shard) {
+        const prev = byShard.get(r.job_name);
+        const attempt = r.workflow_run_attempt ?? 1;
+        const prevAttempt = prev?.workflow_run_attempt ?? 1;
+        if (
+          !prev ||
+          attempt > prevAttempt ||
+          (attempt === prevAttempt && r.started_at > prev.started_at)
+        ) {
+          byShard.set(r.job_name, r);
+        }
+      }
       let executed = 0;
       let total = 0;
-      let rep = shard[0];
-      for (const r of shard) {
+      let rep: ExecutedDropRow | null = null;
+      for (const r of byShard.values()) {
         executed += Math.max(0, r.tests_total - r.tests_skipped);
         total += r.tests_total;
-        if (r.started_at > rep.started_at) rep = r;
+        if (!rep || r.started_at > rep.started_at) rep = r;
       }
       summed.push({
         executed,
         total,
-        startedAt: rep.started_at,
-        rep,
-        multi: shard.length > 1,
+        startedAt: rep!.started_at,
+        rep: rep!,
+        multi: byShard.size > 1,
       });
     }
     // Newest first (ISO strings sort chronologically).

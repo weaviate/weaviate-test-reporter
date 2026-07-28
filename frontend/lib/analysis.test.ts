@@ -638,6 +638,7 @@ describe("detectExecutedDrops", () => {
     version_minor: string | null = "1.37",
     workflow_run_id = "",
     run_url = "",
+    workflow_run_attempt = 1,
   ): ExecutedDropRow => ({
     repository,
     job_name,
@@ -649,6 +650,161 @@ describe("detectExecutedDrops", () => {
     job_url: "https://ci/x",
     workflow_run_id,
     run_url,
+    workflow_run_attempt,
+  });
+
+  it("dedupes re-run attempts within a batch — latest attempt wins per shard", () => {
+    // wf-2: 4 shards at attempt 1; one shard re-run at attempt 2 with fewer
+    // executed. Summing all rows would double-count the shard (1040 vs a true
+    // 640); latest-attempt-wins yields 3×200 + 40 = 640 → a real −20% drop.
+    const out = detectExecutedDrops([
+      dropRow(
+        "r",
+        "e2e-split-1-of-4",
+        "2026-07-05T00:00:00.000Z",
+        200,
+        0,
+        "1.37",
+        "wf-1",
+      ),
+      dropRow(
+        "r",
+        "e2e-split-2-of-4",
+        "2026-07-05T00:01:00.000Z",
+        200,
+        0,
+        "1.37",
+        "wf-1",
+      ),
+      dropRow(
+        "r",
+        "e2e-split-3-of-4",
+        "2026-07-05T00:02:00.000Z",
+        200,
+        0,
+        "1.37",
+        "wf-1",
+      ),
+      dropRow(
+        "r",
+        "e2e-split-4-of-4",
+        "2026-07-05T00:03:00.000Z",
+        200,
+        0,
+        "1.37",
+        "wf-1",
+      ),
+      dropRow(
+        "r",
+        "e2e-split-1-of-4",
+        "2026-07-06T00:00:00.000Z",
+        200,
+        0,
+        "1.37",
+        "wf-2",
+      ),
+      dropRow(
+        "r",
+        "e2e-split-2-of-4",
+        "2026-07-06T00:01:00.000Z",
+        200,
+        0,
+        "1.37",
+        "wf-2",
+      ),
+      dropRow(
+        "r",
+        "e2e-split-3-of-4",
+        "2026-07-06T00:02:00.000Z",
+        200,
+        0,
+        "1.37",
+        "wf-2",
+      ),
+      dropRow(
+        "r",
+        "e2e-split-4-of-4",
+        "2026-07-06T00:03:00.000Z",
+        200,
+        0,
+        "1.37",
+        "wf-2",
+      ),
+      // attempt-2 re-run of shard 4, hours later, collected fewer tests
+      dropRow(
+        "r",
+        "e2e-split-4-of-4",
+        "2026-07-06T06:00:00.000Z",
+        40,
+        0,
+        "1.37",
+        "wf-2",
+        "",
+        2,
+      ),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      prevExecuted: 800,
+      currExecuted: 640, // NOT 1040 — attempt 1's shard 4 replaced, not added
+      dropPct: 0.2,
+    });
+  });
+
+  it("does NOT flag when a re-run attempt merely repeats a shard's counts", () => {
+    // Same night re-run with identical counts: dedupe keeps the batch total at
+    // 400, matching the prior batch — summing attempts would fake a rise then
+    // a drop the following night.
+    const out = detectExecutedDrops([
+      dropRow(
+        "r",
+        "e2e-split-1-of-2",
+        "2026-07-05T00:00:00.000Z",
+        200,
+        0,
+        "1.37",
+        "wf-1",
+      ),
+      dropRow(
+        "r",
+        "e2e-split-2-of-2",
+        "2026-07-05T00:01:00.000Z",
+        200,
+        0,
+        "1.37",
+        "wf-1",
+      ),
+      dropRow(
+        "r",
+        "e2e-split-1-of-2",
+        "2026-07-06T00:00:00.000Z",
+        200,
+        0,
+        "1.37",
+        "wf-2",
+      ),
+      dropRow(
+        "r",
+        "e2e-split-2-of-2",
+        "2026-07-06T00:01:00.000Z",
+        200,
+        0,
+        "1.37",
+        "wf-2",
+      ),
+      dropRow(
+        "r",
+        "e2e-split-2-of-2",
+        "2026-07-06T05:00:00.000Z",
+        200,
+        0,
+        "1.37",
+        "wf-2",
+        "",
+        2,
+      ),
+    ]);
+    expect(out).toEqual([]);
   });
 
   it("flags a job whose latest run executed ≥10% fewer tests than the run before", () => {
