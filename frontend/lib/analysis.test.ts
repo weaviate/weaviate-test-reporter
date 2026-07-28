@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   isoDaysAgo,
+  jobFamily,
   computeFlaky,
   deriveKpis,
   rollupRunsByMinor,
@@ -46,6 +47,35 @@ describe("isoDaysAgo", () => {
   it("goes further back as days increases", () => {
     expect(isoDaysAgo(7) < isoDaysAgo(0)).toBe(true);
     expect(isoDaysAgo(30) < isoDaysAgo(7)).toBe(true);
+  });
+});
+
+describe("jobFamily", () => {
+  it("strips the dynamic-split shard suffix", () => {
+    expect(jobFamily("e2e-tests-replicas-1-split-3-of-4")).toBe(
+      "e2e-tests-replicas-1",
+    );
+    expect(jobFamily("e2e-tests-replicas-3-split-12-of-16")).toBe(
+      "e2e-tests-replicas-3",
+    );
+  });
+
+  it("strips a mid-name shard segment", () => {
+    expect(jobFamily("e2e-split-2-of-4-marks-e2e_schema")).toBe(
+      "e2e-marks-e2e_schema",
+    );
+  });
+
+  it("leaves non-sharded names untouched", () => {
+    expect(jobFamily("e2e-tests-replicas-7")).toBe("e2e-tests-replicas-7");
+    expect(jobFamily("recovery-pytest-recall-test-replicas-3")).toBe(
+      "recovery-pytest-recall-test-replicas-3",
+    );
+    expect(jobFamily("")).toBe("");
+  });
+
+  it("does not strip lookalikes that aren't N-of-M", () => {
+    expect(jobFamily("e2e-split-brain-test")).toBe("e2e-split-brain-test");
   });
 });
 
@@ -97,6 +127,39 @@ describe("computeFlaky", () => {
     expect(out).toHaveLength(2);
     expect(new Set(out.map((t) => t.test_suite))).toEqual(
       new Set(["suiteA", "suiteB"]),
+    );
+  });
+
+  it("merges dynamic-split shards of one job into a single family leg", () => {
+    // The splitter moves the test to a different shard each night; the three
+    // observations are ONE leg (real sample), not three 1-run fragments.
+    const rows = [
+      row("a", "x", "passed", "pytest", "1.37", "e2e-replicas-1-split-1-of-4"),
+      row("a", "x", "failed", "pytest", "1.37", "e2e-replicas-1-split-3-of-4"),
+      row("a", "x", "passed", "pytest", "1.37", "e2e-replicas-1-split-2-of-4"),
+    ];
+    const out = computeFlaky(rows);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      job_name: "e2e-replicas-1",
+      total_runs: 3,
+      transitions: 2,
+    });
+  });
+
+  it("keeps different job families distinct", () => {
+    const rows = [
+      row("a", "x", "passed", "pytest", "1.37", "e2e-replicas-1-split-1-of-4"),
+      row("a", "x", "failed", "pytest", "1.37", "e2e-replicas-1-split-2-of-4"),
+      row("a", "x", "passed", "pytest", "1.37", "e2e-replicas-1-split-1-of-4"),
+      row("a", "x", "failed", "pytest", "1.37", "e2e-replicas-3-split-1-of-4"),
+      row("a", "x", "passed", "pytest", "1.37", "e2e-replicas-3-split-2-of-4"),
+      row("a", "x", "failed", "pytest", "1.37", "e2e-replicas-3-split-1-of-4"),
+    ];
+    const out = computeFlaky(rows);
+    expect(out).toHaveLength(2);
+    expect(new Set(out.map((t) => t.job_name))).toEqual(
+      new Set(["e2e-replicas-1", "e2e-replicas-3"]),
     );
   });
 
@@ -573,6 +636,8 @@ describe("detectExecutedDrops", () => {
     tests_total: number,
     tests_skipped = 0,
     version_minor: string | null = "1.37",
+    workflow_run_id = "",
+    run_url = "",
   ): ExecutedDropRow => ({
     repository,
     job_name,
@@ -582,6 +647,8 @@ describe("detectExecutedDrops", () => {
     tests_skipped,
     run_id: `${job_name}-${started_at}`,
     job_url: "https://ci/x",
+    workflow_run_id,
+    run_url,
   });
 
   it("flags a job whose latest run executed ≥10% fewer tests than the run before", () => {
@@ -722,6 +789,135 @@ describe("detectExecutedDrops", () => {
     expect(out).toEqual([]);
   });
 
+  it("sums dynamic-split shards per workflow batch and compares batch totals", () => {
+    // Night A (wf-1): 4 shards totalling 800. Night B (wf-2): 4 shards
+    // totalling 600 → one family-level −25% drop, not per-shard noise.
+    const shards = (
+      wf: string,
+      t0: string,
+      counts: number[],
+    ): ExecutedDropRow[] =>
+      counts.map((n, i) =>
+        dropRow(
+          "r",
+          `e2e-replicas-1-split-${i + 1}-of-${counts.length}`,
+          t0.replace("00:00:00", `00:0${i}:00`),
+          n,
+          0,
+          "1.37",
+          wf,
+          `https://ci/actions/runs/${wf}`,
+        ),
+      );
+    const out = detectExecutedDrops([
+      ...shards("wf-1", "2026-07-05T00:00:00.000Z", [200, 200, 200, 200]),
+      ...shards("wf-2", "2026-07-06T00:00:00.000Z", [150, 150, 150, 150]),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      job_name: "e2e-replicas-1",
+      prevExecuted: 800,
+      currExecuted: 600,
+      dropPct: 0.25,
+      // Multi-shard batches link to the shared workflow run, not one shard.
+      currJobUrl: "https://ci/actions/runs/wf-2",
+      prevJobUrl: "https://ci/actions/runs/wf-1",
+    });
+  });
+
+  it("does NOT flag shard-count or per-shard rebalancing when the family total is stable", () => {
+    // The splitter rebalances 4 shards → 6 shards; per-shard counts change
+    // wildly but the family executes the same 800 tests. This was the daily
+    // false positive under per-shard comparison.
+    const out = detectExecutedDrops([
+      dropRow(
+        "r",
+        "e2e-split-1-of-4",
+        "2026-07-05T00:00:00.000Z",
+        300,
+        0,
+        "1.37",
+        "wf-1",
+      ),
+      dropRow(
+        "r",
+        "e2e-split-2-of-4",
+        "2026-07-05T00:01:00.000Z",
+        100,
+        0,
+        "1.37",
+        "wf-1",
+      ),
+      dropRow(
+        "r",
+        "e2e-split-3-of-4",
+        "2026-07-05T00:02:00.000Z",
+        250,
+        0,
+        "1.37",
+        "wf-1",
+      ),
+      dropRow(
+        "r",
+        "e2e-split-4-of-4",
+        "2026-07-05T00:03:00.000Z",
+        150,
+        0,
+        "1.37",
+        "wf-1",
+      ),
+      ...[130, 140, 120, 140, 130, 140].map((n, i) =>
+        dropRow(
+          "r",
+          `e2e-split-${i + 1}-of-6`,
+          `2026-07-06T00:0${i}:00.000Z`,
+          n,
+          0,
+          "1.37",
+          "wf-2",
+        ),
+      ),
+    ]);
+    expect(out).toEqual([]);
+  });
+
+  it("treats runs without workflow_run_id as their own batch (legacy fallback)", () => {
+    const out = detectExecutedDrops([
+      dropRow("r", "legacy-job", "2026-07-05T00:00:00.000Z", 800),
+      dropRow("r", "legacy-job", "2026-07-06T00:00:00.000Z", 600),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ prevExecuted: 800, currExecuted: 600 });
+  });
+
+  it("keeps a single-run batch's per-job deep link", () => {
+    const out = detectExecutedDrops([
+      dropRow(
+        "r",
+        "j",
+        "2026-07-05T00:00:00.000Z",
+        800,
+        0,
+        "1.37",
+        "wf-1",
+        "https://ci/actions/runs/wf-1",
+      ),
+      dropRow(
+        "r",
+        "j",
+        "2026-07-06T00:00:00.000Z",
+        600,
+        0,
+        "1.37",
+        "wf-2",
+        "https://ci/actions/runs/wf-2",
+      ),
+    ]);
+    expect(out).toHaveLength(1);
+    // One run per batch → the shard-level job_url stays the better link.
+    expect(out[0].currJobUrl).toBe("https://ci/x");
+  });
+
   it("compares against the most recent SAME-version run, skipping an interleaved other version", () => {
     const out = detectExecutedDrops([
       dropRow("r", "e2e", "2026-07-04T00:00:00.000Z", 800, 0, "1.37"), // 1.37 baseline
@@ -851,6 +1047,19 @@ describe("groupHistoryByJob", () => {
     expect(series.map((s) => s.job)).toEqual(["new-job", "old-job"]);
   });
 
+  it("merges dynamic-split shards into one family series, keeping raw shard on the point", () => {
+    const series = groupHistoryByJob([
+      pt("e2e-replicas-3-split-2-of-4", "2026-07-01T00:00:00.000Z"),
+      pt("e2e-replicas-3-split-1-of-4", "2026-07-02T00:00:00.000Z"),
+    ]);
+    expect(series).toHaveLength(1);
+    expect(series[0].job).toBe("e2e-replicas-3");
+    expect(series[0].points.map((p) => p.jobName)).toEqual([
+      "e2e-replicas-3-split-2-of-4",
+      "e2e-replicas-3-split-1-of-4",
+    ]);
+  });
+
   it("buckets a missing job name under a single empty-key series", () => {
     const series = groupHistoryByJob([pt("", "2026-07-01T00:00:00.000Z")]);
     expect(series).toHaveLength(1);
@@ -885,6 +1094,25 @@ describe("detectRegressions", () => {
     expect(rep.regressions[0]).toMatchObject({ name: "test_x", failCount: 1 });
     expect(rep.knownFlakyCount).toBe(0);
     expect(rep.recurringCount).toBe(0);
+  });
+
+  it("matches a prior failure across dynamic-split shards (recurring, not NEW)", () => {
+    // Yesterday the test failed in split-2-of-4; tonight the splitter put it
+    // in split-1-of-4. Same family leg → recurring, not a fresh regression.
+    const prior = rr("test_x", { job_name: "e2e-replicas-1-split-2-of-4" });
+    const current = rr("test_x", { job_name: "e2e-replicas-1-split-1-of-4" });
+    const rep = detectRegressions([current], new Set([key(prior)]), new Set());
+    expect(rep.newCount).toBe(0);
+    expect(rep.recurringCount).toBe(1);
+  });
+
+  it("reports the job family, not the shard, on a NEW regression", () => {
+    const rep = detectRegressions(
+      [rr("test_x", { job_name: "e2e-replicas-1-split-3-of-4" })],
+      new Set(),
+      new Set(),
+    );
+    expect(rep.regressions[0].job_name).toBe("e2e-replicas-1");
   });
 
   it("does NOT flag a recurring failure (failed in the prior window)", () => {

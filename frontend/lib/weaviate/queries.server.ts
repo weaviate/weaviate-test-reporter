@@ -602,6 +602,7 @@ async function _fetchExecutedDrops(sinceIso?: string): Promise<ExecutedDrop[]> {
         "run_id",
         "job_url",
         "run_url",
+        "workflow_run_id",
       ],
     });
     const page = res.objects as unknown as RawObject[];
@@ -616,6 +617,8 @@ async function _fetchExecutedDrops(sinceIso?: string): Promise<ExecutedDrop[]> {
         tests_skipped: (p.tests_skipped as number) ?? 0,
         run_id: (p.run_id as string) ?? "",
         job_url: (p.job_url as string) || (p.run_url as string) || "",
+        run_url: (p.run_url as string) ?? "",
+        workflow_run_id: (p.workflow_run_id as string) ?? "",
       });
     }
     if (page.length < pageSize) break;
