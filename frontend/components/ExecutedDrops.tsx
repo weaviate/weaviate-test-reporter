@@ -15,7 +15,7 @@ const fmtWhen = (iso: string): string =>
 
 /**
  * Expected-vs-executed (WS2 H3): the jobs whose latest run ran fewer tests than
- * the run before. Each row expands in place to a baseline-vs-current comparison
+ * the batch before. Each row expands in place to a baseline-vs-current comparison
  * (WS-P) — the run that executed the full set vs the run that dropped it, with
  * both CI jobs linked — so a silent collapse is debuggable without guessing what
  * it was compared against. A dumb visual layer; the parent fetches + handles
@@ -181,7 +181,7 @@ function RunSide({
           rel="noopener noreferrer"
           className="mt-2 inline-flex items-center gap-1 text-[12px] text-wv-fog-muted hover:text-wv-fog transition-colors"
         >
-          View CI job
+          View in CI
           <ArrowUpRight size={12} strokeWidth={1.75} />
         </a>
       ) : (

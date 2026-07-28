@@ -201,8 +201,8 @@ export default function DashboardPage() {
               Expected vs executed
             </p>
             <p className="mt-1 text-[12px] text-wv-fog-muted">
-              Jobs whose latest run executed fewer tests than the run before — a
-              silent test-collapse.
+              Jobs whose latest CI batch executed fewer tests than the batch
+              before (split shards summed) — a silent test-collapse.
             </p>
           </div>
           {drops.loading ? (

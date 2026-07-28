@@ -38,17 +38,37 @@ export type FlakeRow = {
   status: TestCaseStatus;
 };
 
+/**
+ * Collapse a dynamically-sharded CI job name to its stable "family":
+ * `e2e-tests-replicas-1-split-3-of-4` → `e2e-tests-replicas-1`. The e2e suite
+ * splits tests across shards by measured duration, so the SAME test migrates
+ * between `split-N-of-M` shards night to night — the shard is a scheduling
+ * artifact, not test context. All analytics group by the family; raw
+ * `job_name` stays on rows/points for display and CI deep-links. Convention-
+ * coupled to the splitter's naming (the `-split-N-of-M` segment).
+ */
+const SPLIT_SHARD_RE = /-split-\d+-of-\d+/g;
+export function jobFamily(jobName: string): string {
+  return jobName.replace(SPLIT_SHARD_RE, "");
+}
+
 /** Collision-free composite key for a test in its stable context
- *  `(suite, name, version_minor, job_name)`. JSON-encoded because `job_name` is
- *  workflow input and could contain any delimiter. Shared by `computeFlaky` and
- *  `detectRegressions` so their groupings match exactly. */
+ *  `(suite, name, version_minor, job family)`. JSON-encoded because `job_name`
+ *  is workflow input and could contain any delimiter; the job is normalized via
+ *  `jobFamily` so dynamic-split shards of one job share a key. Shared by
+ *  `computeFlaky` and `detectRegressions` so their groupings match exactly. */
 export function flakeGroupKey(
   test_suite: string,
   name: string,
   version_minor: string | null,
   job_name: string,
 ): string {
-  return JSON.stringify([test_suite, name, version_minor ?? "", job_name]);
+  return JSON.stringify([
+    test_suite,
+    name,
+    version_minor ?? "",
+    jobFamily(job_name),
+  ]);
 }
 
 /**
@@ -68,6 +88,12 @@ export function flakeGroupKey(
  * skip/dupe rows), and the trailing time key makes each group chronological.
  * Grouping is by Map, so array contiguity isn't required. `flakiness_score =
  * transitions / (runs - 1)`. Groups with < `minRuns` obs, or 0 transitions, drop.
+ *
+ * Order caveat: group MEMBERSHIP (transitions > 0, ≥ minRuns) is permutation-
+ * invariant — a mixed pass/fail sequence has ≥1 transition in any order — but
+ * `flakiness_score` and `recent_statuses` are only meaningful on chronological
+ * input. A caller whose sort interleaves other keys before the time key (e.g.
+ * the regressions scan's shard-major sort) may consume group keys ONLY.
  */
 export function computeFlaky(rows: FlakeRow[], minRuns = 3): FlakyTest[] {
   type Acc = {
@@ -93,7 +119,9 @@ export function computeFlaky(rows: FlakeRow[], minRuns = 3): FlakyTest[] {
         name: r.name,
         framework: r.framework,
         version_minor: r.version_minor,
-        job_name: r.job_name,
+        // The leg spans shards, so display the family the key groups by — a
+        // raw shard name would be an arbitrary member of the group.
+        job_name: jobFamily(r.job_name),
         statuses: [],
       };
       groups.set(key, acc);
@@ -240,7 +268,8 @@ export function detectRegressions(
         test_suite: g.row.test_suite,
         name: g.row.name,
         version_minor: g.row.version_minor,
-        job_name: g.row.job_name,
+        // Family, not shard: the group spans shards (see flakeGroupKey).
+        job_name: jobFamily(g.row.job_name),
         failCount: g.failCount,
         firstFailedAt: g.firstFailedAt,
         lastErrorMessage: g.lastErrorMessage,
@@ -675,6 +704,17 @@ export type ExecutedDropRow = {
   tests_skipped: number;
   run_id: string;
   job_url: string;
+  // Batch identity: shards of one CI dispatch share workflow_run_id, so a
+  // family's executed counts are summed per batch before comparing. Empty /
+  // absent (legacy rows) → the run is its own batch.
+  workflow_run_id?: string;
+  // Re-runs mint a NEW TestRun per attempt under the SAME workflow_run_id
+  // (the action's UUID includes the attempt), so within a batch the latest
+  // attempt per shard replaces — never adds to — the earlier one.
+  workflow_run_attempt?: number;
+  // Workflow-run page (shared by all shards) — the link a multi-shard batch
+  // surfaces instead of one arbitrary shard's job_url.
+  run_url?: string;
 };
 
 export type ExecutedDrop = {
@@ -689,8 +729,8 @@ export type ExecutedDrop = {
   currStartedAt: string;
   currRunId: string;
   currJobUrl: string;
-  // The baseline run this was compared against (the previous run of the same
-  // (repo, job, version) leg) — so the UI can show both sides of the drop.
+  // The baseline batch this was compared against (the previous CI dispatch of
+  // the same (repo, job family, version) leg) — both sides of the drop.
   prevStartedAt: string;
   prevRunId: string;
   prevJobUrl: string;
@@ -721,56 +761,113 @@ export const MIN_PREV_EXECUTED = 5;
  * on a brand-new version with no same-version predecessor still isn't evaluated —
  * a version bump can never masquerade as a collapse.
  *
+ * **Shard-aware — per workflow batch.** Dynamic splitting rebalances tests
+ * across `split-N-of-M` shards nightly, so per-shard counts change every run
+ * without anything being wrong. Runs are grouped by job FAMILY (`jobFamily`)
+ * and, within a leg, summed per CI dispatch (`workflow_run_id`; a run without
+ * one is its own batch), then the two most recent batch totals are compared.
+ * Robust to the shard count itself changing (4→6 splits still sum the same).
+ * A multi-shard batch links to the shared workflow run (`run_url`); a
+ * single-run batch keeps its per-job deep link.
+ *
  * Pure + deterministic (house style). A leg is flagged when its previous
- * same-version run executed at least MIN_PREV_EXECUTED tests AND the latest run
- * dropped by at least EXECUTED_DROP_THRESHOLD. Rows with no started_at and legs
- * with fewer than two runs are skipped. A single job can therefore surface more
- * than one drop (one per collapsing version). Output is sorted by drop
- * magnitude, largest first.
+ * same-version batch executed at least MIN_PREV_EXECUTED tests AND the latest
+ * batch dropped by at least EXECUTED_DROP_THRESHOLD. Rows with no started_at
+ * and legs with fewer than two batches are skipped. A single job can therefore
+ * surface more than one drop (one per collapsing version). Output is sorted by
+ * drop magnitude, largest first.
  */
 export function detectExecutedDrops(rows: ExecutedDropRow[]): ExecutedDrop[] {
-  const byLeg = new Map<string, ExecutedDropRow[]>();
+  const byLeg = new Map<string, Map<string, ExecutedDropRow[]>>();
   for (const r of rows) {
     if (!r.started_at) continue; // can't order it
     const key = JSON.stringify([
       r.repository,
-      r.job_name,
+      jobFamily(r.job_name),
       r.version_minor ?? "",
     ]);
-    const list = byLeg.get(key);
-    if (list) list.push(r);
-    else byLeg.set(key, [r]);
+    let batches = byLeg.get(key);
+    if (!batches) {
+      batches = new Map();
+      byLeg.set(key, batches);
+    }
+    const batchKey = r.workflow_run_id || `run:${r.run_id}`;
+    const batch = batches.get(batchKey);
+    if (batch) batch.push(r);
+    else batches.set(batchKey, [r]);
   }
 
+  type Batch = {
+    executed: number;
+    total: number;
+    startedAt: string; // latest shard start — orders batches chronologically
+    rep: ExecutedDropRow; // latest shard: identity + links
+    multi: boolean;
+  };
   const out: ExecutedDrop[] = [];
-  for (const list of byLeg.values()) {
-    if (list.length < 2) continue;
+  for (const batches of byLeg.values()) {
+    if (batches.size < 2) continue;
+    const summed: Batch[] = [];
+    for (const shard of batches.values()) {
+      // Latest attempt wins per raw shard: a "Re-run failed jobs" click adds
+      // attempt-2 rows under the same workflow_run_id, and summing both
+      // attempts would double-count the shard (inflating the baseline into a
+      // false drop the next night). Ties fall back to the later started_at.
+      const byShard = new Map<string, ExecutedDropRow>();
+      for (const r of shard) {
+        const prev = byShard.get(r.job_name);
+        const attempt = r.workflow_run_attempt ?? 1;
+        const prevAttempt = prev?.workflow_run_attempt ?? 1;
+        if (
+          !prev ||
+          attempt > prevAttempt ||
+          (attempt === prevAttempt && r.started_at > prev.started_at)
+        ) {
+          byShard.set(r.job_name, r);
+        }
+      }
+      let executed = 0;
+      let total = 0;
+      let rep: ExecutedDropRow | null = null;
+      for (const r of byShard.values()) {
+        executed += Math.max(0, r.tests_total - r.tests_skipped);
+        total += r.tests_total;
+        if (!rep || r.started_at > rep.started_at) rep = r;
+      }
+      summed.push({
+        executed,
+        total,
+        startedAt: rep!.started_at,
+        rep: rep!,
+        multi: byShard.size > 1,
+      });
+    }
     // Newest first (ISO strings sort chronologically).
-    list.sort((a, b) =>
-      a.started_at < b.started_at ? 1 : a.started_at > b.started_at ? -1 : 0,
+    summed.sort((a, b) =>
+      a.startedAt < b.startedAt ? 1 : a.startedAt > b.startedAt ? -1 : 0,
     );
-    const curr = list[0];
-    // Baseline = the previous run of this same (repo, job, version) leg.
-    const prev = list[1];
-    const currExecuted = Math.max(0, curr.tests_total - curr.tests_skipped);
-    const prevExecuted = Math.max(0, prev.tests_total - prev.tests_skipped);
-    if (prevExecuted < MIN_PREV_EXECUTED) continue;
-    if (currExecuted > prevExecuted * (1 - EXECUTED_DROP_THRESHOLD)) continue;
+    const curr = summed[0];
+    // Baseline = the previous batch of this same (repo, family, version) leg.
+    const prev = summed[1];
+    if (prev.executed < MIN_PREV_EXECUTED) continue;
+    if (curr.executed > prev.executed * (1 - EXECUTED_DROP_THRESHOLD)) continue;
+    const link = (b: Batch) =>
+      b.multi ? b.rep.run_url || b.rep.job_url : b.rep.job_url;
     out.push({
-      repository: curr.repository,
-      job_name: curr.job_name,
-      versionMinor: curr.version_minor,
-      prevExecuted,
-      currExecuted,
-      prevTotal: prev.tests_total,
-      currTotal: curr.tests_total,
-      dropPct: (prevExecuted - currExecuted) / prevExecuted,
-      currStartedAt: curr.started_at,
-      currRunId: curr.run_id,
-      currJobUrl: curr.job_url,
-      prevStartedAt: prev.started_at,
-      prevRunId: prev.run_id,
-      prevJobUrl: prev.job_url,
+      repository: curr.rep.repository,
+      job_name: jobFamily(curr.rep.job_name),
+      versionMinor: curr.rep.version_minor,
+      prevExecuted: prev.executed,
+      currExecuted: curr.executed,
+      prevTotal: prev.total,
+      currTotal: curr.total,
+      dropPct: (prev.executed - curr.executed) / prev.executed,
+      currStartedAt: curr.startedAt,
+      currRunId: curr.rep.run_id,
+      currJobUrl: link(curr),
+      prevStartedAt: prev.startedAt,
+      prevRunId: prev.rep.run_id,
+      prevJobUrl: link(prev),
     });
   }
   return out.sort((a, b) => b.dropPct - a.dropPct);
@@ -858,17 +955,19 @@ export function buildTestHistory(
 export type JobHistory = { job: string; points: TestHistoryPoint[] };
 
 /**
- * Split a test's history into one series per CI job (WS3 R3). A test runs once
- * per job per run (matrix cells / upgrade legs), so a single interleaved
- * timeline mixes configs; per-job series read as coherent run-over-run
- * sequences. Points are assumed already chronological (as `buildTestHistory`
+ * Split a test's history into one series per CI job family (WS3 R3; dynamic-
+ * split shards merge via `jobFamily`). A test runs once per job per run
+ * (matrix cells / upgrade legs), so a single interleaved timeline mixes
+ * configs; per-family series read as coherent run-over-run sequences. Points are assumed already chronological (as `buildTestHistory`
  * returns them) and keep that order within each series; series are ordered by
  * most-recent activity first.
  */
 export function groupHistoryByJob(points: TestHistoryPoint[]): JobHistory[] {
   const byJob = new Map<string, TestHistoryPoint[]>();
   for (const p of points) {
-    const key = p.jobName || "";
+    // Group dynamic-split shards under one family series; each point keeps
+    // its raw jobName for the shard-level deep-link.
+    const key = jobFamily(p.jobName || "");
     const list = byJob.get(key);
     if (list) list.push(p);
     else byJob.set(key, [p]);
