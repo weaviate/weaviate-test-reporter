@@ -1014,53 +1014,54 @@ async function _fetchFailureClusters(
 const CACHE_REVALIDATE_S = 3600;
 const cacheOpts = { revalidate: CACHE_REVALIDATE_S };
 
-export const fetchRecentRuns = unstable_cache(
-  _fetchRecentRuns,
-  ["fetchRecentRuns"],
-  cacheOpts,
-);
-export const fetchDistinctRunValues = unstable_cache(
+// Day-bucketed keys: unstable_cache serves stale-while-revalidating, and the
+// background refresh can silently never finish (host throttles CPU after the
+// response; dev-server refresh aborted mid-scan) — an entry then fossilizes
+// while "refreshing" forever (a local .next/cache served 6-day-old regressions
+// this way). Prepending the UTC day to the arguments makes yesterday's entries
+// unreachable at midnight, capping worst-case staleness at same-day; the first
+// request of a new day computes in-band. Orphaned buckets are swept at server
+// start (instrumentation.ts) — Next itself never deletes them.
+function dailyCache<A extends unknown[], R>(
+  key: string,
+  fn: (...args: A) => Promise<R>,
+): (...args: A) => Promise<R> {
+  const cached = unstable_cache(
+    (_day: string, ...args: A) => fn(...args),
+    [key],
+    cacheOpts,
+  );
+  return (...args: A) => cached(isoDaysAgo(0), ...args);
+}
+
+export const fetchRecentRuns = dailyCache("fetchRecentRuns", _fetchRecentRuns);
+export const fetchDistinctRunValues = dailyCache(
+  "fetchDistinctRunValues",
   _fetchDistinctRunValues,
-  ["fetchDistinctRunValues"],
-  cacheOpts,
 );
-export const fetchVersionRollup = unstable_cache(
+export const fetchVersionRollup = dailyCache(
+  "fetchVersionRollup",
   _fetchVersionRollup,
-  ["fetchVersionRollup"],
-  cacheOpts,
 );
-export const fetchDashboardKpis = unstable_cache(
+export const fetchDashboardKpis = dailyCache(
+  "fetchDashboardKpis",
   _fetchDashboardKpis,
-  ["fetchDashboardKpis"],
-  cacheOpts,
 );
-export const fetchRunTrend = unstable_cache(
-  _fetchRunTrend,
-  ["fetchRunTrend"],
-  cacheOpts,
-);
-export const fetchExecutedDrops = unstable_cache(
+export const fetchRunTrend = dailyCache("fetchRunTrend", _fetchRunTrend);
+export const fetchExecutedDrops = dailyCache(
+  "fetchExecutedDrops",
   _fetchExecutedDrops,
-  ["fetchExecutedDrops"],
-  cacheOpts,
 );
-export const fetchTestHistory = unstable_cache(
+export const fetchTestHistory = dailyCache(
+  "fetchTestHistory",
   _fetchTestHistory,
-  ["fetchTestHistory"],
-  cacheOpts,
 );
-export const fetchFlakyTests = unstable_cache(
-  _fetchFlakyTests,
-  ["fetchFlakyTests"],
-  cacheOpts,
-);
-export const fetchRegressions = unstable_cache(
+export const fetchFlakyTests = dailyCache("fetchFlakyTests", _fetchFlakyTests);
+export const fetchRegressions = dailyCache(
+  "fetchRegressions",
   _fetchRegressions,
-  ["fetchRegressions"],
-  cacheOpts,
 );
-export const fetchFailureClusters = unstable_cache(
+export const fetchFailureClusters = dailyCache(
+  "fetchFailureClusters",
   _fetchFailureClusters,
-  ["fetchFailureClusters"],
-  cacheOpts,
 );
