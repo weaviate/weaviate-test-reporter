@@ -26,6 +26,7 @@ import {
   detectRegressions,
   clusterFailures,
   flakeGroupKey,
+  flakySuppressionKeys,
   buildTestHistory,
   type FlakeRow,
   type RegressionRow,
@@ -827,14 +828,18 @@ async function _fetchRegressions(
   // case in a run shares it), and even (suite, name, run_started_at) still ties
   // across version/job contexts at the same run start (matrix fan-out) — which
   // would let offset pagination skip/dupe rows and distort flakyKeys /
-  // currentFailed. Adding version_minor + job_name makes the order near-unique
-  // per row (stable pagination) and keeps each group chronological.
+  // currentFailed. All five keys together make the order near-unique per row
+  // (stable pagination). run_started_at comes BEFORE job_name: flake groups
+  // span dynamic-split shards (jobFamily), so time must dominate the shard for
+  // each group's status sequence to be chronological — the ≥2-transitions
+  // suppression floor counts transitions, and a scrambled shard-major sequence
+  // would inflate a fresh break's single flip into a suppressible "flake".
   const currentSort = cases.sort
     .byProperty("test_suite", true)
     .byProperty("name", true)
     .byProperty("version_minor", true)
-    .byProperty("job_name", true)
-    .byProperty("run_started_at", true);
+    .byProperty("run_started_at", true)
+    .byProperty("job_name", true);
 
   const flakeRows: FlakeRow[] = [];
   const currentFailed: RegressionRow[] = [];
@@ -895,11 +900,12 @@ async function _fetchRegressions(
   // multi-shard family group's statuses arrive shard-major, not chronological.
   // Membership is order-invariant (see computeFlaky's order caveat); the
   // scores/recent_statuses of THIS call are scrambled and must not be consumed.
-  const flakyKeys = new Set(
-    computeFlaky(flakeRows).map((f) =>
-      flakeGroupKey(f.test_suite, f.name, f.version_minor, f.job_name),
-    ),
-  );
+  // Suppression floor: only ≥2-transition groups may suppress (a fresh
+  // break's single P→F flip must not suppress its own NEW classification).
+  // Counting transitions requires each group's sequence to be chronological —
+  // guaranteed by the time-before-job sort above, which is why that key order
+  // is load-bearing for this call.
+  const flakyKeys = flakySuppressionKeys(computeFlaky(flakeRows));
 
   // ---- Scan 2: prior window (failed only) → key set ----
   const priorFilter = Filters.and(

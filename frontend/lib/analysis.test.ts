@@ -14,6 +14,7 @@ import {
   detectRegressions,
   clusterFailures,
   flakeGroupKey,
+  flakySuppressionKeys,
   FLAKES_RECENT_STATUSES,
   type FlakeRow,
   type RegressionRow,
@@ -1224,6 +1225,67 @@ describe("groupHistoryByJob", () => {
 
   it("returns [] for no points", () => {
     expect(groupHistoryByJob([])).toEqual([]);
+  });
+});
+
+describe("flakySuppressionKeys", () => {
+  const freshBreak = [
+    // Passed for nights, then broke and stayed red: ONE transition. This is
+    // the signature of a fresh regression, not a flake — it must NOT be
+    // suppressible, or NEW regressions goes blind for established tests.
+    row("s", "fresh", "passed"),
+    row("s", "fresh", "passed"),
+    row("s", "fresh", "passed"),
+    row("s", "fresh", "failed"),
+  ];
+  const oscillator = [
+    row("s", "osc", "passed"),
+    row("s", "osc", "failed"),
+    row("s", "osc", "passed"),
+    row("s", "osc", "failed"),
+  ];
+
+  it("excludes single-transition groups (fresh break) from suppression", () => {
+    const keys = flakySuppressionKeys(computeFlaky(freshBreak));
+    expect(keys.size).toBe(0);
+  });
+
+  it("includes genuinely oscillating groups (≥2 transitions)", () => {
+    const keys = flakySuppressionKeys(computeFlaky(oscillator));
+    expect(keys.size).toBe(1);
+    expect(keys.has(flakeGroupKey("s", "osc", "1.37", "job-a"))).toBe(true);
+  });
+
+  it("suppresses at exactly two transitions (boundary)", () => {
+    const keys = flakySuppressionKeys(
+      computeFlaky([
+        row("s", "edge", "passed"),
+        row("s", "edge", "failed"),
+        row("s", "edge", "passed"),
+      ]),
+    );
+    expect(keys.size).toBe(1);
+  });
+
+  it("end-to-end: a fresh break surfaces as NEW while an oscillator is suppressed", () => {
+    const flaky = computeFlaky([...freshBreak, ...oscillator]);
+    const keys = flakySuppressionKeys(flaky);
+    const failing = (name: string): RegressionRow => ({
+      test_suite: "s",
+      name,
+      version_minor: "1.37",
+      job_name: "job-a",
+      run_started_at: "2026-08-03T02:00:00.000Z",
+      error_message: null,
+      failure_type: null,
+    });
+    const rep = detectRegressions(
+      [failing("fresh"), failing("osc")],
+      new Set(),
+      keys,
+    );
+    expect(rep.regressions.map((r) => r.name)).toEqual(["fresh"]);
+    expect(rep.knownFlakyCount).toBe(1);
   });
 });
 
