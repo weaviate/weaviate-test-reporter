@@ -91,9 +91,11 @@ export function flakeGroupKey(
  *
  * Order caveat: group MEMBERSHIP (transitions > 0, ≥ minRuns) is permutation-
  * invariant — a mixed pass/fail sequence has ≥1 transition in any order — but
- * `flakiness_score` and `recent_statuses` are only meaningful on chronological
- * input. A caller whose sort interleaves other keys before the time key (e.g.
- * the regressions scan's shard-major sort) may consume group keys ONLY.
+ * transition COUNTS, `flakiness_score` and `recent_statuses` are only
+ * meaningful on chronological input. Every current caller sorts time before
+ * job, so family groups arrive chronological; the regressions scan depends on
+ * that for its ≥2-transitions floor (`flakySuppressionKeys`). A future caller
+ * that cannot guarantee chronological group order may consume keys ONLY.
  */
 export function computeFlaky(rows: FlakeRow[], minRuns = 3): FlakyTest[] {
   type Acc = {
@@ -165,6 +167,29 @@ export function computeFlaky(rows: FlakeRow[], minRuns = 3): FlakyTest[] {
   return out;
 }
 
+/**
+ * Which flakes may SUPPRESS a regression: only groups with ≥ 2 transitions.
+ * At exactly one transition, a currently-failing group can only be
+ * `P…P → F…F` — a fresh break, precisely what the NEW-regressions view
+ * exists to surface (a single `F → P` flip isn't failing now, so it never reaches
+ * classification). Without this floor, any first failure of an established
+ * test counts as its first "flip" and NEW goes structurally blind once every
+ * leg has a pass history (the 2026-08-03 read-repair incident vanished into
+ * "45 flaky" this way). The Flakes PAGE keeps the 1-transition entries — this
+ * threshold is suppression policy, not flake display.
+ */
+export const SUPPRESSION_MIN_TRANSITIONS = 2;
+
+export function flakySuppressionKeys(flaky: FlakyTest[]): Set<string> {
+  return new Set(
+    flaky
+      .filter((f) => f.transitions >= SUPPRESSION_MIN_TRANSITIONS)
+      .map((f) =>
+        flakeGroupKey(f.test_suite, f.name, f.version_minor, f.job_name),
+      ),
+  );
+}
+
 // ---------- regressions: NEW vs known (R2) ----------
 
 /** A failing TestCase in the current window (denormalized fields). */
@@ -202,7 +227,9 @@ export type RegressionReport = {
  * Classify the current window's failures into NEW regressions vs already-known
  * noise (WS3 R2). A failing `(suite, name, version_minor, job_name)` group is:
  *   - **known-flaky** if its key is in `flakyKeys` (the R3 transition-density
- *     list) — suppressed, even if it didn't fail in the prior window;
+ *     list filtered by `flakySuppressionKeys` — ≥ 2 transitions, so a fresh
+ *     break's single flip can't suppress itself) — suppressed, even if it
+ *     didn't fail in the prior window;
  *   - **recurring** else if its key is in `priorFailedKeys` (it failed before,
  *     so it's not a fresh regression);
  *   - **NEW** otherwise — failing now, no prior failure, not flaky ⇒ the
