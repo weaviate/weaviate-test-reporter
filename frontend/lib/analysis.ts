@@ -170,8 +170,8 @@ export function computeFlaky(rows: FlakeRow[], minRuns = 3): FlakyTest[] {
 /**
  * Which flakes may SUPPRESS a regression: only groups with ≥ 2 transitions.
  * At exactly one transition, a currently-failing group can only be
- * `P…P → F…F` — a fresh break, precisely what NEW regressions exists to
- * surface (a single `F → P` flip isn't failing now, so it never reaches
+ * `P…P → F…F` — a fresh break, precisely what the NEW-regressions view
+ * exists to surface (a single `F → P` flip isn't failing now, so it never reaches
  * classification). Without this floor, any first failure of an established
  * test counts as its first "flip" and NEW goes structurally blind once every
  * leg has a pass history (the 2026-08-03 read-repair incident vanished into

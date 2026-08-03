@@ -896,10 +896,6 @@ async function _fetchRegressions(
     if (page.length < pageSize) break;
     offset += page.length;
   }
-  // KEYS ONLY: this scan's sort puts version/job before the time key, so a
-  // multi-shard family group's statuses arrive shard-major, not chronological.
-  // Membership is order-invariant (see computeFlaky's order caveat); the
-  // scores/recent_statuses of THIS call are scrambled and must not be consumed.
   // Suppression floor: only ≥2-transition groups may suppress (a fresh
   // break's single P→F flip must not suppress its own NEW classification).
   // Counting transitions requires each group's sequence to be chronological —
