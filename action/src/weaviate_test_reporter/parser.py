@@ -158,9 +158,13 @@ def normalize_stack_trace(text: str) -> str:
     s = _GO_DURATION_RE.sub("(<DUR>)", s)
     s = _HEX_ADDR_RE.sub("<HEX>", s)
     # UUIDs before the ordinal/digit passes: their pure-digit segments (e.g.
-    # `-0001-`) must vanish as part of the whole token, not piecemeal.
-    s = _UUID_RE.sub("<UUID>", s)
-    s = _HOST_ORDINAL_RE.sub("-<N>", s)
+    # `-0001-`) must vanish as part of the whole token, not piecemeal. Both
+    # tokens require a `-`, so dash-free text (common in large plain-assert
+    # payloads) skips both scans — they cost ~30% of this function otherwise,
+    # enough to blow the 5s large-file CI budget.
+    if "-" in s:
+        s = _UUID_RE.sub("<UUID>", s)
+        s = _HOST_ORDINAL_RE.sub("-<N>", s)
     s = _LINE_WORD_RE.sub("line <N>", s)
     s = _COLON_LINE_RE.sub(":<N>", s)
     s = _LONG_DIGITS_RE.sub("<NUM>", s)
