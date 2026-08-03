@@ -137,7 +137,10 @@ _UUID_RE = re.compile(
 )
 # StatefulSet/pod ordinals (`weaviate-0`, `shard-1-of-2`): which replica a
 # failure hit is volatile, not shape. Bare small numbers (HTTP 422, counts)
-# are NOT touched — only 1-3 digits directly after a `word-` prefix.
+# are NOT touched — only 1-3 digits directly after a `letter-` prefix. Known
+# trade-off: numbered file/dataset tokens (`data-1.json`, `top-10`) merge too
+# — a deliberate exception to the keep-files-distinct rule above, since such
+# names are usually shard artifacts of one failure, not distinct causes.
 _HOST_ORDINAL_RE = re.compile(r"(?<=[A-Za-z])-\d{1,3}\b")
 _LINE_WORD_RE = re.compile(r"\bline\s+\d+", re.IGNORECASE)
 _COLON_LINE_RE = re.compile(r":\d+")
