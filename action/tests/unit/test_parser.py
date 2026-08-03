@@ -421,6 +421,41 @@ def test_identical_failures_share_a_fingerprint():
     assert a == b
 
 
+def test_uuid_and_node_ordinal_failures_share_a_fingerprint():
+    """The 2026-08-03 read-repair incident: 80+ failures identical except for
+    the object UUID, the pod ordinal and the vector length hashed uniquely, so
+    R4 clustering saw 80 singletons instead of one mass failure."""
+    a = stack_trace_fingerprint(
+        "AssertionError: Vector mismatch/destruction for "
+        "17c2ad8f-0001-44d0-bab6-6a3b06e5febd on node weaviate-0: "
+        "expected len=1536, got None"
+    )
+    b = stack_trace_fingerprint(
+        "AssertionError: Vector mismatch/destruction for "
+        "1b5f36b3-2c70-45ad-90c2-ea9861c58174 on node weaviate-2: "
+        "expected len=1536, got None"
+    )
+    assert a == b
+
+
+def test_normalize_strips_uuids_case_insensitively():
+    a = normalize_stack_trace("obj 17C2AD8F-0001-44D0-BAB6-6A3B06E5FEBD gone")
+    b = normalize_stack_trace("obj 1d8b9afa-d56b-4abd-866f-aec47f4eba9f gone")
+    assert a == b
+    assert "<UUID>" in a
+
+
+def test_normalize_strips_pod_ordinals_but_not_bare_counts():
+    # StatefulSet ordinals (weaviate-0 / weaviate-2) are volatile identity...
+    a = normalize_stack_trace("read repair failed on node weaviate-0")
+    b = normalize_stack_trace("read repair failed on node weaviate-2")
+    assert a == b
+    # ...but small bare numbers (HTTP statuses, counts) are failure identity.
+    a = normalize_stack_trace("Unexpected status code: 422")
+    b = normalize_stack_trace("Unexpected status code: 500")
+    assert a != b
+
+
 def test_gotestsum_fingerprint_stable_across_elapsed_durations():
     """Go/gotestsum failures end with `--- FAIL: TestX (0.08s)`. The elapsed
     time is volatile run-to-run; it must NOT fragment the fingerprint (this

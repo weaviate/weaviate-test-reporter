@@ -105,8 +105,8 @@ def _classify(case: JUnitTestCase) -> tuple[str, str | None, str | None, str | N
 # tokens (line numbers, memory addresses, timestamps, temp paths, long id
 # runs) collapse to the same key — the exact-match dedup used by R4 — while
 # genuinely different error shapes (types, messages, file names) stay distinct.
-# Order matters: strip whole ISO timestamps and temp-path tokens BEFORE the
-# generic `:<line>` / long-digit passes so their internal digits aren't
+# Order matters: strip whole ISO timestamps, temp-path tokens and UUIDs BEFORE
+# the generic `:<line>` / long-digit passes so their internal digits aren't
 # rewritten piecemeal.
 _ISO_TIMESTAMP_RE = re.compile(
     r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?"
@@ -128,6 +128,17 @@ _RUNNER_PREFIX_RE = re.compile(
 # BEFORE the long-digit pass so millisecond/nanosecond magnitudes collapse too.
 _GO_DURATION_RE = re.compile(r"\(\d+(?:\.\d+)?(?:ns|µs|us|ms|s|m|h)\)")
 _HEX_ADDR_RE = re.compile(r"0x[0-9a-fA-F]+")
+# Object/tenant/backup UUIDs are per-run identity, never failure shape. Hex
+# segments with letters dodge the digit passes, so without this a message like
+# "Vector mismatch for <uuid> on node weaviate-0" hashed uniquely per object
+# and R4 saw N singletons instead of one mass-failure cluster.
+_UUID_RE = re.compile(
+    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}" r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+)
+# StatefulSet/pod ordinals (`weaviate-0`, `shard-1-of-2`): which replica a
+# failure hit is volatile, not shape. Bare small numbers (HTTP 422, counts)
+# are NOT touched — only 1-3 digits directly after a `word-` prefix.
+_HOST_ORDINAL_RE = re.compile(r"(?<=[A-Za-z])-\d{1,3}\b")
 _LINE_WORD_RE = re.compile(r"\bline\s+\d+", re.IGNORECASE)
 _COLON_LINE_RE = re.compile(r":\d+")
 _LONG_DIGITS_RE = re.compile(r"\d{4,}")
@@ -143,6 +154,10 @@ def normalize_stack_trace(text: str) -> str:
     s = _RUNNER_PREFIX_RE.sub("", s)
     s = _GO_DURATION_RE.sub("(<DUR>)", s)
     s = _HEX_ADDR_RE.sub("<HEX>", s)
+    # UUIDs before the ordinal/digit passes: their pure-digit segments (e.g.
+    # `-0001-`) must vanish as part of the whole token, not piecemeal.
+    s = _UUID_RE.sub("<UUID>", s)
+    s = _HOST_ORDINAL_RE.sub("-<N>", s)
     s = _LINE_WORD_RE.sub("line <N>", s)
     s = _COLON_LINE_RE.sub(":<N>", s)
     s = _LONG_DIGITS_RE.sub("<NUM>", s)
