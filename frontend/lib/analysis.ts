@@ -91,9 +91,11 @@ export function flakeGroupKey(
  *
  * Order caveat: group MEMBERSHIP (transitions > 0, ≥ minRuns) is permutation-
  * invariant — a mixed pass/fail sequence has ≥1 transition in any order — but
- * `flakiness_score` and `recent_statuses` are only meaningful on chronological
- * input. A caller whose sort interleaves other keys before the time key (e.g.
- * the regressions scan's shard-major sort) may consume group keys ONLY.
+ * transition COUNTS, `flakiness_score` and `recent_statuses` are only
+ * meaningful on chronological input. Every current caller sorts time before
+ * job, so family groups arrive chronological; the regressions scan depends on
+ * that for its ≥2-transitions floor (`flakySuppressionKeys`). A future caller
+ * that cannot guarantee chronological group order may consume keys ONLY.
  */
 export function computeFlaky(rows: FlakeRow[], minRuns = 3): FlakyTest[] {
   type Acc = {
