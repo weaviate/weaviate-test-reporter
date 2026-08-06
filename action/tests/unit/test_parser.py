@@ -20,6 +20,7 @@ from weaviate_test_reporter.parser import (
     parse_junit_file,
     parse_junit_summary,
     stack_trace_fingerprint,
+    strip_test_identity,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -419,6 +420,81 @@ def test_identical_failures_share_a_fingerprint():
     a = stack_trace_fingerprint("panic at /tmp/x-1/a.go:10 addr 0x1a")
     b = stack_trace_fingerprint("panic at /tmp/x-2/a.go:55 addr 0x2b")
     assert a == b
+
+
+def test_param_variants_of_one_test_share_a_fingerprint():
+    """The 2026-08-06 upgrade incident: the test interpolates its parametrize
+    id into the assertion message, so six variants produced six fingerprints
+    and R4 saw no cluster. With the case name passed in, the id becomes
+    <PARAM> and the variants hash together."""
+    a = stack_trace_fingerprint(
+        "AssertionError: Pre-upgrade snapshot was not created in old format "
+        "for hnsw_bq_named assert []",
+        test_name="test_pre_upgrade_create_data_v1_format_named_vectors[hnsw_bq_named]",
+    )
+    b = stack_trace_fingerprint(
+        "AssertionError: Pre-upgrade snapshot was not created in old format "
+        "for multivector_rq assert []",
+        test_name="test_pre_upgrade_create_data_v1_format_named_vectors[multivector_rq]",
+    )
+    assert a == b
+
+
+def test_strip_test_identity_replaces_name_param_and_pieces():
+    out = strip_test_identity(
+        "read_repair_test.py:42: in test_delete_read_repair_grpc_query\n"
+        "checking hfresh-novector_deleteonconflict_class-search_params0 "
+        "and also deleteonconflict alone",
+        "test_delete_read_repair_grpc_query"
+        "[hfresh-novector_deleteonconflict_class-search_params0]",
+    )
+    assert "<TEST>" in out
+    assert "<PARAM>" in out
+    assert "test_delete_read_repair_grpc_query" not in out
+    assert "search_params0" not in out
+    # A piece of the param id standing alone is replaced too.
+    assert "novector_deleteonconflict_class" not in out
+    # Words that merely CONTAIN a piece are untouched.
+    assert "deleteonconflict alone" in out
+
+
+def test_strip_test_identity_keeps_numbers_and_real_error_text():
+    out = strip_test_identity(
+        "expected 3 nodes, got 2: status code: 422",
+        "test_cluster_size[rf-3-hnsw_bq]",
+    )
+    assert "3" in out and "422" in out
+    assert "hnsw_bq" not in out
+
+
+def test_different_errors_of_one_test_still_hash_apart():
+    name = "test_x[variant_a]"
+    a = stack_trace_fingerprint("Unexpected status code: 422", test_name=name)
+    b = stack_trace_fingerprint("Unexpected status code: 500", test_name=name)
+    assert a != b
+
+
+def test_parsed_cases_share_fingerprint_across_param_variants(tmp_path: Path):
+    xml = """<?xml version="1.0"?>
+<testsuites>
+  <testsuite name="upgrade" tests="2" failures="2">
+    <testcase classname="tests.upgrade.compaction_upgrade_test"
+              name="test_pre_upgrade[hnsw_named]" time="1.0">
+      <failure type="AssertionError"
+               message="snapshot missing for hnsw_named">boom hnsw_named</failure>
+    </testcase>
+    <testcase classname="tests.upgrade.compaction_upgrade_test"
+              name="test_pre_upgrade[hnsw_pq_named]" time="1.0">
+      <failure type="AssertionError"
+               message="snapshot missing for hnsw_pq_named">boom hnsw_pq_named</failure>
+    </testcase>
+  </testsuite>
+</testsuites>"""
+    path = tmp_path / "variants.xml"
+    path.write_text(xml)
+    cases = list(parse_junit_file(path))
+    fps = {c.failure_fingerprint for c in cases}
+    assert len(fps) == 1
 
 
 def test_uuid_and_node_ordinal_failures_share_a_fingerprint():
