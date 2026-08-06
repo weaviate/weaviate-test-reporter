@@ -458,6 +458,20 @@ def test_strip_test_identity_replaces_name_param_and_pieces():
     assert "deleteonconflict alone" in out
 
 
+def test_strip_test_identity_replaces_the_tests_own_filename_frame():
+    """When the file is named after the function, the frame line is replaced
+    too — intentional: the failing test's own frames are test identity, not
+    failure shape. Frames of other files are never touched."""
+    out = strip_test_identity(
+        'File "tests/e2e/test_cluster_size.py", line 42, in test_cluster_size\n'
+        "helpers/wait_for.py:10: timeout waiting for nodes",
+        "test_cluster_size[rf-3]",
+    )
+    assert "<TEST>.py" in out
+    assert "in <TEST>" in out
+    assert "helpers/wait_for.py" in out
+
+
 def test_strip_test_identity_keeps_numbers_and_real_error_text():
     out = strip_test_identity(
         "expected 3 nodes, got 2: status code: 422",

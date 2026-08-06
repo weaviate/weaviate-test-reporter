@@ -190,6 +190,12 @@ def strip_test_identity(text: str, test_name: str) -> str:
     identity (counts, status codes). A token only matches when standalone —
     not glued to another [A-Za-z0-9_] character — so a piece like
     "deleteonconflict" never matches inside "deleteonconflict_class".
+
+    `.` is a boundary on purpose: when a file is named after its test
+    function, the frame line `test_x.py:42: in test_x` becomes
+    `<TEST>.py:<N>: in <TEST>`. The failing test's own frames are test
+    identity, not failure shape. Frames of other files (helpers, source
+    code) never match and stay distinct.
     """
     func, bracket, param = test_name.partition("[")
     tokens: list[tuple[str, str]] = [(test_name, "<TEST>"), (func, "<TEST>")]
