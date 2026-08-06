@@ -171,9 +171,8 @@ def normalize_stack_trace(text: str) -> str:
     return _WS_RE.sub(" ", s).strip()
 
 
-# Identifier boundary for strip_test_identity: a token counts as standalone
-# only when not glued to another [A-Za-z0-9_] character, so a piece like
-# "deleteonconflict" never matches inside "deleteonconflict_class".
+# Single-character pieces (a param id like "a-1" yields piece "a") would
+# match far too much text; require at least two characters.
 _IDENT_MIN_LEN = 2
 
 
@@ -188,7 +187,9 @@ def strip_test_identity(text: str, test_name: str) -> str:
     case name, so the exact tokens are known: the full name, the bare
     function name, the param id, and the param id's dash-separated pieces.
     Pure-digit pieces are kept — bare numbers in messages are failure
-    identity (counts, status codes).
+    identity (counts, status codes). A token only matches when standalone —
+    not glued to another [A-Za-z0-9_] character — so a piece like
+    "deleteonconflict" never matches inside "deleteonconflict_class".
     """
     func, bracket, param = test_name.partition("[")
     tokens: list[tuple[str, str]] = [(test_name, "<TEST>"), (func, "<TEST>")]
