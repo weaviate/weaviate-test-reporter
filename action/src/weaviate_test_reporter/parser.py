@@ -171,10 +171,64 @@ def normalize_stack_trace(text: str) -> str:
     return _WS_RE.sub(" ", s).strip()
 
 
-def stack_trace_fingerprint(text: str | None) -> str | None:
-    """Stable 16-char sha256 of the normalized trace; None for empty input."""
+# Single-character pieces (a param id like "a-1" yields piece "a") would
+# match far too much text; require at least two characters.
+_IDENT_MIN_LEN = 2
+
+
+def strip_test_identity(text: str, test_name: str) -> str:
+    """Replace the failing test's own identifiers inside its failure text.
+
+    Parametrized tests interpolate their variant id into assertion messages
+    (f"snapshot missing for {variant}"), so identical failures hash apart —
+    one fingerprint per variant instead of one R4 cluster (the 2026-08-06
+    upgrade incident: 6 variants, 6 fingerprints, no cluster row). A generic
+    regex cannot know those words are identifiers, but the parser has the
+    case name, so the exact tokens are known: the full name, the bare
+    function name, the param id, and the param id's dash-separated pieces.
+    Pure-digit pieces are kept — bare numbers in messages are failure
+    identity (counts, status codes). A token only matches when standalone —
+    not glued to another [A-Za-z0-9_] character — so a piece like
+    "deleteonconflict" never matches inside "deleteonconflict_class".
+
+    `.` is a boundary on purpose: when a file is named after its test
+    function, the frame line `test_x.py:42: in test_x` becomes
+    `<TEST>.py:<N>: in <TEST>`. The failing test's own frames are test
+    identity, not failure shape. Frames of other files (helpers, source
+    code) never match and stay distinct.
+    """
+    func, bracket, param = test_name.partition("[")
+    tokens: list[tuple[str, str]] = [(test_name, "<TEST>"), (func, "<TEST>")]
+    if bracket:
+        param = param.rstrip("]")
+        tokens.append((param, "<PARAM>"))
+        tokens.extend((piece, "<PARAM>") for piece in param.split("-"))
+    seen: set[str] = set()
+    out = text
+    # Longest first, so the full name and full param id are replaced before
+    # their own fragments can match inside them.
+    for tok, placeholder in sorted(tokens, key=lambda t: len(t[0]), reverse=True):
+        if len(tok) < _IDENT_MIN_LEN or tok.isdigit() or tok in seen:
+            continue
+        seen.add(tok)
+        if tok not in out:  # cheap containment check before the regex
+            continue
+        out = re.sub(
+            rf"(?<![A-Za-z0-9_]){re.escape(tok)}(?![A-Za-z0-9_])",
+            placeholder,
+            out,
+        )
+    return out
+
+
+def stack_trace_fingerprint(text: str | None, test_name: str | None = None) -> str | None:
+    """Stable 16-char sha256 of the normalized trace; None for empty input.
+    When `test_name` is given, the test's own identifiers are stripped first
+    (see strip_test_identity) so param variants of one failure hash together."""
     if text is None or not text.strip():
         return None
+    if test_name:
+        text = strip_test_identity(text, test_name)
     normalized = normalize_stack_trace(text)
     digest = hashlib.sha256(normalized.encode("utf-8", errors="replace")).hexdigest()
     return digest[:_FINGERPRINT_LEN]
@@ -257,7 +311,11 @@ def parse_junit_file(path: Path) -> Iterator[ParsedCase]:
             else:
                 initial_status = status
                 passed_on_retry = False
-            fingerprint = stack_trace_fingerprint(stack or msg) if status == "failed" else None
+            fingerprint = (
+                stack_trace_fingerprint(stack or msg, test_name=case.name or "")
+                if status == "failed"
+                else None
+            )
             yield ParsedCase(
                 name=case.name or "unknown",
                 test_suite=_pick_test_suite(case, fallback_suite_name),
