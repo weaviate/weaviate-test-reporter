@@ -703,3 +703,61 @@ def test_case_properties_omit_version_minor_when_not_provided():
     assert "version_minor" not in props
     assert props["job_name"] == "j"
     assert props["branch"] == "main"
+
+
+# ---------- insert_infra_failure_run ----------
+
+
+def test_infra_failure_run_marks_status_and_zero_counts():
+    """A job that died before pytest produced any XML gets a TestRun with
+    status "infra_failure" and all-zero counts — zero means "nothing ran",
+    not "all green"."""
+    from weaviate_test_reporter.ingest import insert_infra_failure_run
+
+    client = MagicMock()
+    collection = MagicMock()
+    client.collections.get.return_value = collection
+    collection.data.exists.return_value = False
+
+    expected_uuid = _run_uuid("weaviate/weaviate", "12345", 2, "e2e-backup")
+    result_uuid = insert_infra_failure_run(
+        client,
+        _meta(),
+        _cfg(version_under_test="1.40.0-dev-77063ad"),
+        ingest_now="2026-09-14T02:30:00+00:00",
+    )
+
+    assert result_uuid == expected_uuid
+    collection.data.insert.assert_called_once()
+    props = collection.data.insert.call_args.kwargs["properties"]
+    assert props["status"] == "infra_failure"
+    for counter in (
+        "tests_total",
+        "tests_passed",
+        "tests_failed",
+        "tests_skipped",
+        "tests_errors",
+    ):
+        assert props[counter] == 0
+    # started_at must be set (the dashboard drops rows without it) and
+    # mirror the ingest clock — there is no JUnit timestamp to prefer.
+    assert props["started_at"] == "2026-09-14T02:30:00+00:00"
+    assert props["timestamp"] == "2026-09-14T02:30:00+00:00"
+    # The build identifier still links the failure to the version under test.
+    assert props["version_full"] == "1.40.0-dev-77063ad"
+    assert props["version_minor"] == "1.40"
+
+
+def test_infra_failure_run_upserts_on_existing_uuid():
+    """Re-ingesting the same attempt replaces rather than duplicates."""
+    from weaviate_test_reporter.ingest import insert_infra_failure_run
+
+    client = MagicMock()
+    collection = MagicMock()
+    client.collections.get.return_value = collection
+    collection.data.exists.return_value = True
+
+    insert_infra_failure_run(client, _meta(), _cfg())
+
+    collection.data.replace.assert_called_once()
+    collection.data.insert.assert_not_called()

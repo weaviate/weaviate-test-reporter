@@ -205,11 +205,6 @@ def insert_test_run(
 ) -> str:
     """Upsert a single TestRun object. Returns the run UUID.
 
-    Weaviate's v4 client splits insert vs replace: insert raises 422 on a
-    duplicate UUID, replace requires the UUID to already exist. The
-    idempotent ingestion contract demands true upsert, so we check
-    exists() and dispatch.
-
     `summary` (WS1 D1/D2) supplies the real run-start timestamp and the
     run-level counts; `run_started_at` lets the caller pin the exact ISO
     value it also denormalizes onto every TestCase.
@@ -217,6 +212,38 @@ def insert_test_run(
     properties = aggregate_run_properties(
         cases, meta, cfg, summary=summary, run_started_at=run_started_at, ingest_now=ingest_now
     )
+    return _upsert_run(client, meta, cfg, properties)
+
+
+def insert_infra_failure_run(
+    client: weaviate.WeaviateClient,
+    meta: dict[str, Any],
+    cfg: Config,
+    ingest_now: str | None = None,
+) -> str:
+    """Upsert a TestRun for a job that failed before producing any JUnit XML.
+
+    status "infra_failure" distinguishes this from a parsed run: the job's
+    infrastructure (cluster deploy, image pull, ...) broke before the test
+    framework started, so the all-zero counts mean "nothing ran", not "all
+    green". started_at/timestamp are the ingest clock — there is no JUnit
+    timestamp to prefer, and the dashboard drops rows without started_at.
+    Returns the run UUID.
+    """
+    properties = aggregate_run_properties([], meta, cfg, ingest_now=ingest_now)
+    properties["status"] = "infra_failure"
+    return _upsert_run(client, meta, cfg, properties)
+
+
+def _upsert_run(
+    client: weaviate.WeaviateClient,
+    meta: dict[str, Any],
+    cfg: Config,
+    properties: dict[str, Any],
+) -> str:
+    """True upsert of one TestRun. The v4 client splits insert vs replace
+    (insert raises 422 on a duplicate UUID, replace requires it to exist),
+    so we check exists() and dispatch."""
     run_uuid = _run_uuid(
         meta["repository"],
         meta["workflow_run_id"],

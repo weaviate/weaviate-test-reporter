@@ -43,6 +43,7 @@ def _full_env(monkeypatch: pytest.MonkeyPatch, junit_path: str) -> None:
     monkeypatch.delenv("VECTORIZER", raising=False)
     monkeypatch.delenv("MODEL2VEC_INFERENCE_URL", raising=False)
     monkeypatch.delenv("VERBOSE", raising=False)
+    monkeypatch.delenv("JOB_STATUS", raising=False)
 
 
 def test_main_returns_zero_on_happy_path(monkeypatch: pytest.MonkeyPatch):
@@ -132,6 +133,93 @@ def test_main_warns_and_exits_zero_on_no_xml_files(monkeypatch: pytest.MonkeyPat
     fake_client.collections.get.return_value.data.insert.assert_not_called()
     fake_client.collections.get.return_value.data.replace.assert_not_called()
     fake_client.collections.get.return_value.batch.stream.assert_not_called()
+
+
+def test_main_reports_infra_failure_when_job_failed_and_no_xml(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """JOB_STATUS=failure + empty glob means the job died before the test
+    framework wrote a report (e.g. cluster deploy failed). That must produce
+    a TestRun with status infra_failure instead of a silent no-op."""
+    _full_env(monkeypatch, str(tmp_path / "nonexistent*.xml"))
+    monkeypatch.setenv("JOB_STATUS", "failure")
+    from weaviate_test_reporter.__main__ import main
+
+    fake_client = MagicMock()
+    fake_collection = MagicMock()
+    fake_client.collections.get.return_value = fake_collection
+    fake_collection.data.exists.return_value = False
+
+    with patch("weaviate_test_reporter.__main__.connect_to_weaviate", return_value=fake_client):
+        rc = main()
+
+    assert rc == 0
+    fake_collection.data.insert.assert_called_once()
+    props = fake_collection.data.insert.call_args.kwargs["properties"]
+    assert props["status"] == "infra_failure"
+    # No cases to batch — only the run row is written.
+    fake_collection.batch.stream.assert_not_called()
+
+
+def test_main_stays_silent_when_job_succeeded_and_no_xml(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """A green job with no report keeps the historic no-op behavior."""
+    _full_env(monkeypatch, str(tmp_path / "nonexistent*.xml"))
+    monkeypatch.setenv("JOB_STATUS", "success")
+    from weaviate_test_reporter.__main__ import main
+
+    fake_client = MagicMock()
+    with patch("weaviate_test_reporter.__main__.connect_to_weaviate", return_value=fake_client):
+        rc = main()
+
+    assert rc == 0
+    fake_client.collections.get.return_value.data.insert.assert_not_called()
+    fake_client.collections.get.return_value.data.replace.assert_not_called()
+
+
+def test_main_prefers_xml_over_job_status(monkeypatch: pytest.MonkeyPatch):
+    """When a report exists, it is the source of truth even if the job
+    failed at a later step — the parsed statuses win over JOB_STATUS."""
+    _full_env(monkeypatch, str(FIXTURE))
+    monkeypatch.setenv("JOB_STATUS", "failure")
+    from weaviate_test_reporter.__main__ import main
+
+    fake_client = MagicMock()
+    fake_collection = MagicMock()
+    fake_client.collections.get.return_value = fake_collection
+    fake_collection.data.exists.return_value = False
+    fake_collection.batch.failed_objects = []
+
+    with patch("weaviate_test_reporter.__main__.connect_to_weaviate", return_value=fake_client):
+        rc = main()
+
+    assert rc == 0
+    props = fake_collection.data.insert.call_args.kwargs["properties"]
+    assert props["status"] != "infra_failure"
+    fake_collection.batch.stream.assert_called_once()
+
+
+def test_main_infra_failure_insert_error_respects_failsafe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """The infra-failure report is still fail-safe: if Weaviate rejects the
+    insert, the action must not break the (already failing) CI job further."""
+    _full_env(monkeypatch, str(tmp_path / "nonexistent*.xml"))
+    monkeypatch.setenv("JOB_STATUS", "failure")
+    monkeypatch.setenv("FAIL_ON_ERROR", "false")
+    from weaviate_test_reporter.__main__ import main
+
+    fake_client = MagicMock()
+    fake_collection = MagicMock()
+    fake_client.collections.get.return_value = fake_collection
+    fake_collection.data.exists.return_value = False
+    fake_collection.data.insert.side_effect = RuntimeError("weaviate down")
+
+    with patch("weaviate_test_reporter.__main__.connect_to_weaviate", return_value=fake_client):
+        rc = main()
+
+    assert rc == 0
 
 
 def test_main_returns_zero_on_weaviate_connect_failure_when_failsafe(
