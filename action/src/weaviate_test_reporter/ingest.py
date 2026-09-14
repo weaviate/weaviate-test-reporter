@@ -233,16 +233,13 @@ def insert_infra_failure_run(
     """
     properties = aggregate_run_properties([], meta, cfg, ingest_now=ingest_now)
     properties["status"] = "infra_failure"
-    _delete_test_cases_for_run(
-        client,
-        _run_uuid(
-            meta["repository"],
-            meta["workflow_run_id"],
-            meta["workflow_run_attempt"],
-            cfg.job_name,
-        ),
-    )
-    return _upsert_run(client, meta, cfg, properties)
+    run_uuid = _upsert_run(client, meta, cfg, properties)
+    # Delete only AFTER the run write succeeded. If the upsert fails
+    # transiently under fail_on_error=false, deleting first would erase a
+    # previously parsed run's cases and still exit 0; delete-after risks at
+    # worst leaving stale cases next to the infra_failure row, never data loss.
+    _delete_test_cases_for_run(client, run_uuid)
+    return run_uuid
 
 
 def _delete_test_cases_for_run(client: weaviate.WeaviateClient, run_uuid: str) -> None:

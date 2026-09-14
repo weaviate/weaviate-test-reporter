@@ -753,9 +753,9 @@ def test_infra_failure_run_upserts_on_existing_uuid():
     from weaviate_test_reporter.ingest import insert_infra_failure_run
 
     client = MagicMock()
-    case_collection = MagicMock()
     run_collection = MagicMock()
-    client.collections.get.side_effect = [case_collection, run_collection]
+    case_collection = MagicMock()
+    client.collections.get.side_effect = [run_collection, case_collection]
     run_collection.data.exists.return_value = True
 
     insert_infra_failure_run(client, _meta(), _cfg())
@@ -763,3 +763,22 @@ def test_infra_failure_run_upserts_on_existing_uuid():
     run_collection.data.replace.assert_called_once()
     run_collection.data.insert.assert_not_called()
     case_collection.data.delete_many.assert_called_once()
+
+
+def test_infra_failure_run_deletes_cases_only_after_successful_upsert():
+    """A failed run write must not erase a previously parsed run's cases:
+    under fail_on_error=false the action would exit 0 with the data already
+    gone. The deletion therefore only happens once the upsert succeeded."""
+    from weaviate_test_reporter.ingest import insert_infra_failure_run
+
+    client = MagicMock()
+    run_collection = MagicMock()
+    case_collection = MagicMock()
+    client.collections.get.side_effect = [run_collection, case_collection]
+    run_collection.data.exists.return_value = True
+    run_collection.data.replace.side_effect = RuntimeError("weaviate down")
+
+    with pytest.raises(RuntimeError):
+        insert_infra_failure_run(client, _meta(), _cfg())
+
+    case_collection.data.delete_many.assert_not_called()
