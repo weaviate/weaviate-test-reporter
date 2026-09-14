@@ -567,7 +567,16 @@ async function _fetchRunTrend(
     offset += page.length;
   }
 
-  return bucketRunsByDay(rows);
+  // Zero-fill the window through today so a day with no reported runs shows
+  // as an explicit no-data point instead of vanishing (and reading as green).
+  const fill =
+    since && !Number.isNaN(since.getTime())
+      ? {
+          sinceDay: since.toISOString().slice(0, 10),
+          untilDay: new Date().toISOString().slice(0, 10),
+        }
+      : undefined;
+  return bucketRunsByDay(rows, fill);
 }
 
 /**
