@@ -66,9 +66,10 @@ _TEST_RUN_DESCRIPTIONS: dict[str, str] = {
         "'workflow_dispatch'."
     ),
     "status": (
-        "Outcome of the whole run. One of 'success' or 'failure'. Filter "
-        "status='failure' for failed runs; run-level pass rate = success runs "
-        "/ total runs."
+        "Outcome of the whole run. One of 'success', 'failure', or "
+        "'infra_failure' (the CI job died before producing any JUnit XML — "
+        "test counts are all zero; nothing ran). Filter status='failure' for "
+        "failed runs; run-level pass rate = success runs / total runs."
     ),
     "total_duration_ms": "Total wall-clock duration of the run, in milliseconds.",
     "timestamp": (
