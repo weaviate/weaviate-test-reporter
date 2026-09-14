@@ -31,10 +31,11 @@ from weaviate_test_reporter.config import Config, parse_version
 from weaviate_test_reporter.ingest import (
     _run_uuid,
     ingest_test_cases,
+    insert_infra_failure_run,
     insert_test_run,
 )
 from weaviate_test_reporter.parser import parse_junit_file
-from weaviate_test_reporter.schema import TEST_CASE, TEST_RUN
+from weaviate_test_reporter.schema import TEST_CASE, TEST_RUN, ensure_test_run_properties
 
 FIXTURE = Path(__file__).parent.parent / "unit" / "fixtures" / "pytest_simple.xml"
 
@@ -222,6 +223,42 @@ def test_different_job_names_in_same_run_produce_separate_test_runs(weaviate_cli
 
     job_names = {r.properties["job_name"] for r in runs.objects}
     assert job_names == {"matrix-replicas-1", "matrix-replicas-3"}
+
+
+def test_infra_failure_reingest_replaces_run_and_deletes_linked_cases(weaviate_client):
+    run_uuid, _, _, _ = _ingest_pipeline(weaviate_client, _meta(), _cfg())
+
+    insert_infra_failure_run(weaviate_client, _meta(), _cfg())
+
+    run = weaviate_client.collections.get(TEST_RUN).query.fetch_object_by_id(run_uuid)
+    assert run is not None
+    assert run.properties["status"] == "infra_failure"
+    for counter in (
+        "tests_total",
+        "tests_passed",
+        "tests_failed",
+        "tests_skipped",
+        "tests_errors",
+    ):
+        assert run.properties[counter] == 0
+
+    cases = weaviate_client.collections.get(TEST_CASE).query.fetch_objects(limit=10)
+    assert len(cases.objects) == 0
+
+
+def test_ensure_test_run_properties_backfills_status_description(weaviate_client):
+    collection = weaviate_client.collections.get(TEST_RUN)
+    old_description = "Outcome of the whole run. One of 'success' or 'failure'."
+    collection.config.update(property_descriptions={"status": old_description})
+
+    before = next(p for p in collection.config.get().properties if p.name == "status")
+    assert before.description == old_description
+
+    ensure_test_run_properties(weaviate_client)
+
+    after = next(p for p in collection.config.get().properties if p.name == "status")
+    assert "'infra_failure'" in after.description
+    assert "status!='success'" in after.description
 
 
 def test_version_under_test_lands_on_test_run(weaviate_client):

@@ -9,8 +9,8 @@ schema, ingest, logging, vectorization) into the action lifecycle:
        (these are bugs in the workflow YAML, not transient runtime issues).
     3. Connect to Weaviate. Connection failure is a runtime issue -> respect
        fail_on_error.
-    4. Ensure both collections exist (idempotent — existing schemas are
-       left untouched).
+    4. Ensure both collections exist (idempotent) and apply additive /
+       metadata-safe schema migrations needed by newer action versions.
     5. Glob for JUnit files. If none matched: when the calling job failed
        (job_status=failure), report an infra-failure TestRun — the job died
        before the test framework wrote a report, and that must not look

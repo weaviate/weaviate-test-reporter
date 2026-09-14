@@ -40,9 +40,10 @@ TEST_CASE = "TestCase"
 # (e.g. failing to filter by `status` or group by `name`). Keep these concise
 # but explicit about VALUES (the exact `status` strings) and intended use.
 #
-# NB: these are applied on CREATE and when a NEW property is added. They are
-# NOT back-filled onto properties that already exist on a live collection —
-# update those in the Weaviate console (see .project/02-weaviate-schema.md).
+# NB: these are applied on CREATE and when a NEW property is added. Existing
+# properties generally keep their current descriptions; the one exception is
+# TestRun.status, whose description is explicitly back-filled so Query-Agent
+# consumers learn about new status values like `infra_failure`.
 # ---------------------------------------------------------------------------
 
 _TEST_RUN_DESCRIPTION = (
@@ -413,7 +414,9 @@ def ensure_test_run_properties(client: weaviate.WeaviateClient) -> None:
     if not client.collections.exists(TEST_RUN):
         return
     collection = client.collections.get(TEST_RUN)
-    existing = {p.name for p in collection.config.get().properties}
+    config = collection.config.get()
+    existing_props = {p.name: p for p in config.properties}
+    existing = set(existing_props)
     for spec in _TEST_RUN_PROPERTY_SPEC:
         name = spec[0]
         if name in existing:
@@ -421,6 +424,13 @@ def ensure_test_run_properties(client: weaviate.WeaviateClient) -> None:
         collection.config.add_property(
             _build_property(*spec, description=_TEST_RUN_DESCRIPTIONS.get(name))
         )
+    status_prop = existing_props.get("status")
+    expected_status_description = _TEST_RUN_DESCRIPTIONS["status"]
+    if (
+        status_prop is not None
+        and getattr(status_prop, "description", None) != expected_status_description
+    ):
+        collection.config.update(property_descriptions={"status": expected_status_description})
 
 
 def ensure_test_case_properties(client: weaviate.WeaviateClient) -> None:
