@@ -753,11 +753,13 @@ def test_infra_failure_run_upserts_on_existing_uuid():
     from weaviate_test_reporter.ingest import insert_infra_failure_run
 
     client = MagicMock()
-    collection = MagicMock()
-    client.collections.get.return_value = collection
-    collection.data.exists.return_value = True
+    case_collection = MagicMock()
+    run_collection = MagicMock()
+    client.collections.get.side_effect = [case_collection, run_collection]
+    run_collection.data.exists.return_value = True
 
     insert_infra_failure_run(client, _meta(), _cfg())
 
-    collection.data.replace.assert_called_once()
-    collection.data.insert.assert_not_called()
+    run_collection.data.replace.assert_called_once()
+    run_collection.data.insert.assert_not_called()
+    case_collection.data.delete_many.assert_called_once()

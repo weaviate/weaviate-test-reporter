@@ -29,6 +29,7 @@ from typing import Any
 
 import weaviate
 from tenacity import retry, retry_if_exception_type, stop_after_attempt
+from weaviate.classes.query import Filter
 from weaviate.exceptions import WeaviateConnectionError
 
 from .config import Config, parse_version
@@ -232,7 +233,22 @@ def insert_infra_failure_run(
     """
     properties = aggregate_run_properties([], meta, cfg, ingest_now=ingest_now)
     properties["status"] = "infra_failure"
+    _delete_test_cases_for_run(
+        client,
+        _run_uuid(
+            meta["repository"],
+            meta["workflow_run_id"],
+            meta["workflow_run_attempt"],
+            cfg.job_name,
+        ),
+    )
     return _upsert_run(client, meta, cfg, properties)
+
+
+def _delete_test_cases_for_run(client: weaviate.WeaviateClient, run_uuid: str) -> None:
+    client.collections.get(TEST_CASE).data.delete_many(
+        where=Filter.by_ref("belongsToRun").by_id().equal(run_uuid)
+    )
 
 
 def _upsert_run(

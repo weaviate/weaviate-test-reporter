@@ -156,6 +156,19 @@ def test_ensure_test_run_enables_index_timestamps():
     assert getattr(inverted, "indexTimestamps", None) is True
 
 
+def test_test_run_status_description_mentions_infra_failures_in_unsuccessful_queries():
+    client = MagicMock()
+    client.collections.exists.return_value = False
+
+    ensure_test_run_collection(client)
+
+    props = {p.name: p for p in client.collections.create.call_args.kwargs["properties"]}
+    description = props["status"].description
+    assert "'infra_failure'" in description
+    assert "'failure' means tests ran and some failed" in description
+    assert "status!='success'" in description
+
+
 # ---------- TestCase ----------
 
 
