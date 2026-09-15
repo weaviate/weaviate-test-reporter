@@ -232,3 +232,19 @@ def test_parse_version_accepts_valid_semver(raw: str, expected: tuple[str, str, 
 )
 def test_parse_version_returns_none_triple_on_invalid_input(raw: str):
     assert parse_version(raw) == (None, None, None)
+
+
+def test_job_status_defaults_to_empty(monkeypatch: pytest.MonkeyPatch):
+    """Callers that don't pass job_status keep today's behavior — a missing
+    JUnit report stays a silent no-op."""
+    _base_env(monkeypatch)
+    monkeypatch.delenv("JOB_STATUS", raising=False)
+    cfg = Config.from_env()
+    assert cfg.job_status == ""
+
+
+def test_job_status_is_normalized_lowercase(monkeypatch: pytest.MonkeyPatch):
+    _base_env(monkeypatch)
+    monkeypatch.setenv("JOB_STATUS", " Failure ")
+    cfg = Config.from_env()
+    assert cfg.job_status == "failure"

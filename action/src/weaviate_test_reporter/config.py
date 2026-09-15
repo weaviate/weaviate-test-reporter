@@ -2,7 +2,8 @@
 
 Reads the user-controlled inputs the composite action.yml declares
 (WEAVIATE_URL, WEAVIATE_API_KEY, JUNIT_PATH, JOB_NAME, FAIL_ON_ERROR,
-VECTORIZER, MODEL2VEC_INFERENCE_URL, VERBOSE, VERSION_UNDER_TEST).
+VECTORIZER, MODEL2VEC_INFERENCE_URL, VERBOSE, VERSION_UNDER_TEST,
+JOB_STATUS).
 GitHub-context vars (GH_*) live in github_meta — the split keeps the
 two failure modes addressable independently:
 
@@ -107,6 +108,11 @@ class Config:
     # ingest time so the malformed-warning is emitted with a properly
     # configured structlog logger. Empty when not set.
     version_under_test: str
+    # Outcome of the calling job (`${{ job.status }}`), lowercased.
+    # Only the value "failure" changes behavior: an empty JUnit glob then
+    # reports an infra-failure TestRun instead of a silent no-op. Empty
+    # for callers that don't pass the input.
+    job_status: str = ""
 
     @classmethod
     def from_env(cls) -> Config:
@@ -154,4 +160,5 @@ class Config:
             model2vec_inference_url=model2vec_url,
             verbose=_bool_optional("VERBOSE", default=False),
             version_under_test=version_under_test,
+            job_status=_str_optional("JOB_STATUS").lower(),
         )

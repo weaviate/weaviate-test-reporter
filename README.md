@@ -24,6 +24,7 @@ Add this step to any GitHub Actions workflow that produces JUnit XML:
     weaviate_api_key: ${{ secrets.WEAVIATE_API_KEY }}
     junit_path: "reports/junit-*.xml"
     job_name: "e2e-backup"
+    job_status: ${{ job.status }}  # report infra failures (job died before any XML existed)
 ```
 
 > The `/action` segment in the `uses:` line points GitHub at the `action/` subdirectory where `action.yml` lives — `weaviate/weaviate-test-reporter@v1` would 404 because there is no root-level `action.yml` in this repo.
@@ -41,6 +42,7 @@ Add this step to any GitHub Actions workflow that produces JUnit XML:
 | `model2vec_inference_url` | no | `""` | Required when `vectorizer = text2vec-model2vec`. URL from Weaviate's perspective (e.g., `http://model2vec:8080` in-cluster) |
 | `verbose` | no | `"false"` | If `true`, emit verbose pip + structlog DEBUG output |
 | `version_under_test` | no | `""` | SemVer 2.0 string identifying the artifact under test (e.g. `1.38.1-rfea1de`, `1.36.14-3b58915`, `1.38.0-dev-9479337`, plain `1.37.5`). Accepts an optional `v`/`V` prefix. Populates THREE derived properties on `TestRun`: `version_full` (verbatim build-unique identifier for dedup), `version_patch` (canonical `MAJOR.MINOR.PATCH`, pre-release dropped), `version_minor` (`MAJOR.MINOR`). **A non-empty value MUST be valid SemVer 2.0** — anything else (branch name, `latest_release` placeholder) causes the action to exit non-zero at startup |
+| `job_status` | no | `""` | Pass `${{ job.status }}` (with `if: always()` on the step). When the JUnit glob matches no files AND this is `failure`, the action reports a `TestRun` with `status: infra_failure` instead of exiting silently — the job died before the test framework produced a report. Any other value keeps the historic no-XML behavior (warning + exit 0) |
 
 GitHub Actions context (`repository`, `run_id`, `run_attempt`, `workflow`, `ref`, `sha`, `event_name`, `pull_request.number`, `actor`, `server_url`) is auto-populated as `GH_*` env vars by `action.yml`.
 

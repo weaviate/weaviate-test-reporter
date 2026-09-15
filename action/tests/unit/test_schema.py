@@ -12,6 +12,8 @@ from unittest.mock import MagicMock
 import weaviate.classes.config as wvcc
 
 from weaviate_test_reporter.schema import (
+    _TEST_CASE_DESCRIPTIONS,
+    _TEST_RUN_DESCRIPTIONS,
     TEST_CASE,
     TEST_RUN,
     ensure_test_case_collection,
@@ -154,6 +156,19 @@ def test_ensure_test_run_enables_index_timestamps():
     ensure_test_run_collection(client)
     inverted = client.collections.create.call_args.kwargs["inverted_index_config"]
     assert getattr(inverted, "indexTimestamps", None) is True
+
+
+def test_test_run_status_description_mentions_infra_failures_in_unsuccessful_queries():
+    client = MagicMock()
+    client.collections.exists.return_value = False
+
+    ensure_test_run_collection(client)
+
+    props = {p.name: p for p in client.collections.create.call_args.kwargs["properties"]}
+    description = props["status"].description
+    assert "'infra_failure'" in description
+    assert "'failure' means tests ran and some failed" in description
+    assert "status!='success'" in description
 
 
 # ---------- TestCase ----------
@@ -335,6 +350,7 @@ def _mock_existing_collection(existing_property_names: set[str]):
     fake_props = [MagicMock(name=f"prop_{n}") for n in existing_property_names]
     for fp, n in zip(fake_props, existing_property_names, strict=True):
         fp.name = n
+        fp.description = _TEST_RUN_DESCRIPTIONS.get(n, _TEST_CASE_DESCRIPTIONS.get(n))
     collection.config.get.return_value.properties = fake_props
     return client, collection
 
@@ -524,6 +540,47 @@ def test_ensure_test_run_properties_no_op_when_collection_missing():
     ensure_test_run_properties(client)
 
     client.collections.get.assert_not_called()
+
+
+def test_ensure_test_run_properties_backfills_status_description():
+    """Existing collections keep their `status` property, so the migration
+    must refresh its description when it predates `infra_failure`."""
+    client, collection = _mock_existing_collection(
+        {
+            "run_id",
+            "repository",
+            "branch",
+            "commit_hash",
+            "trigger_type",
+            "status",
+            "total_duration_ms",
+            "timestamp",
+            "workflow_run_id",
+            "workflow_run_attempt",
+            "workflow_name",
+            "job_name",
+            "pr_number",
+            "actor",
+            "run_url",
+            "job_url",
+            "version_full",
+            "version_patch",
+            "version_minor",
+            *_WS1_RUN_PROPS,
+        }
+    )
+    status_prop = next(
+        p for p in collection.config.get.return_value.properties if p.name == "status"
+    )
+    status_prop.description = "Outcome of the whole run. One of 'success' or 'failure'."
+
+    ensure_test_run_properties(client)
+
+    collection.config.update.assert_called_once()
+    assert collection.config.update.call_args.kwargs["property_descriptions"] == {
+        "status": _TEST_RUN_DESCRIPTIONS["status"]
+    }
+    collection.config.add_property.assert_not_called()
 
 
 # The five WS1 D1/D3/D4 case-level properties.

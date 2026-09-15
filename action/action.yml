@@ -65,6 +65,24 @@ inputs:
       of producing version-less TestRuns.
     required: false
     default: ""
+  job_status:
+    # The description names the job.status expression WITHOUT the
+    # dollar-curly-brace delimiters on purpose: the runner template-evaluates
+    # every string in this manifest, and the `job` context does not exist
+    # inside an action, so writing the delimited form here makes the whole
+    # action fail to load ("Unrecognized named-value: 'job'").
+    description: |
+      Outcome of the calling job so far. In the workflow step, set this to
+      the job.status context expression and run the reporter step with
+      `if: always()` (see the README example). When the JUnit glob matches
+      no files AND this is `failure`, the action reports a TestRun with
+      status `infra_failure` instead of exiting silently: the job died
+      before the test framework produced a report (e.g. the cluster deploy
+      failed), which must show up on the dashboard rather than look like a
+      green day. Any other value (including the default empty string) keeps
+      the historic behavior: no report files is a warning + exit 0.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -127,6 +145,7 @@ runs:
         MODEL2VEC_INFERENCE_URL: ${{ inputs.model2vec_inference_url }}
         VERBOSE: ${{ inputs.verbose }}
         VERSION_UNDER_TEST: ${{ inputs.version_under_test }}
+        JOB_STATUS: ${{ inputs.job_status }}
         # GitHub Actions context (auto-populated; never set by the caller).
         GH_REPOSITORY: ${{ github.repository }}
         GH_RUN_ID: ${{ github.run_id }}

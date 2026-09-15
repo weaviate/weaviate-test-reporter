@@ -9,9 +9,13 @@ schema, ingest, logging, vectorization) into the action lifecycle:
        (these are bugs in the workflow YAML, not transient runtime issues).
     3. Connect to Weaviate. Connection failure is a runtime issue -> respect
        fail_on_error.
-    4. Ensure both collections exist (idempotent — existing schemas are
-       left untouched).
-    5. Glob for JUnit files. If none matched, log a warning and exit 0.
+    4. Ensure both collections exist (idempotent) and apply additive /
+       metadata-safe schema migrations needed by newer action versions.
+    5. Glob for JUnit files. If none matched: when the calling job failed
+       (job_status=failure), report an infra-failure TestRun — the job died
+       before the test framework wrote a report, and that must not look
+       like a green day on the dashboard. Otherwise log a warning and
+       exit 0.
     6. Parse all files.
     7. Insert one TestRun, then batch-insert TestCases with belongsToRun
        cross-refs.
@@ -32,7 +36,12 @@ from weaviate.classes.init import Auth
 
 from .config import Config, ConfigError, parse_version
 from .github_meta import GithubMetadataError, resolve_github_metadata
-from .ingest import ingest_test_cases, insert_test_run, resolve_run_started_at
+from .ingest import (
+    ingest_test_cases,
+    insert_infra_failure_run,
+    insert_test_run,
+    resolve_run_started_at,
+)
 from .logging import configure_logging, get_logger, group
 from .parser import merge_summaries, parse_junit_file, parse_junit_summary
 from .schema import (
@@ -136,7 +145,16 @@ def main() -> int:
             files = sorted(glob.glob(cfg.junit_path, recursive=True))
             log.info("xml_files_found", count=len(files), pattern=cfg.junit_path)
             if not files:
-                log.warning("no_xml_files_found", pattern=cfg.junit_path)
+                if cfg.job_status == "failure":
+                    run_uuid = insert_infra_failure_run(client, meta, cfg)
+                    log.warning(
+                        "infra_failure_reported",
+                        pattern=cfg.junit_path,
+                        job_status=cfg.job_status,
+                        uuid=run_uuid,
+                    )
+                else:
+                    log.warning("no_xml_files_found", pattern=cfg.junit_path)
                 return 0
             cases: list = []
             summaries = []
