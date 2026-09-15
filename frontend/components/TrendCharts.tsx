@@ -90,6 +90,14 @@ const yAxisBase = {
  * A dumb visual layer — the parent fetches and handles loading/empty states.
  */
 export function TrendCharts({ data }: { data: TrendPoint[] }) {
+  // Days the server zero-filled (no reported runs) get a grey marker bar in
+  // the Failures chart — an absent day must not render like a green one.
+  // null (not 0) on normal days so Recharts draws no bar and the tooltip's
+  // filterNull hides the entry.
+  const series = data.map((d) => ({
+    ...d,
+    noData: d.runs === 0 ? 1 : null,
+  }));
   return (
     <div className="grid gap-5 lg:grid-cols-3" data-testid="trend-charts">
       <ChartCard
@@ -137,21 +145,34 @@ export function TrendCharts({ data }: { data: TrendPoint[] }) {
 
       <ChartCard
         title="Failures"
-        subtitle="Failed + errored tests per day"
+        subtitle="Red = failed + errored tests · amber = infra-failed jobs · grey = no runs reported"
         testId="trend-chart-failures"
       >
-        <BarChart data={data} margin={CHART_MARGIN}>
+        <BarChart data={series} margin={CHART_MARGIN}>
           <CartesianGrid stroke={GRID} strokeOpacity={0.4} vertical={false} />
           <XAxis {...xAxisProps} />
           <YAxis {...yAxisBase} allowDecimals={false} />
           <Tooltip
             contentStyle={TOOLTIP_STYLE}
             cursor={{ fill: "var(--wv-navy-3)", fillOpacity: 0.3 }}
-            formatter={(value) => [Number(value), "failures"]}
+            formatter={(value, name) => {
+              if (name === "noData") return ["no runs reported", "coverage"];
+              if (name === "infraFailures")
+                return [Number(value), "infra-failed jobs"];
+              return [Number(value), "test failures"];
+            }}
+          />
+          <Bar dataKey="failures" stackId="f" fill="var(--wv-danger)" />
+          <Bar
+            dataKey="infraFailures"
+            stackId="f"
+            fill="var(--wv-warn)"
+            radius={[2, 2, 0, 0]}
           />
           <Bar
-            dataKey="failures"
-            fill="var(--wv-danger)"
+            dataKey="noData"
+            fill="var(--wv-fog-muted)"
+            fillOpacity={0.35}
             radius={[2, 2, 0, 0]}
           />
         </BarChart>
@@ -175,7 +196,9 @@ export function TrendCharts({ data }: { data: TrendPoint[] }) {
             dataKey="avgDurationMs"
             stroke="var(--wv-fog-muted)"
             strokeWidth={2}
-            connectNulls
+            // Zero-filled days carry null — leave a visible gap instead of
+            // bridging over a day where nothing ran.
+            connectNulls={false}
             dot={false}
           />
         </LineChart>

@@ -4,10 +4,11 @@
  * schema.py and the schema doc.
  */
 
-// The action only ever emits "success" or "failure" today; "cancelled" is
-// reserved on the type for a future CI cancellation signal we don't yet
-// derive from JUnit XML.
-export type TestRunStatus = "success" | "failure" | "cancelled";
+// "infra_failure": the CI job failed before producing any JUnit XML (all
+// counts zero — nothing ran). "cancelled" is reserved on the type for a
+// future CI cancellation signal we don't yet derive from JUnit XML.
+export type TestRunStatus =
+  "success" | "failure" | "infra_failure" | "cancelled";
 
 export type TestRun = {
   uuid: string;

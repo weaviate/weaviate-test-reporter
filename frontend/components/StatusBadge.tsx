@@ -1,4 +1,4 @@
-import { CheckCircle2, CircleDashed, XCircle } from "lucide-react";
+import { CheckCircle2, CircleDashed, ServerCrash, XCircle } from "lucide-react";
 import type { TestCaseStatus, TestRunStatus } from "@/lib/types";
 
 const ICONS = {
@@ -7,6 +7,7 @@ const ICONS = {
   skipped: CircleDashed,
   success: CheckCircle2,
   failure: XCircle,
+  infra_failure: ServerCrash,
   cancelled: CircleDashed,
 } as const;
 
@@ -16,6 +17,7 @@ const TONES: Record<string, string> = {
   skipped: "text-wv-fog-muted border-wv-fog-muted/30 bg-wv-fog-muted/5",
   success: "text-wv-green border-wv-green/40 bg-wv-green/8",
   failure: "text-wv-danger border-wv-danger/40 bg-wv-danger/8",
+  infra_failure: "text-wv-warn border-wv-warn/40 bg-wv-warn/8",
   cancelled: "text-wv-warn border-wv-warn/40 bg-wv-warn/8",
 };
 
