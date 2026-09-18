@@ -1,4 +1,85 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
+
+async function mockDashboardApis(page: Page) {
+  await page.route("**/api/**", async (route: Route) => {
+    const url = new URL(route.request().url());
+    switch (url.pathname) {
+      case "/api/kpis":
+        return route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify({
+            passRate: 0.98,
+            avgRunDurationMs: 42_000,
+            topFailingSuite: { suite: "suite.alpha", count: 3 },
+            totalRuns: 3,
+            totalCases: 300,
+            skippedCases: 0,
+          }),
+        });
+      case "/api/drops":
+        return route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify([]),
+        });
+      case "/api/regressions":
+        return route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify({
+            regressions: [],
+            newCount: 0,
+            knownFlakyCount: 0,
+            recurringCount: 0,
+          }),
+        });
+      case "/api/clusters":
+        return route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify({
+            clusters: [],
+            uncategorized: 0,
+            totalFailures: 0,
+          }),
+        });
+      case "/api/runs/distinct":
+        return route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify([]),
+        });
+      case "/api/trend":
+        return route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify([
+            {
+              day: "2026-09-14",
+              runs: 0,
+              passingRuns: 0,
+              tests: 0,
+              testsPassed: 0,
+              failures: 0,
+              infraFailures: 0,
+              testsSkipped: 0,
+              passRate: null,
+              avgDurationMs: null,
+            },
+            {
+              day: "2026-09-15",
+              runs: 1,
+              passingRuns: 0,
+              tests: 300,
+              testsPassed: 40,
+              failures: 250,
+              infraFailures: 0,
+              testsSkipped: 10,
+              passRate: 40 / 290,
+              avgDurationMs: 180_000,
+            },
+          ]),
+        });
+      default:
+        return route.fallback();
+    }
+  });
+}
 
 test.describe("Metrics Dashboard", () => {
   test("renders all three KPI cards with computed values", async ({ page }) => {
@@ -34,5 +115,26 @@ test.describe("Metrics Dashboard", () => {
     // KPI cards must still be visible — no error banner.
     await expect(page.getByTestId("kpi-pass-rate")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText(/weaviate graphql error/i)).toHaveCount(0);
+  });
+
+  test("keeps the no-data outage marker visible when failures are high", async ({
+    page,
+  }) => {
+    await mockDashboardApis(page);
+    await page.goto("/dashboard/");
+
+    const chart = page.getByTestId("trend-chart-failures");
+    await expect(chart).toBeVisible({ timeout: 15_000 });
+
+    const noDataBarHeight = await chart.locator("svg").evaluate((svg) => {
+      const node = [...svg.querySelectorAll("path, rect")].find(
+        (el) =>
+          el.getAttribute("fill") === "var(--wv-fog-muted)" &&
+          el.getAttribute("fill-opacity") === "0.35",
+      ) as SVGGraphicsElement | undefined;
+      return node?.getBBox().height ?? 0;
+    });
+
+    expect(noDataBarHeight).toBeGreaterThanOrEqual(5);
   });
 });

@@ -29,7 +29,7 @@ const TOOLTIP_STYLE = {
   color: "var(--wv-fog)",
   fontSize: 12,
 } as const;
-const NO_DATA_MARKER_MIN_POINT_SIZE = 6;
+const NO_DATA_MARKER_HEIGHT = 6;
 
 /** "2026-07-01" → "07-01" (compact axis tick; days are already UTC). */
 const dayTick = (day: string): string => day.slice(5);
@@ -85,6 +85,37 @@ const yAxisBase = {
   stroke: GRID,
   width: 40,
 };
+
+function NoDataMarkerShape({
+  x = 0,
+  y = 0,
+  width = 0,
+  height = 0,
+  fill,
+  fillOpacity,
+}: {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  fill?: string;
+  fillOpacity?: number;
+}) {
+  const markerHeight = Math.max(height, NO_DATA_MARKER_HEIGHT);
+  const bottom = y + height;
+  return (
+    <rect
+      x={x}
+      y={Math.max(0, bottom - markerHeight)}
+      width={width}
+      height={markerHeight}
+      rx={2}
+      ry={2}
+      fill={fill}
+      fillOpacity={fillOpacity}
+    />
+  );
+}
 
 /**
  * The three WS2 H2 trend charts, driven by the per-day `TrendPoint[]` series.
@@ -174,8 +205,7 @@ export function TrendCharts({ data }: { data: TrendPoint[] }) {
             dataKey="noData"
             fill="var(--wv-fog-muted)"
             fillOpacity={0.35}
-            minPointSize={NO_DATA_MARKER_MIN_POINT_SIZE}
-            radius={[2, 2, 0, 0]}
+            shape={<NoDataMarkerShape />}
           />
         </BarChart>
       </ChartCard>

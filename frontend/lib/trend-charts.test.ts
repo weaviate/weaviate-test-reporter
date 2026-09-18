@@ -15,7 +15,7 @@ function flatten(node: ReactNode): PropsNode[] {
 }
 
 describe("TrendCharts no-data marker", () => {
-  it("keeps the no-data bar visible with a minPointSize", () => {
+  it("renders the no-data bar with a fixed-height marker shape", () => {
     const tree = TrendCharts({
       data: [
         {
@@ -38,6 +38,21 @@ describe("TrendCharts no-data marker", () => {
         node.props.fill === "var(--wv-fog-muted)",
     );
     expect(noDataBar).toBeTruthy();
-    expect(noDataBar?.props.minPointSize).toBe(6);
+    const shape = noDataBar?.props.shape as ReactNode;
+    expect(isPropsNode(shape)).toBe(true);
+    const marker = isPropsNode(shape)
+      ? (shape.type as (props: Record<string, unknown>) => ReactNode)({
+          x: 10,
+          y: 120,
+          width: 8,
+          height: 0.25,
+          fill: "var(--wv-fog-muted)",
+          fillOpacity: 0.35,
+        })
+      : null;
+    const markerNode = marker as ReactNode;
+    expect(isPropsNode(markerNode)).toBe(true);
+    if (!isPropsNode(markerNode)) throw new Error("expected marker shape");
+    expect(markerNode.props.height).toBe(6);
   });
 });
