@@ -34,9 +34,11 @@ export function StatusBadge({
 }) {
   const Icon = ICONS[status as keyof typeof ICONS] ?? CircleDashed;
   const tone = TONES[status] ?? TONES.skipped;
+  const accessibleLabel = status.replaceAll("_", " ");
   return (
     <span
-      title={status}
+      title={accessibleLabel}
+      aria-label={accessibleLabel}
       className={[
         "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full",
         "text-[11px] font-mono uppercase tracking-wider",
