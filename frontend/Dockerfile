@@ -9,6 +9,10 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+# Version string shown in the sidebar. NEXT_PUBLIC_* is inlined into the
+# client bundle during `next build`, so it must be set BEFORE the build.
+ARG APP_VERSION=dev
+ENV NEXT_PUBLIC_APP_VERSION=$APP_VERSION
 RUN npm run build
 
 # ---------- runtime ----------

@@ -6,48 +6,65 @@ test.describe("Layout & navigation", () => {
 
     // Brand mark (Weaviate logo image) + sub-title in the sidebar.
     await expect(page.getByRole("img", { name: "Weaviate" })).toBeVisible();
-    await expect(page.getByText("Test Reporter", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("Test Reporter", { exact: true }),
+    ).toBeVisible();
 
     // All three primary nav links are present. Use `exact: true` so the
     // brand link's aria-label ("Weaviate Test Reporter, go to Test
     // Explorer") doesn't shadow the sidebar nav link.
     await expect(
-      page.getByRole("link", { name: "Test Explorer", exact: true })
+      page.getByRole("link", { name: "Test Explorer", exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole("link", { name: "Versions", exact: true })
+      page.getByRole("link", { name: "Versions", exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole("link", { name: "Flakes", exact: true })
+      page.getByRole("link", { name: "Flakes", exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole("link", { name: "Semantic Search", exact: true })
+      page.getByRole("link", { name: "Semantic Search", exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole("link", { name: "Metrics", exact: true })
+      page.getByRole("link", { name: "Metrics", exact: true }),
     ).toBeVisible();
+  });
+
+  test("sidebar shows the build version (dev fallback outside releases)", async ({
+    page,
+  }) => {
+    await page.goto("/");
+
+    // The harness starts the app without NEXT_PUBLIC_APP_VERSION, so the
+    // sidebar must show the "dev" fallback. A rename or typo in the env
+    // access in Sidebar.tsx renders something else and fails here. The
+    // Docker ARG -> NEXT_PUBLIC plumbing is only exercised by a real image
+    // build (the frontend-v* release run).
+    await expect(page.getByText("dev", { exact: true })).toBeVisible();
   });
 
   test("nav links route between tabs", async ({ page }) => {
     await page.goto("/");
     const nav = page.getByRole("navigation", { name: "Primary" });
 
-    await nav.getByRole("link", { name: "Semantic Search", exact: true }).click();
+    await nav
+      .getByRole("link", { name: "Semantic Search", exact: true })
+      .click();
     await expect(page).toHaveURL(/\/search\/?$/);
     await expect(
-      page.getByRole("heading", { name: /find tests that failed/i })
+      page.getByRole("heading", { name: /find tests that failed/i }),
     ).toBeVisible();
 
     await nav.getByRole("link", { name: "Metrics", exact: true }).click();
     await expect(page).toHaveURL(/\/dashboard\/?$/);
     await expect(
-      page.getByRole("heading", { name: /state of the suite/i })
+      page.getByRole("heading", { name: /state of the suite/i }),
     ).toBeVisible();
 
     await nav.getByRole("link", { name: "Test Explorer", exact: true }).click();
     await expect(page).toHaveURL(/^http:\/\/localhost:\d+\/?$/);
     await expect(
-      page.getByRole("heading", { name: /recent test runs/i })
+      page.getByRole("heading", { name: /recent test runs/i }),
     ).toBeVisible();
   });
 
