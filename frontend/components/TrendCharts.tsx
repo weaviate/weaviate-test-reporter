@@ -105,6 +105,7 @@ function NoDataMarkerShape({
   const bottom = y + height;
   return (
     <rect
+      data-testid="trend-no-data-marker"
       x={x}
       y={Math.max(0, bottom - markerHeight)}
       width={width}
@@ -205,6 +206,7 @@ export function TrendCharts({ data }: { data: TrendPoint[] }) {
             dataKey="noData"
             fill="var(--wv-fog-muted)"
             fillOpacity={0.35}
+            isAnimationActive={false}
             shape={<NoDataMarkerShape />}
           />
         </BarChart>

@@ -126,14 +126,9 @@ test.describe("Metrics Dashboard", () => {
     const chart = page.getByTestId("trend-chart-failures");
     await expect(chart).toBeVisible({ timeout: 15_000 });
 
-    const noDataBarHeight = await chart.locator("svg").evaluate((svg) => {
-      const node = [...svg.querySelectorAll("path, rect")].find(
-        (el) =>
-          el.getAttribute("fill") === "var(--wv-fog-muted)" &&
-          el.getAttribute("fill-opacity") === "0.35",
-      ) as SVGGraphicsElement | undefined;
-      return node?.getBBox().height ?? 0;
-    });
+    const noDataBarHeight = Number(
+      await chart.getByTestId("trend-no-data-marker").getAttribute("height"),
+    );
 
     expect(noDataBarHeight).toBeGreaterThanOrEqual(5);
   });
