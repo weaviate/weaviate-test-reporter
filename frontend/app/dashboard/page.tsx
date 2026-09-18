@@ -78,7 +78,11 @@ function DashboardKpiGrid({ kpis }: { kpis: DashboardKpis }) {
         testId="kpi-avg-duration"
         label="Avg run duration"
         value={formatDuration(kpis.avgRunDurationMs)}
-        helper={`Mean of total_duration_ms across ${kpis.totalRuns} TestRuns.`}
+        helper={
+          kpis.infraFailureRuns > 0
+            ? `Mean of total_duration_ms across ${Math.max(0, kpis.totalRuns - kpis.infraFailureRuns)} executed TestRuns (${kpis.infraFailureRuns} infra-failed excluded).`
+            : `Mean of total_duration_ms across ${kpis.totalRuns} TestRuns.`
+        }
         Icon={Timer}
         tone="neutral"
         delay={60}
