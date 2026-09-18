@@ -54,5 +54,22 @@ describe("TrendCharts no-data marker", () => {
     expect(isPropsNode(markerNode)).toBe(true);
     if (!isPropsNode(markerNode)) throw new Error("expected marker shape");
     expect(markerNode.props.height).toBe(6);
+
+    // A window of only no-data days scales the noData value of 1 to the full
+    // chart height — the marker must stay 6px, anchored at the baseline.
+    const tall = isPropsNode(shape)
+      ? (shape.type as (props: Record<string, unknown>) => ReactNode)({
+          x: 10,
+          y: 4,
+          width: 8,
+          height: 150,
+          fill: "var(--wv-fog-muted)",
+          fillOpacity: 0.35,
+        })
+      : null;
+    const tallNode = tall as ReactNode;
+    if (!isPropsNode(tallNode)) throw new Error("expected marker shape");
+    expect(tallNode.props.height).toBe(6);
+    expect(tallNode.props.y).toBe(148); // baseline (4 + 150) minus the 6px marker
   });
 });

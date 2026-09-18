@@ -529,6 +529,7 @@ async function _fetchRunTrend(
 
   const rows: TrendRunRow[] = [];
   let offset = 0;
+  let fetchedWholeWindow = false;
   while (rows.length < TREND_MAX_ROWS) {
     const pageSize = Math.min(TREND_PAGE_SIZE, TREND_MAX_ROWS - rows.length);
     const res = await runs.query.fetchObjects({
@@ -563,14 +564,20 @@ async function _fetchRunTrend(
         tests_errors: (p.tests_errors as number) ?? 0,
       });
     }
-    if (page.length < pageSize) break;
+    if (page.length < pageSize) {
+      fetchedWholeWindow = true;
+      break;
+    }
     offset += page.length;
   }
 
   // Zero-fill the window through today so a day with no reported runs shows
-  // as an explicit no-data point instead of vanishing (and reading as green).
+  // as an explicit no-data point instead of vanishing (and reading as green) —
+  // but only when pagination fetched the whole window. Rows arrive
+  // oldest-first, so a fetch truncated at TREND_MAX_ROWS is missing the
+  // NEWEST days; zero-filling those would label real runs "no runs reported".
   const fill =
-    since && !Number.isNaN(since.getTime())
+    fetchedWholeWindow && since && !Number.isNaN(since.getTime())
       ? {
           sinceDay: since.toISOString().slice(0, 10),
           untilDay: new Date().toISOString().slice(0, 10),

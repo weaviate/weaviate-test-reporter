@@ -101,15 +101,18 @@ function NoDataMarkerShape({
   fill?: string;
   fillOpacity?: number;
 }) {
-  const markerHeight = Math.max(height, NO_DATA_MARKER_HEIGHT);
+  // Recharts scales the noData value of 1 against the Y axis, so the computed
+  // bar height ranges from a sliver (tall axis) to the full chart (axis max 1,
+  // e.g. a window of only no-data days). Ignore it and draw a constant-height
+  // marker anchored at the baseline.
   const bottom = y + height;
   return (
     <rect
       data-testid="trend-no-data-marker"
       x={x}
-      y={Math.max(0, bottom - markerHeight)}
+      y={Math.max(0, bottom - NO_DATA_MARKER_HEIGHT)}
       width={width}
-      height={markerHeight}
+      height={NO_DATA_MARKER_HEIGHT}
       rx={2}
       ry={2}
       fill={fill}
