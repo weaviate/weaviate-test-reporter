@@ -1,9 +1,15 @@
 name: Deploy frontend (release tag)
 
-# Release path for the dashboard. Push a git tag `v*` and this workflow:
+# Release path for the dashboard. Push a git tag `frontend-v*` and this
+# workflow:
 #   1. builds frontend/ into a container image,
 #   2. pushes it to Artifact Registry in semi-automated-benchmarking,
 #   3. rolls the Cloud Run service to that exact image digest.
+#
+# The prefix keeps the dashboard's release tags out of the GitHub action's
+# tag namespace: the action publishes a MOVING `v1` tag (plus immutable
+# `v1.0.X`), and a bare `v*` trigger would deploy the dashboard every time
+# the action is re-tagged. See MAINTAINERS.md for both release flows.
 #
 # Auth is Workload Identity Federation (GitHub OIDC -> GCP). There is no
 # service-account key anywhere. The WIF provider on the GCP side only
@@ -17,7 +23,7 @@ name: Deploy frontend (release tag)
 on:
   push:
     tags:
-      - "v*"
+      - "frontend-v*"
 
 permissions:
   contents: read
