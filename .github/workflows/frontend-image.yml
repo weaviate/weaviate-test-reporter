@@ -8,13 +8,24 @@ name: Build & publish frontend image
 # There is NO deploy step here — only image publishing. The image reads its
 # config (WEAVIATE_URL / WEAVIATE_API_KEY) from runtime env, so it bakes no
 # secrets. Where/how the image is deployed is handled separately, outside
-# this repo. The image is built for linux/amd64 — Cloud Run and most x86
-# hosts can't run an arm64 image (it fails with "exec format error").
+# this repo. The image is built for linux/amd64 — the x86 deployment hosts
+# can't run an arm64 image (it fails with "exec format error").
 #
-# Required repo config for the Artifact Registry push:
-#   vars:    GCP_REGION, GCP_PROJECT_ID, AR_REPOSITORY
-#   secret:  GCP_AR_SA_KEY  — JSON key of a service account scoped to ONLY
-#            roles/artifactregistry.writer (push images; no deploy permissions)
+# The Artifact Registry push authenticates via Workload Identity Federation:
+# the run's GitHub OIDC token is exchanged for a short-lived GCP access token,
+# so NO stored credential exists. The impersonated service account holds
+# roles/artifactregistry.writer granted ON the target AR repository only —
+# not on the project — so even a compromised run can push images to that one
+# repository and nothing else.
+#
+# Required repo config for the Artifact Registry push (all plain variables,
+# none of them sensitive — there is no secret):
+#   GCP_REGION, GCP_PROJECT_ID, AR_REPOSITORY  — the AR image path
+#   GCP_WIF_PROVIDER  — full workload identity provider resource name
+#                       (projects/<num>/locations/global/workloadIdentityPools/...)
+#   GCP_AR_SA_EMAIL   — the push service account to impersonate
+# While GCP_WIF_PROVIDER is unset, the AR steps are skipped and only GHCR is
+# published — AR misconfiguration must never block the GHCR image.
 
 on:
   push:
@@ -27,6 +38,7 @@ on:
 permissions:
   contents: read
   packages: write # push to GHCR via the built-in GITHUB_TOKEN
+  id-token: write # mint the GitHub OIDC token that WIF exchanges for GCP creds
 
 concurrency:
   group: frontend-image
@@ -57,23 +69,41 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Authenticate to Google Cloud
+        if: vars.GCP_WIF_PROVIDER != ''
+        id: gcp-auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          token_format: access_token
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_AR_SA_EMAIL }}
+
       - name: Log in to Artifact Registry
+        if: vars.GCP_WIF_PROVIDER != ''
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ vars.GCP_REGION }}-docker.pkg.dev
-          username: _json_key
-          password: ${{ secrets.GCP_AR_SA_KEY }}
+          username: oauth2accesstoken
+          password: ${{ steps.gcp-auth.outputs.access_token }}
 
       - name: Compute image tags
         id: tags
+        env:
+          AR_ENABLED: ${{ vars.GCP_WIF_PROVIDER != '' }}
         run: |
-          # Publish an immutable <sha> tag to BOTH registries (lets a deploy
-          # pin an exact commit). Move :latest (the deploy pointer) ONLY for
-          # main, so a workflow_dispatch from a feature branch can't overwrite
-          # it with unmerged code.
-          tags="${GHCR_IMAGE}:${GITHUB_SHA},${AR_IMAGE}:${GITHUB_SHA}"
+          # Publish an immutable <sha> tag (lets a deploy pin an exact
+          # commit); AR tags only when WIF is configured. Move :latest (the
+          # deploy pointer) ONLY for main, so a workflow_dispatch from a
+          # feature branch can't overwrite it with unmerged code.
+          tags="${GHCR_IMAGE}:${GITHUB_SHA}"
+          if [ "${AR_ENABLED}" = "true" ]; then
+            tags="${tags},${AR_IMAGE}:${GITHUB_SHA}"
+          fi
           if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-            tags="${tags},${GHCR_IMAGE}:latest,${AR_IMAGE}:latest"
+            tags="${tags},${GHCR_IMAGE}:latest"
+            if [ "${AR_ENABLED}" = "true" ]; then
+              tags="${tags},${AR_IMAGE}:latest"
+            fi
           fi
           echo "tags=${tags}" >> "$GITHUB_OUTPUT"
 
@@ -82,7 +112,7 @@ jobs:
         with:
           context: frontend
           push: true
-          # Cloud Run / x86 hosts need amd64. Build a clean single-arch image:
+          # x86 hosts need amd64. Build a clean single-arch image:
           # provenance/sbom attestations would create a manifest index (with an
           # "unknown/unknown" entry) that some runtimes mis-handle.
           platforms: linux/amd64
