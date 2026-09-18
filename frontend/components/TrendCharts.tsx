@@ -29,6 +29,7 @@ const TOOLTIP_STYLE = {
   color: "var(--wv-fog)",
   fontSize: 12,
 } as const;
+const NO_DATA_MARKER_MIN_POINT_SIZE = 6;
 
 /** "2026-07-01" → "07-01" (compact axis tick; days are already UTC). */
 const dayTick = (day: string): string => day.slice(5);
@@ -173,6 +174,7 @@ export function TrendCharts({ data }: { data: TrendPoint[] }) {
             dataKey="noData"
             fill="var(--wv-fog-muted)"
             fillOpacity={0.35}
+            minPointSize={NO_DATA_MARKER_MIN_POINT_SIZE}
             radius={[2, 2, 0, 0]}
           />
         </BarChart>
