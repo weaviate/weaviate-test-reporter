@@ -29,8 +29,9 @@ Admin roles — pushing a tag is the release/deploy permission.
 
 ## Releasing the dashboard (production deploy)
 
-Merging to `main` publishes a GHCR image (`frontend-image.yml`) but deploys nothing.
-Deploys are a deliberate, separate step:
+Merging to `main` publishes a GHCR image (`frontend-image.yml`, only when the merge
+touched `frontend/**` or that workflow file) but deploys nothing. Deploys are a
+deliberate, separate step:
 
 1. Pick the commit on `main` you want to ship.
 2. Tag and push:
