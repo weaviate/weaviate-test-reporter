@@ -21,6 +21,7 @@ import {
   isoDaysAgo,
 } from "@/lib/queries";
 import type { TrendFilters } from "@/lib/queries";
+import type { DashboardKpis } from "@/lib/types";
 
 const RANGES = [
   { id: "7d", label: "Last 7 days", days: 7 },
@@ -85,6 +86,41 @@ function topFailingSuiteCard(kpis: {
   };
 }
 
+function DashboardKpiGrid({ kpis }: { kpis: DashboardKpis }) {
+  const topSuite = topFailingSuiteCard(kpis);
+  return (
+    <div className="grid gap-5 sm:grid-cols-3">
+      <KpiCard
+        testId="kpi-pass-rate"
+        label="Global pass rate"
+        value={formatPct(kpis.passRate)}
+        helper={`Of ${Math.max(0, kpis.totalCases - kpis.skippedCases).toLocaleString()} executed TestCases · ${kpis.skippedCases.toLocaleString()} skipped (excluded).`}
+        Icon={CheckCircle2}
+        tone={passRateTone(kpis.passRate)}
+        delay={0}
+      />
+      <KpiCard
+        testId="kpi-avg-duration"
+        label="Avg run duration"
+        value={formatDuration(kpis.avgRunDurationMs)}
+        helper={`Mean of total_duration_ms across ${kpis.totalRuns} TestRuns.`}
+        Icon={Timer}
+        tone="neutral"
+        delay={60}
+      />
+      <KpiCard
+        testId="kpi-top-failing-suite"
+        label="Top failing suite"
+        value={topSuite.value}
+        helper={topSuite.helper}
+        Icon={XCircle}
+        tone={topSuite.tone}
+        delay={120}
+      />
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const [rangeId, setRangeId] = useState<RangeId>("7d");
   const range = RANGES.find((r) => r.id === rangeId)!;
@@ -113,7 +149,6 @@ export default function DashboardPage() {
       (trendFilters.versionMinors ?? []).join("|"),
     ],
   );
-  const topSuite = kpis.data ? topFailingSuiteCard(kpis.data) : null;
 
   return (
     <>
@@ -156,38 +191,7 @@ export default function DashboardPage() {
           <ErrorState error={kpis.error} />
         ) : kpis.data ? (
           <>
-            <div className="grid gap-5 sm:grid-cols-3">
-              <KpiCard
-                testId="kpi-pass-rate"
-                label="Global pass rate"
-                value={formatPct(kpis.data.passRate)}
-                helper={`Of ${Math.max(
-                  0,
-                  kpis.data.totalCases - kpis.data.skippedCases,
-                ).toLocaleString()} executed TestCases · ${kpis.data.skippedCases.toLocaleString()} skipped (excluded).`}
-                Icon={CheckCircle2}
-                tone={passRateTone(kpis.data.passRate)}
-                delay={0}
-              />
-              <KpiCard
-                testId="kpi-avg-duration"
-                label="Avg run duration"
-                value={formatDuration(kpis.data.avgRunDurationMs)}
-                helper={`Mean of total_duration_ms across ${kpis.data.totalRuns} TestRuns.`}
-                Icon={Timer}
-                tone="neutral"
-                delay={60}
-              />
-              <KpiCard
-                testId="kpi-top-failing-suite"
-                label="Top failing suite"
-                value={topSuite?.value ?? "0"}
-                helper={topSuite?.helper ?? ""}
-                Icon={XCircle}
-                tone={topSuite?.tone ?? "neutral"}
-                delay={120}
-              />
-            </div>
+            <DashboardKpiGrid kpis={kpis.data} />
           </>
         ) : null}
 
