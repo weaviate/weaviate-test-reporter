@@ -481,9 +481,18 @@ export function deriveKpis(args: {
   const executed = Math.max(0, totalCases - args.skippedTests);
   const passRate = executed > 0 ? args.passedTests / executed : 0;
   const top = [...args.failedSuiteGroups].sort((a, b) => b.count - a.count)[0];
+  // Infra-failure runs are stored with total_duration_ms = 0 (nothing ran), so
+  // the all-runs mean sinks with every outage. Their duration sum is exactly 0,
+  // which lets the executed-runs mean be recovered arithmetically:
+  // mean_executed = mean_all × totalRuns / (totalRuns − infraFailureRuns).
+  const durationRuns = Math.max(0, args.totalRuns - args.infraFailureRuns);
+  const avgRunDurationMs =
+    args.avgDurationMean != null && durationRuns > 0
+      ? Math.round((args.avgDurationMean * args.totalRuns) / durationRuns)
+      : 0;
   return {
     passRate,
-    avgRunDurationMs: Math.round(args.avgDurationMean ?? 0),
+    avgRunDurationMs,
     topFailingSuite: top ?? null,
     infraFailureRuns: args.infraFailureRuns,
     totalRuns: args.totalRuns,
@@ -676,6 +685,7 @@ export function bucketRunsByDay(
     infraFailures: number;
     testsSkipped: number;
     durationSum: number;
+    durationRuns: number;
   };
   const emptyAcc = (): Acc => ({
     runs: 0,
@@ -686,6 +696,7 @@ export function bucketRunsByDay(
     infraFailures: 0,
     testsSkipped: 0,
     durationSum: 0,
+    durationRuns: 0,
   });
   const byDay = new Map<string, Acc>();
   for (const r of rows) {
@@ -705,7 +716,12 @@ export function bucketRunsByDay(
     acc.testsPassed += r.tests_passed;
     acc.failures += r.tests_failed + r.tests_errors;
     acc.testsSkipped += r.tests_skipped;
-    acc.durationSum += r.total_duration_ms;
+    // Infra-failure rows carry a fabricated 0ms duration (nothing ran) — keep
+    // them out of the duration average entirely.
+    if (r.status !== "infra_failure") {
+      acc.durationSum += r.total_duration_ms;
+      acc.durationRuns++;
+    }
   }
 
   if (fill) {
@@ -739,7 +755,8 @@ export function bucketRunsByDay(
       testsSkipped: acc.testsSkipped,
       // Over executed tests (skipped excluded), matching deriveKpis / #17.
       passRate: executed > 0 ? acc.testsPassed / executed : null,
-      avgDurationMs: acc.runs > 0 ? acc.durationSum / acc.runs : null,
+      avgDurationMs:
+        acc.durationRuns > 0 ? acc.durationSum / acc.durationRuns : null,
     });
   }
   return out.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));

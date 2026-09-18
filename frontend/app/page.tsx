@@ -108,6 +108,10 @@ function ExpandedRunBody({ run }: { run: TestRun }) {
             </li>
           ))}
         </ul>
+      ) : run.status === "infra_failure" ? (
+        <p className="text-[12px] text-wv-fog-muted py-2">
+          No test report was produced — the CI job failed before any test ran.
+        </p>
       ) : (
         <p className="text-[12px] text-wv-fog-muted py-2">
           No failed cases — every test in this run passed or was skipped.

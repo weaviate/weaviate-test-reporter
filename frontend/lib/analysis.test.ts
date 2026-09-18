@@ -301,6 +301,32 @@ describe("deriveKpis", () => {
     expect(kpis.avgRunDurationMs).toBe(0);
   });
 
+  it("rescales the duration mean to exclude infra-failure runs", () => {
+    const kpis = deriveKpis({
+      totalRuns: 10,
+      avgDurationMean: 800, // all-runs mean; the 2 infra runs contributed 0ms
+      totalTests: 10,
+      passedTests: 10,
+      skippedTests: 0,
+      infraFailureRuns: 2,
+      failedSuiteGroups: [],
+    });
+    expect(kpis.avgRunDurationMs).toBe(1000); // 800 × 10 / (10 − 2)
+  });
+
+  it("reports 0 duration when every run in the window infra-failed", () => {
+    const kpis = deriveKpis({
+      totalRuns: 2,
+      avgDurationMean: 0,
+      totalTests: 0,
+      passedTests: 0,
+      skippedTests: 0,
+      infraFailureRuns: 2,
+      failedSuiteGroups: [],
+    });
+    expect(kpis.avgRunDurationMs).toBe(0);
+  });
+
   it("guards against divide-by-zero when nothing ran", () => {
     const kpis = deriveKpis({
       totalRuns: 0,
@@ -683,6 +709,28 @@ describe("bucketRunsByDay", () => {
       }).map((p) => p.day),
     ).toEqual(["2026-09-01", "2026-09-03", "2026-09-04"]);
     expect(bucketRunsByDay(rows).map((p) => p.day)).toEqual(["2026-09-01"]);
+  });
+
+  it("excludes infra_failure runs from the duration average", () => {
+    const out = bucketRunsByDay([
+      trendRow("2026-09-14T02:00:00.000Z", "success", {
+        total_duration_ms: 100_000,
+        tests_total: 5,
+        tests_passed: 5,
+      }),
+      trendRow("2026-09-14T02:30:00.000Z", "infra_failure"),
+    ]);
+    // The infra run's fabricated 0ms must not drag the day's average down.
+    expect(out[0].avgDurationMs).toBe(100_000);
+    expect(out[0].runs).toBe(2);
+  });
+
+  it("reports null duration for an infra-only day (nothing ran)", () => {
+    const out = bucketRunsByDay([
+      trendRow("2026-09-14T02:30:00.000Z", "infra_failure"),
+    ]);
+    expect(out[0].avgDurationMs).toBeNull();
+    expect(out[0].infraFailures).toBe(1);
   });
 
   it("caps the zero-fill at the most recent days for a pathologically wide window", () => {

@@ -451,7 +451,11 @@ async function _fetchDashboardKpis(sinceIso?: string): Promise<DashboardKpis> {
   // Pass rate + totals come from summing the run-level counts (TestRun.tests_*,
   // WS1 D2) — no full TestCase scan. Only the top-failing-suite still needs a
   // (filtered) TestCase aggregate.
-  const [runAgg, failedSuite, runStatuses] = await Promise.all([
+  // Exact filtered count for the infra-failure KPI — groupBy counts are
+  // approximate and jitter between refreshes (see rollupRunsByMinor).
+  const infraOp = runs.filter.byProperty("status").equal("infra_failure");
+  const infraFilter = runFilter ? Filters.and(infraOp, runFilter) : infraOp;
+  const [runAgg, failedSuite, infraAgg] = await Promise.all([
     runs.aggregate.overAll({
       filters: runFilter,
       returnMetrics: [
@@ -465,10 +469,7 @@ async function _fetchDashboardKpis(sinceIso?: string): Promise<DashboardKpis> {
       filters: failedFilter,
       groupBy: { property: "test_suite", limit: GROUP_LIMIT },
     }),
-    runs.aggregate.groupBy.overAll({
-      filters: runFilter,
-      groupBy: { property: "status", limit: GROUP_LIMIT },
-    }),
+    runs.aggregate.overAll({ filters: infraFilter }),
   ]);
 
   // AggregateResult nests metrics under `.properties[propName]`; `totalCount`
@@ -489,7 +490,7 @@ async function _fetchDashboardKpis(sinceIso?: string): Promise<DashboardKpis> {
     passedTests: runAggR.properties?.tests_passed?.sum ?? 0,
     skippedTests: runAggR.properties?.tests_skipped?.sum ?? 0,
     infraFailureRuns:
-      mapGroups(runStatuses).find((g) => g.value === "infra_failure")?.count ?? 0,
+      (infraAgg as unknown as { totalCount?: number }).totalCount ?? 0,
     failedSuiteGroups: mapGroups(failedSuite).map((g) => ({
       suite: g.value,
       count: g.count,
