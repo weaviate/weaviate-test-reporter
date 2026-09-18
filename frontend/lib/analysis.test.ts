@@ -266,6 +266,7 @@ describe("deriveKpis", () => {
       totalTests: 10,
       passedTests: 8,
       skippedTests: 0,
+      infraFailureRuns: 0,
       failedSuiteGroups: [
         { suite: "suiteA", count: 2 },
         { suite: "suiteB", count: 5 },
@@ -275,6 +276,7 @@ describe("deriveKpis", () => {
       passRate: 0.8,
       avgRunDurationMs: 1235,
       topFailingSuite: { suite: "suiteB", count: 5 },
+      infraFailureRuns: 0,
       totalRuns: 3,
       totalCases: 10,
       skippedCases: 0,
@@ -288,6 +290,7 @@ describe("deriveKpis", () => {
       totalTests: 10, // 6 passed + 2 failed + 2 skipped
       passedTests: 6,
       skippedTests: 2,
+      infraFailureRuns: 0,
       failedSuiteGroups: [],
     });
     expect(kpis.totalCases).toBe(10); // full count still reported
@@ -305,10 +308,25 @@ describe("deriveKpis", () => {
       totalTests: 0,
       passedTests: 0,
       skippedTests: 0,
+      infraFailureRuns: 0,
       failedSuiteGroups: [],
     });
     expect(kpis.passRate).toBe(0);
     expect(kpis.totalCases).toBe(0);
+  });
+
+  it("surfaces infra-failure run counts separately from test failures", () => {
+    const kpis = deriveKpis({
+      totalRuns: 3,
+      avgDurationMean: null,
+      totalTests: 0,
+      passedTests: 0,
+      skippedTests: 0,
+      infraFailureRuns: 2,
+      failedSuiteGroups: [],
+    });
+    expect(kpis.topFailingSuite).toBeNull();
+    expect(kpis.infraFailureRuns).toBe(2);
   });
 });
 

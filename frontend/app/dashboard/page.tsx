@@ -59,6 +59,32 @@ function toneAccent(tone: "good" | "bad" | "neutral"): string {
   }
 }
 
+function topFailingSuiteCard(kpis: {
+  topFailingSuite: { suite: string; count: number } | null;
+  infraFailureRuns: number;
+}) {
+  if (kpis.topFailingSuite) {
+    return {
+      value: `${kpis.topFailingSuite.count}`,
+      helper: kpis.topFailingSuite.suite,
+      tone: "bad" as const,
+    };
+  }
+  if (kpis.infraFailureRuns > 0) {
+    const runLabel = kpis.infraFailureRuns === 1 ? "TestRun" : "TestRuns";
+    return {
+      value: "0",
+      helper: `No failed TestCases were reported; ${kpis.infraFailureRuns} ${runLabel} infra-failed before tests started.`,
+      tone: "neutral" as const,
+    };
+  }
+  return {
+    value: "0",
+    helper: "No failures across recent runs — clean sweep.",
+    tone: "good" as const,
+  };
+}
+
 export default function DashboardPage() {
   const [rangeId, setRangeId] = useState<RangeId>("7d");
   const range = RANGES.find((r) => r.id === rangeId)!;
@@ -87,6 +113,7 @@ export default function DashboardPage() {
       (trendFilters.versionMinors ?? []).join("|"),
     ],
   );
+  const topSuite = kpis.data ? topFailingSuiteCard(kpis.data) : null;
 
   return (
     <>
@@ -154,18 +181,10 @@ export default function DashboardPage() {
               <KpiCard
                 testId="kpi-top-failing-suite"
                 label="Top failing suite"
-                value={
-                  kpis.data.topFailingSuite
-                    ? `${kpis.data.topFailingSuite.count}`
-                    : "0"
-                }
-                helper={
-                  kpis.data.topFailingSuite
-                    ? kpis.data.topFailingSuite.suite
-                    : "No failures across recent runs — clean sweep."
-                }
+                value={topSuite?.value ?? "0"}
+                helper={topSuite?.helper ?? ""}
                 Icon={XCircle}
-                tone={kpis.data.topFailingSuite ? "bad" : "good"}
+                tone={topSuite?.tone ?? "neutral"}
                 delay={120}
               />
             </div>

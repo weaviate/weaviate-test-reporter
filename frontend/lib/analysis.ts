@@ -472,6 +472,7 @@ export function deriveKpis(args: {
   totalTests: number;
   passedTests: number;
   skippedTests: number;
+  infraFailureRuns: number;
   failedSuiteGroups: SuiteGroup[];
 }): DashboardKpis {
   const totalCases = args.totalTests;
@@ -484,6 +485,7 @@ export function deriveKpis(args: {
     passRate,
     avgRunDurationMs: Math.round(args.avgDurationMean ?? 0),
     topFailingSuite: top ?? null,
+    infraFailureRuns: args.infraFailureRuns,
     totalRuns: args.totalRuns,
     totalCases,
     skippedCases: args.skippedTests,

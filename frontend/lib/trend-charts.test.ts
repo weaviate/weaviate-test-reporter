@@ -72,4 +72,32 @@ describe("TrendCharts no-data marker", () => {
     expect(tallNode.props.height).toBe(6);
     expect(tallNode.props.y).toBe(148); // baseline (4 + 150) minus the 6px marker
   });
+
+  it("keeps infra-failure bars stacked with test failures and separate from no-data markers", () => {
+    const tree = TrendCharts({
+      data: [
+        {
+          day: "2026-09-15",
+          runs: 2,
+          passingRuns: 0,
+          tests: 12,
+          testsPassed: 2,
+          failures: 8,
+          infraFailures: 1,
+          testsSkipped: 2,
+          passRate: 0.2,
+          avgDurationMs: 60_000,
+        },
+      ],
+    });
+    const bars = flatten(tree).filter((node) => typeof node.props.dataKey === "string");
+    const failuresBar = bars.find((node) => node.props.dataKey === "failures");
+    const infraBar = bars.find((node) => node.props.dataKey === "infraFailures");
+    const noDataBar = bars.find((node) => node.props.dataKey === "noData");
+
+    expect(failuresBar?.props.stackId).toBe("f");
+    expect(infraBar?.props.stackId).toBe("f");
+    expect(infraBar?.props.fill).toBe("var(--wv-warn)");
+    expect(noDataBar?.props.stackId).toBeUndefined();
+  });
 });
