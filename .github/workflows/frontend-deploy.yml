@@ -1,0 +1,105 @@
+name: Deploy frontend (release tag)
+
+# Release path for the dashboard. Push a git tag `v*` and this workflow:
+#   1. builds frontend/ into a container image,
+#   2. pushes it to Artifact Registry in semi-automated-benchmarking,
+#   3. rolls the Cloud Run service to that exact image digest.
+#
+# Auth is Workload Identity Federation (GitHub OIDC -> GCP). There is no
+# service-account key anywhere. The WIF provider on the GCP side only
+# accepts tokens from this repository (pinned by numeric owner + repo ID)
+# whose ref starts with `refs/tags/`, so a run from main or a PR branch
+# cannot obtain GCP credentials even if it asked for them.
+#
+# The GHCR publish on push-to-main (frontend-image.yml) is unchanged; this
+# is the separate, deliberate "ship it" step.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write # request the GitHub OIDC token that WIF exchanges for GCP creds
+
+concurrency:
+  group: frontend-deploy
+  # Deploys are serialised, never cancelled: each tag must roll out.
+  cancel-in-progress: false
+
+jobs:
+  build-push-deploy:
+    runs-on: ubuntu-latest
+    env:
+      # europe-west1-docker.pkg.dev/semi-automated-benchmarking/weaviate-test-reporter/frontend
+      IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/weaviate-test-reporter/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Authenticate to Google Cloud (WIF)
+        id: auth
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2.1.13
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          token_format: access_token # short-lived token for the registry login below
+
+      - name: Log in to Artifact Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ vars.GCP_REGION }}-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Compute image tags
+        id: tags
+        run: |
+          # <git tag> is the human-facing release tag; <sha> is the immutable
+          # pin; :latest tracks the newest release (informational only — the
+          # deploy below pins the digest, never a moving tag).
+          echo "tags=${IMAGE}:${GITHUB_REF_NAME},${IMAGE}:${GITHUB_SHA},${IMAGE}:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: frontend
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2.2.1
+
+      - name: Roll Cloud Run to the new image
+        env:
+          SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+          REGION: ${{ vars.GCP_REGION }}
+          PROJECT: ${{ vars.GCP_PROJECT_ID }}
+          RUNTIME_SA: ${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          # `services update` only touches the flags given; env vars, IAP,
+          # ingress, scaling etc. stay as configured on the service. It blocks
+          # until the new revision is Ready and fails the job if it is not.
+          #
+          # --service-account: the dashboard runs as a dedicated no-role
+          # service account, not the project's editor-level compute default.
+          # The container needs no GCP permissions — it only talks to Weaviate
+          # via WEAVIATE_URL / WEAVIATE_API_KEY.
+          gcloud run services update "$SERVICE" \
+            --project "$PROJECT" \
+            --region "$REGION" \
+            --image "${IMAGE}@${DIGEST}" \
+            --service-account "$RUNTIME_SA" \
+            --quiet
+          echo "## Deployed \`${GITHUB_REF_NAME}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- image: \`${IMAGE}@${DIGEST}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- revision: \`$(gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" --format 'value(status.latestReadyRevisionName)')\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- url: $(gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" --format 'value(status.url)')" >> "$GITHUB_STEP_SUMMARY"

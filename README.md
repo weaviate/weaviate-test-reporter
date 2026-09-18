@@ -209,7 +209,20 @@ deployment environment supplies it the same way (from its own secret store inste
 | `frontend.build` | lint + production build (compile check) |
 | `frontend.unit` | Vitest unit tests (server query logic, route mapping) |
 | `frontend.e2e` | runs Playwright against ephemeral Weaviate + model2vec services |
-| `frontend-image` | builds the frontend container and publishes it to GHCR (the deploy image) |
+| `frontend-image` | builds the frontend container and publishes it to GHCR on every push to `main` |
+| `frontend-deploy` | on a `v*` git tag: builds the frontend container, pushes it to Artifact Registry and rolls the Cloud Run service to that digest (see below) |
+
+### Deploying the dashboard
+
+The hosted dashboard is a Cloud Run service in the `semi-automated-benchmarking` GCP project. Shipping a release is one command:
+
+```bash
+git tag v1.2.3 && git push origin v1.2.3
+```
+
+The `frontend-deploy` workflow authenticates to GCP with Workload Identity Federation (GitHub OIDC), so there is no service-account key in this repo. The GCP-side provider only trusts tokens from this repository (numeric owner + repo ID) whose ref is a tag, so runs on `main` or PR branches cannot obtain GCP credentials. Deploys pin the image by digest; `:latest` in the registry is informational.
+
+The workflow reads its coordinates from repository variables (`GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOY_SERVICE_ACCOUNT`, `GCP_RUNTIME_SERVICE_ACCOUNT`, `CLOUD_RUN_SERVICE`) — nothing is hardcoded, and none of them is a secret. Anyone with write access can push a tag and therefore deploy; protect tags with a ruleset if that should be narrower.
 
 ## License
 
