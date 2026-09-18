@@ -1,6 +1,12 @@
+import path from "node:path";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "."),
+    },
+  },
   test: {
     // Pure logic + client fetch serialization run fine under Node. The
     // server query layer (gRPC) is covered by the Playwright E2E suite against
