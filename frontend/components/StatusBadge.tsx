@@ -21,6 +21,12 @@ const TONES: Record<string, string> = {
   cancelled: "text-wv-warn border-wv-warn/40 bg-wv-warn/8",
 };
 
+// The runs list gives the badge a fixed 110px slot; values longer than
+// "failure" overflow into the run title, so they get a short display label.
+const LABELS: Record<string, string> = {
+  infra_failure: "infra_fail",
+};
+
 export function StatusBadge({
   status,
 }: {
@@ -30,6 +36,7 @@ export function StatusBadge({
   const tone = TONES[status] ?? TONES.skipped;
   return (
     <span
+      title={status}
       className={[
         "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full",
         "text-[11px] font-mono uppercase tracking-wider",
@@ -38,7 +45,7 @@ export function StatusBadge({
       ].join(" ")}
     >
       <Icon size={12} strokeWidth={2} />
-      {status}
+      {LABELS[status] ?? status}
     </span>
   );
 }
