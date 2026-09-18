@@ -53,6 +53,9 @@ jobs:
             tags="${tags},${IMAGE}:latest"
           fi
           echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+          # Sidebar version string for non-release builds: the short sha
+          # (releases get the frontend-v* tag via frontend-deploy.yml).
+          echo "version=${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
@@ -60,6 +63,8 @@ jobs:
           context: frontend
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            APP_VERSION=${{ steps.tags.outputs.version }}
           # Connects the GHCR package to this repository (so it appears under
           # the repo's Packages and inherits its access).
           labels: |

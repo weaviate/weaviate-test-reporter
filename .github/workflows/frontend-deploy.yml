@@ -67,6 +67,9 @@ jobs:
           # pin; :latest tracks the newest release (informational only — the
           # deploy below pins the digest, never a moving tag).
           echo "tags=${IMAGE}:${GITHUB_REF_NAME},${IMAGE}:${GITHUB_SHA},${IMAGE}:latest" >> "$GITHUB_OUTPUT"
+          # Sidebar version string: the tag minus the namespace prefix
+          # (frontend-v0.2.0 -> v0.2.0).
+          echo "version=${GITHUB_REF_NAME#frontend-}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         id: build
@@ -75,6 +78,8 @@ jobs:
           context: frontend
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            APP_VERSION=${{ steps.tags.outputs.version }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}

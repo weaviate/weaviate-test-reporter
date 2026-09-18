@@ -102,13 +102,15 @@ export function Sidebar({ agentAvailable }: { agentAvailable: boolean }) {
       </nav>
 
       <div className="px-4 py-4 border-t border-wv-navy-3/40 text-[11px] text-wv-fog-muted leading-relaxed">
+        {/* Inlined at build time (client component): the release workflow
+            passes the frontend-v* tag; local/dev builds show "dev". */}
         <p className="font-mono">
-          v0.1.0 · MVP
+          {process.env.NEXT_PUBLIC_APP_VERSION ?? "dev"}
         </p>
         <p className="mt-1">
           Dogfooding{" "}
-          <span className="text-wv-green font-medium">text2vec-weaviate</span>
-          {" "}over real CI data.
+          <span className="text-wv-green font-medium">text2vec-weaviate</span>{" "}
+          over real CI data.
         </p>
       </div>
     </aside>
