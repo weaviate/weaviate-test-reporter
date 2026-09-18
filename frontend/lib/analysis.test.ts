@@ -266,6 +266,7 @@ describe("deriveKpis", () => {
       totalTests: 10,
       passedTests: 8,
       skippedTests: 0,
+      infraFailureRuns: 0,
       failedSuiteGroups: [
         { suite: "suiteA", count: 2 },
         { suite: "suiteB", count: 5 },
@@ -275,6 +276,7 @@ describe("deriveKpis", () => {
       passRate: 0.8,
       avgRunDurationMs: 1235,
       topFailingSuite: { suite: "suiteB", count: 5 },
+      infraFailureRuns: 0,
       totalRuns: 3,
       totalCases: 10,
       skippedCases: 0,
@@ -288,6 +290,7 @@ describe("deriveKpis", () => {
       totalTests: 10, // 6 passed + 2 failed + 2 skipped
       passedTests: 6,
       skippedTests: 2,
+      infraFailureRuns: 0,
       failedSuiteGroups: [],
     });
     expect(kpis.totalCases).toBe(10); // full count still reported
@@ -298,6 +301,32 @@ describe("deriveKpis", () => {
     expect(kpis.avgRunDurationMs).toBe(0);
   });
 
+  it("rescales the duration mean to exclude infra-failure runs", () => {
+    const kpis = deriveKpis({
+      totalRuns: 10,
+      avgDurationMean: 800, // all-runs mean; the 2 infra runs contributed 0ms
+      totalTests: 10,
+      passedTests: 10,
+      skippedTests: 0,
+      infraFailureRuns: 2,
+      failedSuiteGroups: [],
+    });
+    expect(kpis.avgRunDurationMs).toBe(1000); // 800 × 10 / (10 − 2)
+  });
+
+  it("reports 0 duration when every run in the window infra-failed", () => {
+    const kpis = deriveKpis({
+      totalRuns: 2,
+      avgDurationMean: 0,
+      totalTests: 0,
+      passedTests: 0,
+      skippedTests: 0,
+      infraFailureRuns: 2,
+      failedSuiteGroups: [],
+    });
+    expect(kpis.avgRunDurationMs).toBe(0);
+  });
+
   it("guards against divide-by-zero when nothing ran", () => {
     const kpis = deriveKpis({
       totalRuns: 0,
@@ -305,10 +334,25 @@ describe("deriveKpis", () => {
       totalTests: 0,
       passedTests: 0,
       skippedTests: 0,
+      infraFailureRuns: 0,
       failedSuiteGroups: [],
     });
     expect(kpis.passRate).toBe(0);
     expect(kpis.totalCases).toBe(0);
+  });
+
+  it("surfaces infra-failure run counts separately from test failures", () => {
+    const kpis = deriveKpis({
+      totalRuns: 3,
+      avgDurationMean: null,
+      totalTests: 0,
+      passedTests: 0,
+      skippedTests: 0,
+      infraFailureRuns: 2,
+      failedSuiteGroups: [],
+    });
+    expect(kpis.topFailingSuite).toBeNull();
+    expect(kpis.infraFailureRuns).toBe(2);
   });
 });
 
@@ -603,6 +647,99 @@ describe("bucketRunsByDay", () => {
 
   it("returns [] for no rows", () => {
     expect(bucketRunsByDay([])).toEqual([]);
+  });
+
+  it("counts infra_failure runs separately from test failures", () => {
+    const out = bucketRunsByDay([
+      trendRow("2026-09-14T02:30:00.000Z", "infra_failure"),
+      trendRow("2026-09-14T02:31:00.000Z", "infra_failure"),
+      trendRow("2026-09-14T03:00:00.000Z", "failure", {
+        tests_total: 10,
+        tests_passed: 8,
+        tests_failed: 2,
+      }),
+      trendRow("2026-09-15T03:00:00.000Z", "success", {
+        tests_total: 10,
+        tests_passed: 10,
+      }),
+    ]);
+    expect(out.find((p) => p.day === "2026-09-14")!).toMatchObject({
+      runs: 3,
+      passingRuns: 0, // infra_failure is not a passing run
+      failures: 2, // parsed test failures only
+      infraFailures: 2,
+    });
+    expect(out.find((p) => p.day === "2026-09-15")!.infraFailures).toBe(0);
+  });
+
+  it("zero-fills missing days in the window as explicit no-data points", () => {
+    const out = bucketRunsByDay(
+      [
+        trendRow("2026-09-12T02:00:00.000Z", "success", {
+          tests_total: 5,
+          tests_passed: 5,
+        }),
+      ],
+      { sinceDay: "2026-09-11", untilDay: "2026-09-14" },
+    );
+    expect(out.map((p) => p.day)).toEqual([
+      "2026-09-11",
+      "2026-09-12",
+      "2026-09-13",
+      "2026-09-14",
+    ]);
+    const gap = out.find((p) => p.day === "2026-09-13")!;
+    expect(gap).toMatchObject({
+      runs: 0,
+      passingRuns: 0,
+      tests: 0,
+      failures: 0,
+      infraFailures: 0,
+    });
+    expect(gap.passRate).toBeNull();
+    expect(gap.avgDurationMs).toBeNull();
+  });
+
+  it("fill only adds days — rows outside the window are kept, no fill without a window", () => {
+    const rows = [trendRow("2026-09-01T00:00:00.000Z", "success")];
+    expect(
+      bucketRunsByDay(rows, {
+        sinceDay: "2026-09-03",
+        untilDay: "2026-09-04",
+      }).map((p) => p.day),
+    ).toEqual(["2026-09-01", "2026-09-03", "2026-09-04"]);
+    expect(bucketRunsByDay(rows).map((p) => p.day)).toEqual(["2026-09-01"]);
+  });
+
+  it("excludes infra_failure runs from the duration average", () => {
+    const out = bucketRunsByDay([
+      trendRow("2026-09-14T02:00:00.000Z", "success", {
+        total_duration_ms: 100_000,
+        tests_total: 5,
+        tests_passed: 5,
+      }),
+      trendRow("2026-09-14T02:30:00.000Z", "infra_failure"),
+    ]);
+    // The infra run's fabricated 0ms must not drag the day's average down.
+    expect(out[0].avgDurationMs).toBe(100_000);
+    expect(out[0].runs).toBe(2);
+  });
+
+  it("reports null duration for an infra-only day (nothing ran)", () => {
+    const out = bucketRunsByDay([
+      trendRow("2026-09-14T02:30:00.000Z", "infra_failure"),
+    ]);
+    expect(out[0].avgDurationMs).toBeNull();
+    expect(out[0].infraFailures).toBe(1);
+  });
+
+  it("caps the zero-fill at the most recent days for a pathologically wide window", () => {
+    const out = bucketRunsByDay([], {
+      sinceDay: "2016-01-01",
+      untilDay: "2026-09-14",
+    });
+    expect(out.length).toBeLessThanOrEqual(400);
+    expect(out[out.length - 1].day).toBe("2026-09-14");
   });
 });
 

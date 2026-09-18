@@ -12,6 +12,7 @@ import { NewRegressions } from "@/components/NewRegressions";
 import { FailureClusters } from "@/components/FailureClusters";
 import { CacheHint } from "@/components/CacheHint";
 import { useAsync } from "@/lib/useAsync";
+import { topFailingSuiteCard } from "@/lib/dashboard-kpis";
 import {
   fetchDashboardKpis,
   fetchExecutedDrops,
@@ -21,6 +22,7 @@ import {
   isoDaysAgo,
 } from "@/lib/queries";
 import type { TrendFilters } from "@/lib/queries";
+import type { DashboardKpis } from "@/lib/types";
 
 const RANGES = [
   { id: "7d", label: "Last 7 days", days: 7 },
@@ -57,6 +59,45 @@ function toneAccent(tone: "good" | "bad" | "neutral"): string {
     default:
       return "text-wv-fog-muted";
   }
+}
+
+function DashboardKpiGrid({ kpis }: { kpis: DashboardKpis }) {
+  const topSuite = topFailingSuiteCard(kpis);
+  return (
+    <div className="grid gap-5 sm:grid-cols-3">
+      <KpiCard
+        testId="kpi-pass-rate"
+        label="Global pass rate"
+        value={formatPct(kpis.passRate)}
+        helper={`Of ${Math.max(0, kpis.totalCases - kpis.skippedCases).toLocaleString()} executed TestCases · ${kpis.skippedCases.toLocaleString()} skipped (excluded).`}
+        Icon={CheckCircle2}
+        tone={passRateTone(kpis.passRate)}
+        delay={0}
+      />
+      <KpiCard
+        testId="kpi-avg-duration"
+        label="Avg run duration"
+        value={formatDuration(kpis.avgRunDurationMs)}
+        helper={
+          kpis.infraFailureRuns > 0
+            ? `Mean of total_duration_ms across ${Math.max(0, kpis.totalRuns - kpis.infraFailureRuns)} executed TestRuns (${kpis.infraFailureRuns} infra-failed excluded).`
+            : `Mean of total_duration_ms across ${kpis.totalRuns} TestRuns.`
+        }
+        Icon={Timer}
+        tone="neutral"
+        delay={60}
+      />
+      <KpiCard
+        testId="kpi-top-failing-suite"
+        label="Top failing suite"
+        value={topSuite.value}
+        helper={topSuite.helper}
+        Icon={XCircle}
+        tone={topSuite.tone}
+        delay={120}
+      />
+    </div>
+  );
 }
 
 export default function DashboardPage() {
@@ -129,46 +170,7 @@ export default function DashboardPage() {
           <ErrorState error={kpis.error} />
         ) : kpis.data ? (
           <>
-            <div className="grid gap-5 sm:grid-cols-3">
-              <KpiCard
-                testId="kpi-pass-rate"
-                label="Global pass rate"
-                value={formatPct(kpis.data.passRate)}
-                helper={`Of ${Math.max(
-                  0,
-                  kpis.data.totalCases - kpis.data.skippedCases,
-                ).toLocaleString()} executed TestCases · ${kpis.data.skippedCases.toLocaleString()} skipped (excluded).`}
-                Icon={CheckCircle2}
-                tone={passRateTone(kpis.data.passRate)}
-                delay={0}
-              />
-              <KpiCard
-                testId="kpi-avg-duration"
-                label="Avg run duration"
-                value={formatDuration(kpis.data.avgRunDurationMs)}
-                helper={`Mean of total_duration_ms across ${kpis.data.totalRuns} TestRuns.`}
-                Icon={Timer}
-                tone="neutral"
-                delay={60}
-              />
-              <KpiCard
-                testId="kpi-top-failing-suite"
-                label="Top failing suite"
-                value={
-                  kpis.data.topFailingSuite
-                    ? `${kpis.data.topFailingSuite.count}`
-                    : "0"
-                }
-                helper={
-                  kpis.data.topFailingSuite
-                    ? kpis.data.topFailingSuite.suite
-                    : "No failures across recent runs — clean sweep."
-                }
-                Icon={XCircle}
-                tone={kpis.data.topFailingSuite ? "bad" : "good"}
-                delay={120}
-              />
-            </div>
+            <DashboardKpiGrid kpis={kpis.data} />
           </>
         ) : null}
 

@@ -1,4 +1,4 @@
-import { CheckCircle2, CircleDashed, XCircle } from "lucide-react";
+import { CheckCircle2, CircleDashed, ServerCrash, XCircle } from "lucide-react";
 import type { TestCaseStatus, TestRunStatus } from "@/lib/types";
 
 const ICONS = {
@@ -7,6 +7,7 @@ const ICONS = {
   skipped: CircleDashed,
   success: CheckCircle2,
   failure: XCircle,
+  infra_failure: ServerCrash,
   cancelled: CircleDashed,
 } as const;
 
@@ -16,7 +17,14 @@ const TONES: Record<string, string> = {
   skipped: "text-wv-fog-muted border-wv-fog-muted/30 bg-wv-fog-muted/5",
   success: "text-wv-green border-wv-green/40 bg-wv-green/8",
   failure: "text-wv-danger border-wv-danger/40 bg-wv-danger/8",
+  infra_failure: "text-wv-warn border-wv-warn/40 bg-wv-warn/8",
   cancelled: "text-wv-warn border-wv-warn/40 bg-wv-warn/8",
+};
+
+// The runs list gives the badge a fixed 110px slot; "infra_failure" is the
+// one status value too wide for it, so it gets a short display label.
+const LABELS: Record<string, string> = {
+  infra_failure: "infra_fail",
 };
 
 export function StatusBadge({
@@ -26,8 +34,11 @@ export function StatusBadge({
 }) {
   const Icon = ICONS[status as keyof typeof ICONS] ?? CircleDashed;
   const tone = TONES[status] ?? TONES.skipped;
+  const accessibleLabel = status.replaceAll("_", " ");
   return (
     <span
+      title={accessibleLabel}
+      aria-label={accessibleLabel}
       className={[
         "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full",
         "text-[11px] font-mono uppercase tracking-wider",
@@ -36,7 +47,7 @@ export function StatusBadge({
       ].join(" ")}
     >
       <Icon size={12} strokeWidth={2} />
-      {status}
+      {LABELS[status] ?? status}
     </span>
   );
 }

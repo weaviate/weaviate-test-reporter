@@ -451,7 +451,11 @@ async function _fetchDashboardKpis(sinceIso?: string): Promise<DashboardKpis> {
   // Pass rate + totals come from summing the run-level counts (TestRun.tests_*,
   // WS1 D2) — no full TestCase scan. Only the top-failing-suite still needs a
   // (filtered) TestCase aggregate.
-  const [runAgg, failedSuite] = await Promise.all([
+  // Exact filtered count for the infra-failure KPI — groupBy counts are
+  // approximate and jitter between refreshes (see rollupRunsByMinor).
+  const infraOp = runs.filter.byProperty("status").equal("infra_failure");
+  const infraFilter = runFilter ? Filters.and(infraOp, runFilter) : infraOp;
+  const [runAgg, failedSuite, infraAgg] = await Promise.all([
     runs.aggregate.overAll({
       filters: runFilter,
       returnMetrics: [
@@ -465,6 +469,7 @@ async function _fetchDashboardKpis(sinceIso?: string): Promise<DashboardKpis> {
       filters: failedFilter,
       groupBy: { property: "test_suite", limit: GROUP_LIMIT },
     }),
+    runs.aggregate.overAll({ filters: infraFilter }),
   ]);
 
   // AggregateResult nests metrics under `.properties[propName]`; `totalCount`
@@ -484,6 +489,8 @@ async function _fetchDashboardKpis(sinceIso?: string): Promise<DashboardKpis> {
     totalTests: runAggR.properties?.tests_total?.sum ?? 0,
     passedTests: runAggR.properties?.tests_passed?.sum ?? 0,
     skippedTests: runAggR.properties?.tests_skipped?.sum ?? 0,
+    infraFailureRuns:
+      (infraAgg as unknown as { totalCount?: number }).totalCount ?? 0,
     failedSuiteGroups: mapGroups(failedSuite).map((g) => ({
       suite: g.value,
       count: g.count,
@@ -529,6 +536,7 @@ async function _fetchRunTrend(
 
   const rows: TrendRunRow[] = [];
   let offset = 0;
+  let fetchedWholeWindow = false;
   while (rows.length < TREND_MAX_ROWS) {
     const pageSize = Math.min(TREND_PAGE_SIZE, TREND_MAX_ROWS - rows.length);
     const res = await runs.query.fetchObjects({
@@ -563,11 +571,26 @@ async function _fetchRunTrend(
         tests_errors: (p.tests_errors as number) ?? 0,
       });
     }
-    if (page.length < pageSize) break;
+    if (page.length < pageSize) {
+      fetchedWholeWindow = true;
+      break;
+    }
     offset += page.length;
   }
 
-  return bucketRunsByDay(rows);
+  // Zero-fill the window through today so a day with no reported runs shows
+  // as an explicit no-data point instead of vanishing (and reading as green) —
+  // but only when pagination fetched the whole window. Rows arrive
+  // oldest-first, so a fetch truncated at TREND_MAX_ROWS is missing the
+  // NEWEST days; zero-filling those would label real runs "no runs reported".
+  const fill =
+    fetchedWholeWindow && since && !Number.isNaN(since.getTime())
+      ? {
+          sinceDay: since.toISOString().slice(0, 10),
+          untilDay: new Date().toISOString().slice(0, 10),
+        }
+      : undefined;
+  return bucketRunsByDay(rows, fill);
 }
 
 /**

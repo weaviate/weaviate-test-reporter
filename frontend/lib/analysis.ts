@@ -472,6 +472,7 @@ export function deriveKpis(args: {
   totalTests: number;
   passedTests: number;
   skippedTests: number;
+  infraFailureRuns: number;
   failedSuiteGroups: SuiteGroup[];
 }): DashboardKpis {
   const totalCases = args.totalTests;
@@ -480,10 +481,20 @@ export function deriveKpis(args: {
   const executed = Math.max(0, totalCases - args.skippedTests);
   const passRate = executed > 0 ? args.passedTests / executed : 0;
   const top = [...args.failedSuiteGroups].sort((a, b) => b.count - a.count)[0];
+  // Infra-failure runs are stored with total_duration_ms = 0 (nothing ran), so
+  // the all-runs mean sinks with every outage. Their duration sum is exactly 0,
+  // which lets the executed-runs mean be recovered arithmetically:
+  // mean_executed = mean_all × totalRuns / (totalRuns − infraFailureRuns).
+  const durationRuns = Math.max(0, args.totalRuns - args.infraFailureRuns);
+  const avgRunDurationMs =
+    args.avgDurationMean != null && durationRuns > 0
+      ? Math.round((args.avgDurationMean * args.totalRuns) / durationRuns)
+      : 0;
   return {
     passRate,
-    avgRunDurationMs: Math.round(args.avgDurationMean ?? 0),
+    avgRunDurationMs,
     topFailingSuite: top ?? null,
+    infraFailureRuns: args.infraFailureRuns,
     totalRuns: args.totalRuns,
     totalCases,
     skippedCases: args.skippedTests,
@@ -625,6 +636,10 @@ export type TrendPoint = {
   tests: number;
   testsPassed: number;
   failures: number; // tests_failed + tests_errors
+  /** Runs with status "infra_failure": the CI job died before the test
+   *  framework produced a report (cluster deploy, image pull, ...). Counted
+   *  per run, not per test — nothing ran, so there are no test counts. */
+  infraFailures: number;
   testsSkipped: number;
   /** testsPassed / EXECUTED (tests_total − skipped) — over the tests that ran,
    *  matching the dashboard KPI tile and /versions (#17). null when nothing ran. */
@@ -641,17 +656,48 @@ export type TrendPoint = {
  * the ISO string so there's no timezone drift. Rows with no usable `started_at`
  * are skipped rather than bucketed under a bogus day. Output is sorted ascending
  * by day so charts read oldest → newest, left → right.
+ *
+ * `fill` (optional) zero-fills every day of the inclusive window that has no
+ * rows, as an explicit no-data point (runs 0, null rates). Without it a day
+ * where nothing reported simply vanishes from the series and renders exactly
+ * like a green day — the 2026-09-14 minio incident (125 failed jobs, zero
+ * reports, "0 failures" on the dashboard). Fill only adds days; rows outside
+ * the window are kept. Capped at the most recent MAX_FILL_DAYS so a bogus
+ * `since` can't inflate the series.
  */
-export function bucketRunsByDay(rows: TrendRunRow[]): TrendPoint[] {
+export type TrendFillWindow = {
+  sinceDay: string; // "YYYY-MM-DD" (UTC), inclusive
+  untilDay: string; // "YYYY-MM-DD" (UTC), inclusive
+};
+
+const MAX_FILL_DAYS = 400;
+
+export function bucketRunsByDay(
+  rows: TrendRunRow[],
+  fill?: TrendFillWindow,
+): TrendPoint[] {
   type Acc = {
     runs: number;
     passingRuns: number;
     tests: number;
     testsPassed: number;
     failures: number;
+    infraFailures: number;
     testsSkipped: number;
     durationSum: number;
+    durationRuns: number;
   };
+  const emptyAcc = (): Acc => ({
+    runs: 0,
+    passingRuns: 0,
+    tests: 0,
+    testsPassed: 0,
+    failures: 0,
+    infraFailures: 0,
+    testsSkipped: 0,
+    durationSum: 0,
+    durationRuns: 0,
+  });
   const byDay = new Map<string, Acc>();
   for (const r of rows) {
     // started_at is a UTC ISO string ("2026-07-01T03:36:42.000Z"); its first 10
@@ -660,24 +706,39 @@ export function bucketRunsByDay(rows: TrendRunRow[]): TrendPoint[] {
     const day = r.started_at.slice(0, 10);
     let acc = byDay.get(day);
     if (!acc) {
-      acc = {
-        runs: 0,
-        passingRuns: 0,
-        tests: 0,
-        testsPassed: 0,
-        failures: 0,
-        testsSkipped: 0,
-        durationSum: 0,
-      };
+      acc = emptyAcc();
       byDay.set(day, acc);
     }
     acc.runs++;
     if (r.status === "success") acc.passingRuns++;
+    if (r.status === "infra_failure") acc.infraFailures++;
     acc.tests += r.tests_total;
     acc.testsPassed += r.tests_passed;
     acc.failures += r.tests_failed + r.tests_errors;
     acc.testsSkipped += r.tests_skipped;
-    acc.durationSum += r.total_duration_ms;
+    // Infra-failure rows carry a fabricated 0ms duration (nothing ran) — keep
+    // them out of the duration average entirely.
+    if (r.status !== "infra_failure") {
+      acc.durationSum += r.total_duration_ms;
+      acc.durationRuns++;
+    }
+  }
+
+  if (fill) {
+    const dayMs = 86_400_000;
+    const until = Date.parse(`${fill.untilDay}T00:00:00Z`);
+    const since = Date.parse(`${fill.sinceDay}T00:00:00Z`);
+    if (Number.isFinite(until) && Number.isFinite(since)) {
+      // Walk backwards from untilDay so the cap drops the OLDEST days.
+      for (
+        let t = until, steps = 0;
+        t >= since && steps < MAX_FILL_DAYS;
+        t -= dayMs, steps++
+      ) {
+        const day = new Date(t).toISOString().slice(0, 10);
+        if (!byDay.has(day)) byDay.set(day, emptyAcc());
+      }
+    }
   }
 
   const out: TrendPoint[] = [];
@@ -690,10 +751,12 @@ export function bucketRunsByDay(rows: TrendRunRow[]): TrendPoint[] {
       tests: acc.tests,
       testsPassed: acc.testsPassed,
       failures: acc.failures,
+      infraFailures: acc.infraFailures,
       testsSkipped: acc.testsSkipped,
       // Over executed tests (skipped excluded), matching deriveKpis / #17.
       passRate: executed > 0 ? acc.testsPassed / executed : null,
-      avgDurationMs: acc.runs > 0 ? acc.durationSum / acc.runs : null,
+      avgDurationMs:
+        acc.durationRuns > 0 ? acc.durationSum / acc.durationRuns : null,
     });
   }
   return out.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
