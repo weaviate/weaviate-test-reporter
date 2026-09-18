@@ -4,7 +4,7 @@ This repo ships two artifacts with **separate tag namespaces**:
 
 | Artifact | Lives in | Tags | Consumed by |
 |---|---|---|---|
-| GitHub action (test reporter) | `action/` | `v1` (moving) + `v1.0.X` (immutable) | CI workflows via `weaviate/weaviate-test-reporter/action@v1` |
+| GitHub action (test reporter) | `action/` | `v1` (moving) | CI workflows via `weaviate/weaviate-test-reporter/action@v1` |
 | Dashboard image | `frontend/` | `frontend-vX.Y.Z` | Production deployment (auto, on tag push) |
 
 The namespaces must never mix: `frontend-deploy.yml` triggers on `frontend-v*`, so
@@ -18,16 +18,13 @@ Admin roles — pushing a tag is the release/deploy permission.
 
 1. Merge the change to `main` (PR + green CI, including the `Action smoke` workflow —
    it is the only check that loads `action/action.yml` for real).
-2. Create the immutable release tag:
+2. Move the `v1` tag that consumers pin:
    ```bash
-   git tag v1.0.X <sha> && git push origin v1.0.X
+   git tag -f v1 <sha> && git push --force origin refs/tags/v1
    ```
-3. Move the major tag that consumers pin:
-   ```bash
-   git tag -f v1 <sha> && git push --force origin v1
-   ```
-   (The tag ruleset allows this for maintainers only.)
-4. Nothing to redeploy — consumers (e.g. the weaviate-e2e-tests workflows) pick up
+   (The tag ruleset allows this for maintainers only. `v1` is the only action
+   tag — no per-release tags are kept.)
+3. Nothing to redeploy — consumers (e.g. the weaviate-e2e-tests workflows) pick up
    the new `v1` on their next run.
 
 ## Releasing the dashboard (production deploy)
