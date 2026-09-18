@@ -3,8 +3,8 @@ name: Build & publish frontend image
 # Builds the dashboard container and publishes it to GHCR. That is ALL this
 # workflow does — there is no deploy step here. The image reads its config
 # (WEAVIATE_URL / WEAVIATE_API_KEY) from runtime env, so it bakes no secrets
-# and is published public. Where/how the image is deployed is handled
-# separately, outside this repo.
+# and is published public. Deploying to Cloud Run is a separate, tag-driven
+# step: see frontend-deploy.yml.
 
 on:
   push:
