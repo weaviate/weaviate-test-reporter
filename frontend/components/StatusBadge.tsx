@@ -21,8 +21,8 @@ const TONES: Record<string, string> = {
   cancelled: "text-wv-warn border-wv-warn/40 bg-wv-warn/8",
 };
 
-// The runs list gives the badge a fixed 110px slot; values longer than
-// "failure" overflow into the run title, so they get a short display label.
+// The runs list gives the badge a fixed 110px slot; "infra_failure" is the
+// one status value too wide for it, so it gets a short display label.
 const LABELS: Record<string, string> = {
   infra_failure: "infra_fail",
 };
