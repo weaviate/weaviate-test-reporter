@@ -15,16 +15,16 @@ Your goal is to build a lightweight, highly maintainable, and robust system cons
 
 ## 3. Tech Stack & Constraints
 ### A. The GitHub Action (Directory: `/action`)
-* **Language:** Python 3.11+ (Packaged as a Docker container action via `Dockerfile`).
+* **Language:** Python 3.11+, packaged as a composite action (`action/action.yml` installs `requirements.txt` and runs the package from `action/src`). There is no Dockerfile.
 * **Database Client:** Weaviate Python Client v4 (`weaviate-client`). Use native async/batching capabilities for high performance.
-* **Parsing:** Standard `junit.xml` format using robust XML parsing libraries.
+* **Parsing:** Standard `junit.xml` via `junitparser`. `parser/core.py` stays generic; handling specific to one producer (e.g. gotestsum) goes in its own module under `parser/dialects/` (see the README section "Adding a JUnit dialect").
 * **Constraint:** The action MUST be fail-safe. Network errors to Weaviate must be caught gracefully and exit with 0 (do not break the user's CI pipeline).
 
 ### B. The Frontend (Directory: `/frontend`)
-* **Framework:** Next.js (App Router). Must be configured for Static Export (`output: 'export'`) to be served via lightweight Nginx.
+* **Framework:** Next.js (App Router) built as a standalone Node server (`output: "standalone"`). It is not a static export.
 * **Styling & UI:** Tailwind CSS and `shadcn/ui`.
-* **Constraint:** Single Page Application (SPA) feel using Tabs. No complex state management (no Redux). Dumb components for visual layers, clean hooks for GraphQL/REST queries to Weaviate.
-* **Security:** Read-only Weaviate API keys. No backend Node.js server (hosted internally via Twingate).
+* **Constraint:** Single Page Application (SPA) feel using Tabs. No complex state management (no Redux). Dumb components for visual layers; data comes from the app's own `/api/*` routes (`frontend/app/api/`), which query Weaviate server-side through `frontend/lib/weaviate/` (`server-only`).
+* **Security:** Read-only Weaviate API keys, supplied to the server at runtime (`WEAVIATE_URL` / `WEAVIATE_API_KEY`). They must never reach the browser bundle: no `NEXT_PUBLIC_` prefix, and no imports of `lib/weaviate` from client components.
 
 ## 4. Operational Boundaries
 * **Stop and Ask:** If an instruction contradicts the architecture in `.project/`, or if a library version conflict arises, STOP and ask the user for clarification. Do not hallucinate workarounds.
