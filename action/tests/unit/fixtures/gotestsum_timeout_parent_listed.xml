@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="3" failures="2" errors="0" time="0.250000">
+	<testsuite tests="3" failures="2" time="0.250000" name="github.com/weaviate/weaviate/entities/schema" timestamp="2026-09-23T11:01:09Z">
+		<properties>
+			<property name="go.version" value="go1.27.1 linux/amd64"></property>
+		</properties>
+		<testcase classname="" name="TestMain" time="0.000000">
+			<failure message="Failed" type="">panic: test timed out after 1ms&#xA;&#x9;running tests:&#xA;&#x9;&#x9;TestNested (0s)&#xA;&#x9;&#x9;TestNested/plain (0s)&#xA;&#xA;goroutine 65 [running]:&#xA;</failure>
+		</testcase>
+		<testcase classname="github.com/weaviate/weaviate/entities/schema" name="TestNested" time="0.000000">
+			<failure message="Failed" type="">=== RUN   TestNested&#xA;=== RUN   TestNested/plain&#xA;--- PASS: TestNested/plain (0.00s)&#xA;=== RUN   TestNested/inner&#xA;</failure>
+		</testcase>
+		<testcase classname="github.com/weaviate/weaviate/entities/schema" name="TestNested/plain" time="0.000000"></testcase>
+		<testcase classname="github.com/weaviate/weaviate/entities/schema" name="TestNested/inner" time="-0.000000">
+			<failure message="Failed" type="">=== RUN   TestNested/inner&#xA;</failure>
+		</testcase>
+	</testsuite>
+</testsuites>

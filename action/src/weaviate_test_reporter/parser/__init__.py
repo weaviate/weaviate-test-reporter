@@ -1,7 +1,8 @@
 """JUnit XML -> ParsedCase dataclasses.
 
-`core` parses standard JUnit; `fingerprint` hashes failure traces; `models`
-holds the output types. Import from this package, not from the submodules.
+`core` parses standard JUnit; `dialects` fix up known producers (gotestsum);
+`fingerprint` hashes failure traces; `models` holds the output types.
+Import from this package, not from the submodules.
 """
 
 from .core import merge_summaries, parse_junit_file, parse_junit_summary
