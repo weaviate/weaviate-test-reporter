@@ -15,6 +15,8 @@ from junitparser import Error, Failure, JUnitXml, Skipped, TestSuite
 from junitparser import TestCase as JUnitTestCase
 from junitparser.xunit2 import FlakyError, FlakyFailure, RerunError, RerunFailure
 
+from .dialects import select_dialect
+from .dialects.base import Dialect
 from .fingerprint import stack_trace_fingerprint
 from .models import ParsedCase, RunSummary, _truncate
 
@@ -109,37 +111,56 @@ def parse_junit_file(path: Path) -> Iterator[ParsedCase]:
         iter_suites = iter(xml)
 
     for suite in iter_suites:
-        fallback_suite_name = suite.name or "unknown"
-        for case in suite:
-            # Defensive: some junitparser versions yield non-TestCase
-            # children of a TestSuite (system-out / properties / etc.).
-            if not isinstance(case, JUnitTestCase):
-                continue
-            status, msg, stack, ftype = _classify(case)
-            retry_count = _count_reruns(case)
-            if retry_count > 0:
-                # Reruns only appear when the first attempt failed; the flake
-                # signal is whether the FINAL status recovered to passed.
-                initial_status = "failed"
-                passed_on_retry = status == "passed"
-            else:
-                initial_status = status
-                passed_on_retry = False
-            fingerprint = stack_trace_fingerprint(stack or msg) if status == "failed" else None
-            yield ParsedCase(
-                name=case.name or "unknown",
-                test_suite=_pick_test_suite(case, fallback_suite_name),
-                framework=_detect_framework(case),
-                status=status,
-                duration_ms=_safe_duration_ms(case),
-                error_message=msg,
-                stack_trace=stack,
-                failure_type=ftype,
-                retry_count=retry_count,
-                passed_on_retry=passed_on_retry,
-                initial_status=initial_status,
-                failure_fingerprint=fingerprint,
-            )
+        dialect = select_dialect(suite)
+        if dialect is None:
+            yield from _iter_suite_cases(suite, None)
+        else:
+            yield from _apply_dialect(dialect, list(_iter_suite_cases(suite, dialect)))
+
+
+def _iter_suite_cases(suite: TestSuite, dialect: Dialect | None) -> Iterator[ParsedCase]:
+    """Generic per-case parsing of one <testsuite>. The dialect, when given,
+    only sets `framework` here; its fix-ups run in `_apply_dialect`."""
+    fallback_suite_name = suite.name or "unknown"
+    for case in suite:
+        # Defensive: some junitparser versions yield non-TestCase
+        # children of a TestSuite (system-out / properties / etc.).
+        if not isinstance(case, JUnitTestCase):
+            continue
+        status, msg, stack, ftype = _classify(case)
+        retry_count = _count_reruns(case)
+        if retry_count > 0:
+            # Reruns only appear when the first attempt failed; the flake
+            # signal is whether the FINAL status recovered to passed.
+            initial_status = "failed"
+            passed_on_retry = status == "passed"
+        else:
+            initial_status = status
+            passed_on_retry = False
+        fingerprint = stack_trace_fingerprint(stack or msg) if status == "failed" else None
+        yield ParsedCase(
+            name=case.name or "unknown",
+            test_suite=_pick_test_suite(case, fallback_suite_name),
+            framework=dialect.framework if dialect is not None else _detect_framework(case),
+            status=status,
+            duration_ms=_safe_duration_ms(case),
+            error_message=msg,
+            stack_trace=stack,
+            failure_type=ftype,
+            retry_count=retry_count,
+            passed_on_retry=passed_on_retry,
+            initial_status=initial_status,
+            failure_fingerprint=fingerprint,
+        )
+
+
+def _apply_dialect(dialect: Dialect, cases: list[ParsedCase]) -> list[ParsedCase]:
+    """Run the dialect's fix-ups. Fail-safe: if they raise, keep the generic
+    parse of the suite rather than losing its results."""
+    try:
+        return dialect.postprocess(cases)
+    except Exception:
+        return cases
 
 
 def _pick_test_suite(case: JUnitTestCase, fallback: str) -> str:
@@ -235,6 +256,19 @@ def parse_junit_summary(path: Path) -> RunSummary:
         ts = _parse_timestamp(getattr(suite, "timestamp", None))
         if ts is not None and (earliest is None or ts < earliest):
             earliest = ts
+        dialect = select_dialect(suite)
+        if dialect is not None:
+            # A dialect may drop or merge cases, which the suite's summary
+            # attributes still count; count the kept cases so the run totals
+            # agree with the stored TestCase rows.
+            try:
+                kept = _apply_dialect(dialect, list(_iter_suite_cases(suite, dialect)))
+            except Exception:
+                kept = []
+            total += len(kept)
+            failed += sum(c.status == "failed" for c in kept)
+            skipped += sum(c.status == "skipped" for c in kept)
+            continue
         # junitparser returns the XML attribute when present, else recomputes
         # from child cases — so these are populated even for dialects that omit
         # the summary attributes (WS1 D2 fallback happens for free here).
