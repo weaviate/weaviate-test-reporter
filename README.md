@@ -76,7 +76,7 @@ pytest, gotestsum (Go), jest-junit, and surefire (Maven). The parser uses [`juni
 The parser has two layers (`action/src/weaviate_test_reporter/parser/`):
 
 - **`core.py`** parses standard JUnit plus light heuristics (framework guess from names, `classname` vs suite name, surefire rerun elements). pytest, jest-junit, and surefire need nothing more.
-- **`dialects/`** holds one module per producer whose output needs cases rewritten, dropped, or merged. A dialect applies per `<testsuite>`. When one matched, the run's counts come from the cases it kept.
+- **`dialects/`** holds one module per producer whose output needs cases rewritten, dropped, or merged. A dialect applies per `<testsuite>`. When one matched, the run's counts come from the cases it kept, and its duration from the suite's `time` attribute (for other suites it is the sum of case durations).
 
 gotestsum is the only dialect today (`dialects/gotestsum.py`, matched by the `go.version` suite property):
 

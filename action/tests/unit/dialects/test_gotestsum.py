@@ -111,3 +111,12 @@ def test_gotestsum_timeout_reason_reaches_failing_subtest_of_listed_parent():
     cases = _by_name("gotestsum_timeout_parent_listed.xml")
     assert set(cases) == {"TestNested/plain", "TestNested/inner"}
     assert cases["TestNested/inner"].error_message == "panic: test timed out after 1ms"
+
+
+def test_gotestsum_run_duration_is_suite_time_not_case_sum():
+    """Go parents include their subtests' time, so summing cases
+    double-counts; a dropped parent loses time. The suite `time` attribute
+    is the package's wall-clock."""
+    assert parse_junit_summary(FIXTURES / "gotestsum_nested_module.xml").duration_ms == 522_525
+    assert parse_junit_summary(FIXTURES / "gotestsum_timeout.xml").duration_ms == 90_100
+    assert parse_junit_summary(FIXTURES / "gotestsum_subtests.xml").duration_ms == 500
