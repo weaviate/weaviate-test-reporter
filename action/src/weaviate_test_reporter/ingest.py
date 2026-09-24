@@ -126,7 +126,8 @@ def aggregate_run_properties(
     - status: "failure" if any case failed; "success" otherwise (skipped
       and passed both count as non-failures). Empty runs are "success" — a
       missing XML report is signaled separately in __main__.
-    - total_duration_ms: sum across all cases.
+    - total_duration_ms: the summary's duration when known (per-suite rule in
+      `RunSummary.duration_ms`), else the sum across all cases.
     - timestamp: ingest-time UTC (RFC3339-compatible ISO format). Kept as
       ingest time for backward compatibility — NOT repurposed to run-start.
     - started_at (WS1 D1): real run start from the JUnit summary, falling
@@ -137,7 +138,10 @@ def aggregate_run_properties(
     """
     any_failed = any(c.status == "failed" for c in cases)
     status = "failure" if any_failed else "success"
-    total_duration = sum(c.duration_ms for c in cases)
+    if summary is not None and summary.duration_ms is not None:
+        total_duration = summary.duration_ms
+    else:
+        total_duration = sum(c.duration_ms for c in cases)
     now_iso = ingest_now if ingest_now is not None else datetime.now(UTC).isoformat()
     if run_started_at is not None:
         started_at = run_started_at

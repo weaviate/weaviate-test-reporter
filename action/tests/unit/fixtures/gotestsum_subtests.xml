@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="6" failures="3" errors="0" time="0.500000">
+	<testsuite tests="6" failures="3" time="0.500000" name="github.com/weaviate/weaviate/entities/schema" timestamp="2026-09-23T11:05:00Z">
+		<properties>
+			<property name="go.version" value="go1.27.1 linux/amd64"></property>
+		</properties>
+		<testcase classname="github.com/weaviate/weaviate/entities/schema" name="TestProbeAssert" time="0.010000">
+			<failure message="Failed" type="">=== RUN   TestProbeAssert&#xA;=== RUN   TestProbeAssert/sub_ok&#xA;--- PASS: TestProbeAssert/sub_ok (0.00s)&#xA;=== RUN   TestProbeAssert/sub_fail&#xA;--- FAIL: TestProbeAssert (0.01s)&#xA;</failure>
+		</testcase>
+		<testcase classname="github.com/weaviate/weaviate/entities/schema" name="TestProbeAssert/sub_ok" time="0.000000"></testcase>
+		<testcase classname="github.com/weaviate/weaviate/entities/schema" name="TestProbeAssert/sub_fail" time="-0.000000">
+			<failure message="Failed" type="">=== RUN   TestProbeAssert/sub_fail&#xA;    probe_test.go:13: some log line&#xA;    probe_test.go:14: &#xA;        &#x9;Error Trace:&#x9;/home/runner/work/weaviate/weaviate/entities/schema/probe_test.go:14&#xA;        &#x9;Error:      &#x9;Not equal: &#xA;        &#x9;            &#x9;expected: 3&#xA;        &#x9;            &#x9;actual  : 4&#xA;        &#x9;Test:       &#x9;TestProbeAssert/sub_fail&#xA;        &#x9;Messages:   &#x9;object count after import&#xA;    probe_test.go:15: &#xA;        &#x9;Error Trace:&#x9;/home/runner/work/weaviate/weaviate/entities/schema/probe_test.go:15&#xA;        &#x9;Error:      &#x9;Received unexpected error:&#xA;        &#x9;            &#x9;connection refused: 127.0.0.1:8080&#xA;        &#x9;Test:       &#x9;TestProbeAssert/sub_fail&#xA;--- FAIL: TestProbeAssert/sub_fail (0.00s)&#xA;</failure>
+		</testcase>
+		<testcase classname="github.com/weaviate/weaviate/entities/schema" name="TestPlainError" time="0.001000">
+			<failure message="Failed" type="">=== RUN   TestPlainError&#xA;    plain_test.go:9: starting&#xA;    plain_test.go:10: want 3 objects, got 4&#xA;--- FAIL: TestPlainError (0.00s)&#xA;</failure>
+		</testcase>
+		<testcase classname="github.com/weaviate/weaviate/entities/schema" name="TestAllGreen" time="0.002000"></testcase>
+		<testcase classname="github.com/weaviate/weaviate/entities/schema" name="TestAllGreen/case_a" time="0.001000"></testcase>
+	</testsuite>
+</testsuites>

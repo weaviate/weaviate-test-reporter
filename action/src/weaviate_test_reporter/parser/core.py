@@ -1,4 +1,4 @@
-"""JUnit XML -> ParsedCase dataclasses.
+"""Generic JUnit parsing: XML -> ParsedCase stream + run-level summary.
 
 Handles pytest, gotestsum, jest, and surefire dialects via junitparser, which
 wraps lxml under the hood. Designed to be a pure-function streaming iterator
@@ -7,10 +7,7 @@ so callers can keep memory bounded on large CI reports.
 
 from __future__ import annotations
 
-import hashlib
-import re
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -18,8 +15,10 @@ from junitparser import Error, Failure, JUnitXml, Skipped, TestSuite
 from junitparser import TestCase as JUnitTestCase
 from junitparser.xunit2 import FlakyError, FlakyFailure, RerunError, RerunFailure
 
-MAX_TEXT_BYTES = 32_768
-TRUNC_MARKER = "\n[... truncated]"
+from .dialects import select_dialect
+from .dialects.base import Dialect
+from .fingerprint import stack_trace_fingerprint
+from .models import ParsedCase, RunSummary, _truncate
 
 # Surefire (and gotestsum via the surefire-compatible writer) records retries
 # as extra child elements on a <testcase>. junitparser exposes their classes
@@ -30,54 +29,6 @@ TRUNC_MARKER = "\n[... truncated]"
 # final <failure>/<error>. We count all four the same way — the number of
 # retry elements — and derive the flake signal from the FINAL status.
 _RERUN_ELEMENT_TYPES = (RerunFailure, RerunError, FlakyFailure, FlakyError)
-
-_FINGERPRINT_LEN = 16
-
-
-@dataclass
-class ParsedCase:
-    name: str
-    test_suite: str
-    framework: str
-    status: str
-    duration_ms: int
-    error_message: str | None
-    stack_trace: str | None
-    failure_type: str | None
-    # WS1 D3 (retry / rerun capture) — populated per case; dialects without
-    # rerun elements degrade to 0 / False / status.
-    retry_count: int = 0
-    passed_on_retry: bool = False
-    initial_status: str = "passed"
-    # WS1 D4 (stack-trace fingerprint) — set only for failed cases.
-    failure_fingerprint: str | None = None
-
-
-@dataclass
-class RunSummary:
-    """Run-level aggregates lifted from the <testsuite> elements themselves.
-
-    Distinct from the per-case stream: `started_at` is the earliest suite
-    `timestamp` (WS1 D1) and the `tests_*` counts come from the suite summary
-    attributes (WS1 D2). junitparser recomputes the counts from child cases
-    when a dialect omits the attributes, so they are always populated.
-    """
-
-    started_at: datetime | None = None
-    tests_total: int = 0
-    tests_failed: int = 0
-    tests_errors: int = 0
-    tests_skipped: int = 0
-
-
-def _truncate(text: str | None) -> str | None:
-    if text is None:
-        return None
-    encoded = text.encode("utf-8", errors="replace")
-    if len(encoded) <= MAX_TEXT_BYTES:
-        return text
-    budget = MAX_TEXT_BYTES - len(TRUNC_MARKER.encode("utf-8"))
-    return encoded[:budget].decode("utf-8", errors="ignore") + TRUNC_MARKER
 
 
 def _classify(case: JUnitTestCase) -> tuple[str, str | None, str | None, str | None]:
@@ -97,87 +48,6 @@ def _classify(case: JUnitTestCase) -> tuple[str, str | None, str | None, str | N
         if isinstance(result, Skipped):
             return "skipped", _truncate(result.message or ""), None, None
     return "passed", None, None, None
-
-
-# WS1 D4: stack-trace fingerprint.
-#
-# We hash a NORMALIZED trace so that two failures that differ only in volatile
-# tokens (line numbers, memory addresses, timestamps, temp paths, long id
-# runs) collapse to the same key — the exact-match dedup used by R4 — while
-# genuinely different error shapes (types, messages, file names) stay distinct.
-# Order matters: strip whole ISO timestamps, temp-path tokens and UUIDs BEFORE
-# the generic `:<line>` / long-digit passes so their internal digits aren't
-# rewritten piecemeal.
-_ISO_TIMESTAMP_RE = re.compile(
-    r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?"
-)
-# OS temp directories contain random per-run subpaths (build dirs, pytest
-# tmpdirs), so the whole token is volatile — redact it entirely.
-_OS_TEMP_RE = re.compile(r"(?:/tmp/|/var/folders/|/private/)\S*")
-# CI runner CHECKOUT PREFIX only: GitHub-hosted `/home/runner/work/{repo}/{repo}/`,
-# self-hosted `/home/actions-runner/_work/{repo}/{repo}/`, legacy
-# `/runner/_work/{repo}/{repo}/`. Strip just this prefix so the same failure
-# fingerprints identically across runner types, while KEEPING the repo-relative
-# path that follows — the file is part of the failure's identity, so distinct
-# files must stay distinct (only the volatile checkout root is noise).
-_RUNNER_PREFIX_RE = re.compile(
-    r"(?:/home/runner/work|/home/actions-runner/_work|/runner/_work)/[^/\s]+/[^/\s]+/"
-)
-# Go/gotestsum elapsed-time suffix, e.g. `(0.08s)`, `(200ms)`, `(3µs)`. The
-# duration varies run-to-run and must not fragment the fingerprint. Stripped
-# BEFORE the long-digit pass so millisecond/nanosecond magnitudes collapse too.
-_GO_DURATION_RE = re.compile(r"\(\d+(?:\.\d+)?(?:ns|µs|us|ms|s|m|h)\)")
-_HEX_ADDR_RE = re.compile(r"0x[0-9a-fA-F]+")
-# Object/tenant/backup UUIDs are per-run identity, never failure shape. Hex
-# segments with letters dodge the digit passes, so without this a message like
-# "Vector mismatch for <uuid> on node weaviate-0" hashed uniquely per object
-# and R4 saw N singletons instead of one mass-failure cluster.
-_UUID_RE = re.compile(
-    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}" r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
-)
-# StatefulSet/pod ordinals (`weaviate-0`, `shard-1-of-2`): which replica a
-# failure hit is volatile, not shape. Bare small numbers (HTTP 422, counts)
-# are NOT touched — only 1-3 digits directly after a `letter-` prefix. Known
-# trade-off: numbered file/dataset tokens (`data-1.json`, `top-10`) merge too
-# — a deliberate exception to the keep-files-distinct rule above, since such
-# names are usually shard artifacts of one failure, not distinct causes.
-_HOST_ORDINAL_RE = re.compile(r"(?<=[A-Za-z])-\d{1,3}\b")
-_LINE_WORD_RE = re.compile(r"\bline\s+\d+", re.IGNORECASE)
-_COLON_LINE_RE = re.compile(r":\d+")
-_LONG_DIGITS_RE = re.compile(r"\d{4,}")
-_WS_RE = re.compile(r"\s+")
-
-
-def normalize_stack_trace(text: str) -> str:
-    """Strip volatile tokens from a stack trace so equivalent failures hash
-    identically. Pure function — unit-tested directly."""
-    s = _ISO_TIMESTAMP_RE.sub("<TS>", text)
-    s = _OS_TEMP_RE.sub("<PATH>", s)
-    # Strip only the volatile runner checkout prefix; keep the repo-relative path.
-    s = _RUNNER_PREFIX_RE.sub("", s)
-    s = _GO_DURATION_RE.sub("(<DUR>)", s)
-    s = _HEX_ADDR_RE.sub("<HEX>", s)
-    # UUIDs before the ordinal/digit passes: their pure-digit segments (e.g.
-    # `-0001-`) must vanish as part of the whole token, not piecemeal. Both
-    # tokens require a `-`, so dash-free text (common in large plain-assert
-    # payloads) skips both scans — they cost ~30% of this function otherwise,
-    # enough to blow the 5s large-file CI budget.
-    if "-" in s:
-        s = _UUID_RE.sub("<UUID>", s)
-        s = _HOST_ORDINAL_RE.sub("-<N>", s)
-    s = _LINE_WORD_RE.sub("line <N>", s)
-    s = _COLON_LINE_RE.sub(":<N>", s)
-    s = _LONG_DIGITS_RE.sub("<NUM>", s)
-    return _WS_RE.sub(" ", s).strip()
-
-
-def stack_trace_fingerprint(text: str | None) -> str | None:
-    """Stable 16-char sha256 of the normalized trace; None for empty input."""
-    if text is None or not text.strip():
-        return None
-    normalized = normalize_stack_trace(text)
-    digest = hashlib.sha256(normalized.encode("utf-8", errors="replace")).hexdigest()
-    return digest[:_FINGERPRINT_LEN]
 
 
 def _count_reruns(case: JUnitTestCase) -> int:
@@ -241,37 +111,56 @@ def parse_junit_file(path: Path) -> Iterator[ParsedCase]:
         iter_suites = iter(xml)
 
     for suite in iter_suites:
-        fallback_suite_name = suite.name or "unknown"
-        for case in suite:
-            # Defensive: some junitparser versions yield non-TestCase
-            # children of a TestSuite (system-out / properties / etc.).
-            if not isinstance(case, JUnitTestCase):
-                continue
-            status, msg, stack, ftype = _classify(case)
-            retry_count = _count_reruns(case)
-            if retry_count > 0:
-                # Reruns only appear when the first attempt failed; the flake
-                # signal is whether the FINAL status recovered to passed.
-                initial_status = "failed"
-                passed_on_retry = status == "passed"
-            else:
-                initial_status = status
-                passed_on_retry = False
-            fingerprint = stack_trace_fingerprint(stack or msg) if status == "failed" else None
-            yield ParsedCase(
-                name=case.name or "unknown",
-                test_suite=_pick_test_suite(case, fallback_suite_name),
-                framework=_detect_framework(case),
-                status=status,
-                duration_ms=_safe_duration_ms(case),
-                error_message=msg,
-                stack_trace=stack,
-                failure_type=ftype,
-                retry_count=retry_count,
-                passed_on_retry=passed_on_retry,
-                initial_status=initial_status,
-                failure_fingerprint=fingerprint,
-            )
+        dialect = select_dialect(suite)
+        if dialect is None:
+            yield from _iter_suite_cases(suite, None)
+        else:
+            yield from _apply_dialect(dialect, list(_iter_suite_cases(suite, dialect)))
+
+
+def _iter_suite_cases(suite: TestSuite, dialect: Dialect | None) -> Iterator[ParsedCase]:
+    """Generic per-case parsing of one <testsuite>. The dialect, when given,
+    only sets `framework` here; its fix-ups run in `_apply_dialect`."""
+    fallback_suite_name = suite.name or "unknown"
+    for case in suite:
+        # Defensive: some junitparser versions yield non-TestCase
+        # children of a TestSuite (system-out / properties / etc.).
+        if not isinstance(case, JUnitTestCase):
+            continue
+        status, msg, stack, ftype = _classify(case)
+        retry_count = _count_reruns(case)
+        if retry_count > 0:
+            # Reruns only appear when the first attempt failed; the flake
+            # signal is whether the FINAL status recovered to passed.
+            initial_status = "failed"
+            passed_on_retry = status == "passed"
+        else:
+            initial_status = status
+            passed_on_retry = False
+        fingerprint = stack_trace_fingerprint(stack or msg) if status == "failed" else None
+        yield ParsedCase(
+            name=case.name or "unknown",
+            test_suite=_pick_test_suite(case, fallback_suite_name),
+            framework=dialect.framework if dialect is not None else _detect_framework(case),
+            status=status,
+            duration_ms=_safe_duration_ms(case),
+            error_message=msg,
+            stack_trace=stack,
+            failure_type=ftype,
+            retry_count=retry_count,
+            passed_on_retry=passed_on_retry,
+            initial_status=initial_status,
+            failure_fingerprint=fingerprint,
+        )
+
+
+def _apply_dialect(dialect: Dialect, cases: list[ParsedCase]) -> list[ParsedCase]:
+    """Run the dialect's fix-ups. Fail-safe: if they raise, keep the generic
+    parse of the suite rather than losing its results."""
+    try:
+        return dialect.postprocess(cases)
+    except Exception:
+        return cases
 
 
 def _pick_test_suite(case: JUnitTestCase, fallback: str) -> str:
@@ -362,11 +251,26 @@ def parse_junit_summary(path: Path) -> RunSummary:
         return RunSummary()
 
     earliest: datetime | None = None
-    total = failed = errors = skipped = 0
+    total = failed = errors = skipped = duration_ms = 0
     for suite in suites:
         ts = _parse_timestamp(getattr(suite, "timestamp", None))
         if ts is not None and (earliest is None or ts < earliest):
             earliest = ts
+        dialect = select_dialect(suite)
+        if dialect is not None:
+            # A dialect may drop or merge cases, which the suite's summary
+            # attributes still count; count the kept cases so the run totals
+            # agree with the stored TestCase rows.
+            try:
+                kept = _apply_dialect(dialect, list(_iter_suite_cases(suite, dialect)))
+            except Exception:
+                kept = []
+            total += len(kept)
+            failed += sum(c.status == "failed" for c in kept)
+            skipped += sum(c.status == "skipped" for c in kept)
+            suite_ms = _suite_time_ms(suite)
+            duration_ms += suite_ms if suite_ms is not None else sum(c.duration_ms for c in kept)
+            continue
         # junitparser returns the XML attribute when present, else recomputes
         # from child cases — so these are populated even for dialects that omit
         # the summary attributes (WS1 D2 fallback happens for free here).
@@ -374,6 +278,7 @@ def parse_junit_summary(path: Path) -> RunSummary:
         failed += _suite_count(suite, "failures")
         errors += _suite_count(suite, "errors")
         skipped += _suite_count(suite, "skipped")
+        duration_ms += sum(_safe_duration_ms(c) for c in suite if isinstance(c, JUnitTestCase))
 
     return RunSummary(
         started_at=earliest,
@@ -381,14 +286,29 @@ def parse_junit_summary(path: Path) -> RunSummary:
         tests_failed=failed,
         tests_errors=errors,
         tests_skipped=skipped,
+        duration_ms=duration_ms,
     )
+
+
+def _suite_time_ms(suite: TestSuite) -> int | None:
+    """<testsuite time> in ms; None when absent or not a number (junitparser
+    raises on a non-numeric FloatAttr)."""
+    try:
+        t = suite.time
+    except Exception:
+        return None
+    if t is None:
+        return None
+    return int(round(t * 1000))
 
 
 def merge_summaries(summaries: Iterable[RunSummary]) -> RunSummary:
     """Combine per-file summaries into one run-level summary: earliest
-    `started_at` across files, summed counts."""
+    `started_at` across files, summed counts. The duration is unknown (None)
+    if any file's duration is unknown."""
     earliest: datetime | None = None
     total = failed = errors = skipped = 0
+    duration_ms: int | None = 0
     for s in summaries:
         if s.started_at is not None and (earliest is None or s.started_at < earliest):
             earliest = s.started_at
@@ -396,10 +316,14 @@ def merge_summaries(summaries: Iterable[RunSummary]) -> RunSummary:
         failed += s.tests_failed
         errors += s.tests_errors
         skipped += s.tests_skipped
+        duration_ms = (
+            None if duration_ms is None or s.duration_ms is None else duration_ms + s.duration_ms
+        )
     return RunSummary(
         started_at=earliest,
         tests_total=total,
         tests_failed=failed,
         tests_errors=errors,
         tests_skipped=skipped,
+        duration_ms=duration_ms,
     )

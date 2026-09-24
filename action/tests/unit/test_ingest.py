@@ -169,6 +169,22 @@ def test_aggregate_total_duration_ms_sums_cases():
     assert props["total_duration_ms"] == 400
 
 
+def test_aggregate_total_duration_prefers_summary_duration():
+    """The summary's duration wins over the case sum: for Go suites the case
+    sum double-counts parents that include their subtests' time."""
+    cases = [_case(duration_ms=100), _case(duration_ms=250)]
+    props = aggregate_run_properties(
+        cases, _meta(), _cfg(), summary=RunSummary(tests_total=2, duration_ms=90_000)
+    )
+    assert props["total_duration_ms"] == 90_000
+
+
+def test_aggregate_total_duration_falls_back_to_cases_without_summary_duration():
+    cases = [_case(duration_ms=100), _case(duration_ms=250)]
+    props = aggregate_run_properties(cases, _meta(), _cfg(), summary=RunSummary(tests_total=2))
+    assert props["total_duration_ms"] == 350
+
+
 def test_aggregate_carries_github_metadata():
     props = aggregate_run_properties([_case()], _meta(actor="bob"), _cfg())
     assert props["actor"] == "bob"
