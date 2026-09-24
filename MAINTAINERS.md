@@ -24,8 +24,14 @@ Admin roles — pushing a tag is the release/deploy permission.
    ```
    (The tag ruleset allows this for maintainers only. `v1` is the only action
    tag — no per-release tags are kept.)
-3. Nothing to redeploy — consumers (e.g. the weaviate-e2e-tests workflows) pick up
-   the new `v1` on their next run.
+3. Consumers that use `@v1` (e.g. the weaviate-e2e-tests workflows) pick up the new
+   `v1` on their next run. weaviate/weaviate only allows SHA-pinned actions, so its
+   `regression-tests.yaml` pins the action to a commit (`action@<sha> # v1`): open a
+   PR there bumping that SHA to the new `v1` commit.
+
+Every `uses:` inside `action/action.yml` must also be pinned to a full commit SHA.
+Repos that require SHA-pinned actions check the actions inside this one too, and
+reject the whole job at setup if one of them is a tag.
 
 ## Releasing the dashboard (production deploy)
 
