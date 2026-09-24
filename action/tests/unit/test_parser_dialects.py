@@ -13,7 +13,7 @@ from weaviate_test_reporter.parser.dialects.base import Dialect
 
 XML = """<?xml version="1.0" encoding="UTF-8"?>
 <testsuites>
-  <testsuite name="stub-suite" tests="3" failures="2">
+  <testsuite name="stub-suite" tests="3" failures="2" time="7.5">
     <testcase classname="pkg.mod" name="test_a" time="0.1"/>
     <testcase classname="pkg.mod" name="test_b" time="0.1">
       <failure message="boom">trace</failure>
@@ -102,3 +102,9 @@ def test_no_dialects_registered_matches_generic_behavior(monkeypatch, xml_file):
     s = parse_junit_summary(xml_file)
     assert (s.tests_total, s.tests_failed) == (4, 2)
     assert len(list(parse_junit_file(xml_file))) == 4
+
+
+def test_duration_for_matched_suite_is_suite_time(monkeypatch, xml_file):
+    _use(monkeypatch, STUB)
+    # stub-suite: time="7.5" -> 7500 ms; other-suite: case sum 100 ms.
+    assert parse_junit_summary(xml_file).duration_ms == 7_600

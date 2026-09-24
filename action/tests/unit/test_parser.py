@@ -622,3 +622,32 @@ def test_merge_summaries_empty_is_null_summary():
     merged = merge_summaries([])
     assert merged.started_at is None
     assert merged.tests_total == 0
+
+
+def test_summary_duration_for_generic_dialects_is_the_case_sum():
+    """Non-dialect suites keep the historic run duration: the sum of the
+    parsed case durations."""
+    for fixture in (
+        "pytest_simple.xml",
+        "pytest_realistic.xml",
+        "jest.xml",
+        "surefire.xml",
+        "surefire_reruns.xml",
+        "no_count_attributes.xml",
+    ):
+        path = FIXTURES / fixture
+        expected = sum(c.duration_ms for c in parse_junit_file(path))
+        assert parse_junit_summary(path).duration_ms == expected, fixture
+
+
+def test_merge_summaries_duration_sums_and_propagates_unknown():
+    from weaviate_test_reporter.parser import RunSummary
+
+    assert merge_summaries([RunSummary(duration_ms=5), RunSummary(duration_ms=7)]).duration_ms == 12
+    assert merge_summaries([RunSummary(duration_ms=5), RunSummary()]).duration_ms is None
+
+
+def test_malformed_file_summary_has_no_duration(tmp_path):
+    bad = tmp_path / "bad.xml"
+    bad.write_text("<testsuites><testsuite")
+    assert parse_junit_summary(bad).duration_ms is None

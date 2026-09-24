@@ -251,7 +251,7 @@ def parse_junit_summary(path: Path) -> RunSummary:
         return RunSummary()
 
     earliest: datetime | None = None
-    total = failed = errors = skipped = 0
+    total = failed = errors = skipped = duration_ms = 0
     for suite in suites:
         ts = _parse_timestamp(getattr(suite, "timestamp", None))
         if ts is not None and (earliest is None or ts < earliest):
@@ -268,6 +268,8 @@ def parse_junit_summary(path: Path) -> RunSummary:
             total += len(kept)
             failed += sum(c.status == "failed" for c in kept)
             skipped += sum(c.status == "skipped" for c in kept)
+            suite_ms = _suite_time_ms(suite)
+            duration_ms += suite_ms if suite_ms is not None else sum(c.duration_ms for c in kept)
             continue
         # junitparser returns the XML attribute when present, else recomputes
         # from child cases — so these are populated even for dialects that omit
@@ -276,6 +278,7 @@ def parse_junit_summary(path: Path) -> RunSummary:
         failed += _suite_count(suite, "failures")
         errors += _suite_count(suite, "errors")
         skipped += _suite_count(suite, "skipped")
+        duration_ms += sum(_safe_duration_ms(c) for c in suite if isinstance(c, JUnitTestCase))
 
     return RunSummary(
         started_at=earliest,
@@ -283,14 +286,29 @@ def parse_junit_summary(path: Path) -> RunSummary:
         tests_failed=failed,
         tests_errors=errors,
         tests_skipped=skipped,
+        duration_ms=duration_ms,
     )
+
+
+def _suite_time_ms(suite: TestSuite) -> int | None:
+    """<testsuite time> in ms; None when absent or not a number (junitparser
+    raises on a non-numeric FloatAttr)."""
+    try:
+        t = suite.time
+    except Exception:
+        return None
+    if t is None:
+        return None
+    return int(round(t * 1000))
 
 
 def merge_summaries(summaries: Iterable[RunSummary]) -> RunSummary:
     """Combine per-file summaries into one run-level summary: earliest
-    `started_at` across files, summed counts."""
+    `started_at` across files, summed counts. The duration is unknown (None)
+    if any file's duration is unknown."""
     earliest: datetime | None = None
     total = failed = errors = skipped = 0
+    duration_ms: int | None = 0
     for s in summaries:
         if s.started_at is not None and (earliest is None or s.started_at < earliest):
             earliest = s.started_at
@@ -298,10 +316,14 @@ def merge_summaries(summaries: Iterable[RunSummary]) -> RunSummary:
         failed += s.tests_failed
         errors += s.tests_errors
         skipped += s.tests_skipped
+        duration_ms = (
+            None if duration_ms is None or s.duration_ms is None else duration_ms + s.duration_ms
+        )
     return RunSummary(
         started_at=earliest,
         tests_total=total,
         tests_failed=failed,
         tests_errors=errors,
         tests_skipped=skipped,
+        duration_ms=duration_ms,
     )

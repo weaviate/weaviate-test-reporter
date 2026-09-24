@@ -44,6 +44,11 @@ class RunSummary:
     tests_failed: int = 0
     tests_errors: int = 0
     tests_skipped: int = 0
+    # Run duration. Generic suites: the sum of case durations. Dialect suites:
+    # the <testsuite time> (Go parents include their subtests' time, so a case
+    # sum double-counts). None when unknown (malformed file); ingest then sums
+    # the parsed cases.
+    duration_ms: int | None = None
 
 
 def _truncate(text: str | None) -> str | None:
