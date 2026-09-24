@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="4" failures="6" errors="0" time="2.306677">
+	<testsuite tests="1" failures="1" time="2.307000" name="example.com/gosample/nomain" timestamp="2026-09-24T12:34:52+02:00">
+		<properties>
+			<property name="go.version" value="go1.26.1 darwin/arm64"></property>
+		</properties>
+		<testcase classname="" name="TestMain" time="0.000000">
+			<failure message="Failed" type="">panic: test timed out after 2s&#xA;&#x9;running tests:&#xA;&#x9;&#x9;TestWait (2s)&#xA;&#xA;goroutine 4 [running]:&#xA;testing.(*M).startAlarm.func1()&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:2802 +0x2c4&#xA;created by time.goFunc&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/time/sleep.go:215 +0x38&#xA;&#xA;goroutine 1 [chan receive]:&#xA;testing.(*T).Run(0x7236df524008, {0x10257aaaa?, 0x7236df4a2b18?}, 0x1026cfef8)&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:2109 +0x3bc&#xA;testing.runTests.func1(0x7236df524008)&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:2585 +0x38&#xA;testing.tRunner(0x7236df524008, 0x7236df4a2c48)&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:2036 +0xc4&#xA;testing.runTests({0x10257e0e3, 0x14}, {0x10257fe62, 0x1b}, 0x7236df3f4030, {0x1026f12d0, 0x1, 0x1}, {0x808080808043125f?, 0x10257c86b?, ...})&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:2583 +0x3f0&#xA;testing.(*M).Run(0x7236df5220a0)&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:2443 +0x578&#xA;main.main()&#xA;&#x9;_testmain.go:46 +0x80&#xA;&#xA;goroutine 3 [sleep]:&#xA;time.Sleep(0x2540be400)&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/runtime/time.go:363 +0x150&#xA;example.com/gosample/nomain.TestWait(0x7236df524248?)&#xA;&#x9;/tmp/gosample/nomain/slow_test.go:8 +0x28&#xA;testing.tRunner(0x7236df524248, 0x1026cfef8)&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:2036 +0xc4&#xA;created by testing.(*T).Run in goroutine 1&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:2101 +0x3a8&#xA;FAIL&#x9;example.com/gosample/nomain&#x9;2.306s&#xA;</failure>
+		</testcase>
+		<testcase classname="example.com/gosample/nomain" name="TestWait" time="-0.000000">
+			<failure message="Failed" type="">=== RUN   TestWait&#xA;</failure>
+		</testcase>
+	</testsuite>
+	<testsuite tests="1" failures="1" time="0.431000" name="example.com/gosample/panicky" timestamp="2026-09-24T12:34:52+02:00">
+		<properties>
+			<property name="go.version" value="go1.26.1 darwin/arm64"></property>
+		</properties>
+		<testcase classname="example.com/gosample/panicky" name="TestIndex" time="0.000000">
+			<failure message="Failed" type="">=== RUN   TestIndex&#xA;    panic_test.go:8: about to index&#xA;--- FAIL: TestIndex (0.00s)&#xA;panic: runtime error: index out of range [5] with length 3 [recovered, repanicked]&#xA;&#xA;goroutine 3 [running]:&#xA;testing.tRunner.func1.2({0x104c2fbe0, 0x79e6ead82198})&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:1974 +0x1a0&#xA;testing.tRunner.func1()&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:1977 +0x318&#xA;panic({0x104c2fbe0?, 0x79e6ead82198?})&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/runtime/panic.go:860 +0x12c&#xA;example.com/gosample/panicky.index(...)&#xA;&#x9;/tmp/gosample/panicky/panic_test.go:5&#xA;example.com/gosample/panicky.TestIndex(0x79e6eaeb6248?)&#xA;&#x9;/tmp/gosample/panicky/panic_test.go:9 +0x48&#xA;testing.tRunner(0x79e6eaeb6248, 0x104c3fef8)&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:2036 +0xc4&#xA;created by testing.(*T).Run in goroutine 1&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:2101 +0x3a8&#xA;</failure>
+		</testcase>
+	</testsuite>
+	<testsuite tests="2" failures="2" time="2.189000" name="example.com/gosample/withmain" timestamp="2026-09-24T12:34:52+02:00">
+		<properties>
+			<property name="go.version" value="go1.26.1 darwin/arm64"></property>
+		</properties>
+		<testcase classname="" name="TestMain" time="0.000000">
+			<failure message="Failed" type="">2026/09/24 12:34:52 starting database container&#xA;fixture: loaded 3 rows&#xA;panic: test timed out after 2s&#xA;&#x9;running tests:&#xA;&#x9;&#x9;TestSlow (2s)&#xA;&#x9;&#x9;TestSlow/inner (2s)&#xA;&#xA;goroutine 36 [running]:&#xA;testing.(*M).startAlarm.func1()&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:2802 +0x2c4&#xA;created by time.goFunc&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/time/sleep.go:215 +0x38&#xA;&#xA;goroutine 1 [chan receive]:&#xA;testing.(*T).Run(0x6ae5926a008, {0x1026add32?, 0x6ae59263a88?}, 0x102805138)&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:2109 +0x3bc&#xA;testing.runTests.func1(0x6ae5926a008)&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:2585 +0x38&#xA;testing.tRunner(0x6ae5926a008, 0x6ae59263bb8)&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:2036 +0xc4&#xA;testing.runTests({0x1026b1384, 0x14}, {0x1026b3b4a, 0x1d}, 0x6ae59210288, {0x1028252f0, 0x1, 0x1}, {0x6ae59252060?, 0x17?, ...})&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:2583 +0x3f0&#xA;testing.(*M).Run(0x6ae5920e780)&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:2443 +0x578&#xA;example.com/gosample/withmain.TestMain(0x6ae5920e780)&#xA;&#x9;/tmp/gosample/withmain/main_test.go:14 +0xa8&#xA;main.main()&#xA;&#x9;_testmain.go:48 +0x88&#xA;&#xA;goroutine 34 [chan receive]:&#xA;testing.(*T).Run(0x6ae5926a248, {0x1026ad643?, 0x6ae5920af58?}, 0x1028051c0)&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:2109 +0x3bc&#xA;example.com/gosample/withmain.TestSlow(0x6ae5926a248?)&#xA;&#x9;/tmp/gosample/withmain/main_test.go:18 +0x30&#xA;testing.tRunner(0x6ae5926a248, 0x102805138)&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:2036 +0xc4&#xA;created by testing.(*T).Run in goroutine 1&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:2101 +0x3a8&#xA;&#xA;goroutine 35 [sleep]:&#xA;time.Sleep(0x2540be400)&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/runtime/time.go:363 +0x150&#xA;example.com/gosample/withmain.TestSlow.func1(0x6ae5926a488?)&#xA;&#x9;/tmp/gosample/withmain/main_test.go:20 +0x50&#xA;testing.tRunner(0x6ae5926a488, 0x1028051c0)&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:2036 +0xc4&#xA;created by testing.(*T).Run in goroutine 34&#xA;&#x9;/opt/homebrew/Cellar/go/1.26.1/libexec/src/testing/testing.go:2101 +0x3a8&#xA;FAIL&#x9;example.com/gosample/withmain&#x9;2.189s&#xA;</failure>
+		</testcase>
+		<testcase classname="example.com/gosample/withmain" name="TestSlow" time="-0.000000">
+			<failure message="Failed" type="">=== RUN   TestSlow&#xA;=== RUN   TestSlow/inner&#xA;    main_test.go:19: waiting for index&#xA;</failure>
+		</testcase>
+		<testcase classname="example.com/gosample/withmain" name="TestSlow/inner" time="-0.000000">
+			<failure message="Failed" type="">=== RUN   TestSlow/inner&#xA;    main_test.go:19: waiting for index&#xA;</failure>
+		</testcase>
+	</testsuite>
+</testsuites>

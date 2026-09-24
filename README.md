@@ -82,7 +82,8 @@ gotestsum is the only dialect today (`dialects/gotestsum.py`, matched by the `go
 
 - The failure message is taken from the test output (panic line, else the first testify `Error:` block, else the last output line), because gotestsum writes `message="Failed"` on every failure.
 - A failed parent test with a failing subtest is not stored: Go fails the parent whenever a subtest fails, so storing both would count one failure twice.
-- On a package timeout, the panic (`test timed out after …`) is copied onto the tests that were running, and the synthetic `TestMain` case that holds it is dropped.
+- gotestsum records everything a failed package printed outside any test as a case named `TestMain`, whether or not the package defines a `TestMain` function. On a timeout, Go's `panic: test timed out after …` block is found anywhere in that output (setup logs may come first). It is copied onto the tests that were running, after each test's own output, and the `TestMain` case is dropped. It is kept when the package failed for another reason.
+- A panic is fingerprinted by its signature: the `panic:` line through the goroutine that panicked, without goroutine ids or wait times. The same panic gets the same fingerprint in every run.
 
 ### Adding a JUnit dialect
 

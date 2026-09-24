@@ -120,3 +120,69 @@ def test_gotestsum_run_duration_is_suite_time_not_case_sum():
     assert parse_junit_summary(FIXTURES / "gotestsum_nested_module.xml").duration_ms == 522_525
     assert parse_junit_summary(FIXTURES / "gotestsum_timeout.xml").duration_ms == 90_100
     assert parse_junit_summary(FIXTURES / "gotestsum_subtests.xml").duration_ms == 500
+
+
+# Real gotestsum output from a minimal module outside weaviate (two runs of
+# the same code): `withmain` has a TestMain that logs during setup, `nomain`
+# has no TestMain at all, `panicky` has an ordinary panic in a test.
+PANICS_RUN1 = "gotestsum_panics_run1.xml"
+PANICS_RUN2 = "gotestsum_panics_run2.xml"
+
+
+def _pkg_cases(fixture: str, pkg: str) -> dict:
+    return {
+        c.name: c
+        for c in parse_junit_file(FIXTURES / fixture)
+        if c.test_suite == f"example.com/gosample/{pkg}"
+    }
+
+
+def test_gotestsum_timeout_found_after_package_setup_output():
+    """gotestsum's TestMain case is the package's output from outside any
+    test, not the user's TestMain function: setup logs can come before the
+    timeout panic."""
+    cases = _pkg_cases(PANICS_RUN1, "withmain")
+    assert set(cases) == {"TestSlow/inner"}
+    assert cases["TestSlow/inner"].error_message == "panic: test timed out after 2s"
+
+
+def test_gotestsum_timeout_in_package_without_testmain():
+    cases = _pkg_cases(PANICS_RUN1, "nomain")
+    assert set(cases) == {"TestWait"}
+    assert cases["TestWait"].error_message == "panic: test timed out after 2s"
+
+
+def test_gotestsum_timed_out_test_stack_starts_with_its_own_output():
+    """The test's own output comes first so the size cap trims the goroutine
+    dump, not the test's logs."""
+    stack = _pkg_cases(PANICS_RUN1, "withmain")["TestSlow/inner"].stack_trace
+    assert stack is not None
+    assert stack.startswith("=== RUN   TestSlow/inner")
+    assert stack.index("waiting for index") < stack.index("panic: test timed out after 2s")
+    assert "starting database container" in stack
+
+
+def test_gotestsum_ordinary_panic_message():
+    case = _pkg_cases(PANICS_RUN1, "panicky")["TestIndex"]
+    assert case.error_message == (
+        "panic: runtime error: index out of range [5] with length 3 [recovered, repanicked]"
+    )
+
+
+def test_gotestsum_panic_fingerprints_stable_across_runs():
+    """Goroutine ids, other goroutines and the elapsed time change between
+    runs of the same failure; the fingerprint must not."""
+    run1 = {(c.test_suite, c.name): c for c in parse_junit_file(FIXTURES / PANICS_RUN1)}
+    run2 = {(c.test_suite, c.name): c for c in parse_junit_file(FIXTURES / PANICS_RUN2)}
+    failed = [k for k, c in run1.items() if c.status == "failed"]
+    assert len(failed) == 3
+    for key in failed:
+        assert run1[key].failure_fingerprint is not None
+        assert run1[key].failure_fingerprint == run2[key].failure_fingerprint, key
+
+
+def test_gotestsum_different_panics_get_different_fingerprints():
+    run1 = [c for c in parse_junit_file(FIXTURES / PANICS_RUN1) if c.status == "failed"]
+    by_name = {c.name: c.failure_fingerprint for c in run1}
+    assert by_name["TestIndex"] != by_name["TestWait"]
+    assert by_name["TestWait"] != by_name["TestSlow/inner"]  # different running-test lists
