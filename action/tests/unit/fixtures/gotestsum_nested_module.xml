@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="2" failures="0" errors="0" time="522.525385">
+	<testsuite tests="2" failures="0" time="522.525000" name="acceptance_tests_with_client/usage" timestamp="2026-09-23T11:07:34Z">
+		<properties>
+			<property name="go.version" value="go1.27.1 linux/amd64"></property>
+		</properties>
+		<testcase classname="acceptance_tests_with_client/usage" name="TestRestart" time="363.830000"></testcase>
+		<testcase classname="acceptance_tests_with_client/usage" name="TestRestart/muvera_usage" time="120.000000"></testcase>
+	</testsuite>
+</testsuites>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="3" failures="2" errors="0" time="90.100000">
+	<testsuite tests="3" failures="2" time="90.100000" name="github.com/weaviate/weaviate/test/acceptance/grpc" timestamp="2026-09-23T11:07:15Z">
+		<properties>
+			<property name="go.version" value="go1.27.1 linux/amd64"></property>
+		</properties>
+		<testcase classname="" name="TestMain" time="0.000000">
+			<failure message="Failed" type="">panic: test timed out after 1m30s&#xA;&#x9;running tests:&#xA;&#x9;&#x9;TestGRPC_Batching (1m29s)&#xA;&#x9;&#x9;TestGRPC_Batching/send_objects_and_references_as_fast_as_possible (1m12s)&#xA;&#xA;goroutine 472 [running]:&#xA;testing.(*M).startAlarm.func1()&#xA;&#x9;/opt/hostedtoolcache/go/1.27.1/x64/src/testing/testing.go:2959 +0x605&#xA;created by time.goFunc&#xA;&#x9;/opt/hostedtoolcache/go/1.27.1/x64/src/time/sleep.go:215 +0x2d&#xA;</failure>
+		</testcase>
+		<testcase classname="github.com/weaviate/weaviate/test/acceptance/grpc" name="TestGRPC_Batching" time="89.000000">
+			<failure message="Failed" type="">=== RUN   TestGRPC_Batching&#xA;=== RUN   TestGRPC_Batching/send_objects_and_references_without_errors&#xA;--- PASS: TestGRPC_Batching/send_objects_and_references_without_errors (1.80s)&#xA;=== RUN   TestGRPC_Batching/send_objects_and_references_as_fast_as_possible&#xA;    batching_test.go:224: Sent 100 articles&#xA;</failure>
+		</testcase>
+		<testcase classname="github.com/weaviate/weaviate/test/acceptance/grpc" name="TestGRPC_Batching/send_objects_and_references_without_errors" time="1.800000"></testcase>
+		<testcase classname="github.com/weaviate/weaviate/test/acceptance/grpc" name="TestGRPC_Batching/send_objects_and_references_as_fast_as_possible" time="72.000000">
+			<failure message="Failed" type="">=== RUN   TestGRPC_Batching/send_objects_and_references_as_fast_as_possible&#xA;    batching_test.go:224: Sent 100 articles&#xA;    batching_test.go:224: Sent 200 articles&#xA;</failure>
+		</testcase>
+	</testsuite>
+</testsuites>

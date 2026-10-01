@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite tests="3" failures="3" time="2.0" name="example.com/pkg">
+    <properties><property name="go.version" value="go1.27.1 linux/amd64"></property></properties>
+    <testcase classname="" name="TestMain" time="0">
+      <failure message="Failed" type="">panic: test timed out after 2s&#xA;&#x9;running tests:&#xA;&#x9;&#x9;TestA (2s)&#xA;&#x9;&#x9;TestB (2s)&#xA;&#xA;goroutine 7 [running]:&#xA;testing.(*M).startAlarm.func1()&#xA;</failure>
+    </testcase>
+    <testcase classname="example.com/pkg" name="TestA" time="0">
+      <failure message="Failed" type="">=== RUN   TestA&#xA;    a_test.go:5: waiting for index&#xA;</failure>
+    </testcase>
+    <testcase classname="example.com/pkg" name="TestB" time="0">
+      <failure message="Failed" type="">=== RUN   TestB&#xA;    b_test.go:9: polling replicas&#xA;</failure>
+    </testcase>
+  </testsuite>
+</testsuites>
