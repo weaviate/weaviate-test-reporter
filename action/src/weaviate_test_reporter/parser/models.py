@@ -51,11 +51,11 @@ class RunSummary:
     duration_ms: int | None = None
 
 
-def _truncate(text: str | None) -> str | None:
+def _truncate(text: str | None, limit: int = MAX_TEXT_BYTES) -> str | None:
     if text is None:
         return None
     encoded = text.encode("utf-8", errors="replace")
-    if len(encoded) <= MAX_TEXT_BYTES:
+    if len(encoded) <= limit:
         return text
-    budget = MAX_TEXT_BYTES - len(TRUNC_MARKER.encode("utf-8"))
+    budget = limit - len(TRUNC_MARKER.encode("utf-8"))
     return encoded[:budget].decode("utf-8", errors="ignore") + TRUNC_MARKER

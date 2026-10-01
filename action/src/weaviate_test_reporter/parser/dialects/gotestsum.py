@@ -15,7 +15,7 @@ from dataclasses import replace
 from junitparser import TestSuite
 
 from ..fingerprint import stack_trace_fingerprint
-from ..models import ParsedCase, _truncate
+from ..models import MAX_TEXT_BYTES, ParsedCase, _truncate
 from .base import Dialect
 
 # gotestsum writes `message="Failed"` on every <failure>; the reason is only in
@@ -143,6 +143,19 @@ def _running_tests(package_output: str) -> set[str] | None:
     return names
 
 
+_TIMEOUT_SEPARATOR = "\n--- package output (test timed out) ---\n"
+
+
+def _timeout_stack(test_output: str, package_output: str) -> str:
+    """The test's own output, then the package output that holds the panic,
+    within MAX_TEXT_BYTES. The test's output gets at most half the budget so
+    the panic and the running-test list always fit; the goroutine dump at the
+    end of the package output is what gets cut."""
+    own = _truncate(test_output, MAX_TEXT_BYTES // 2) or ""
+    rest = MAX_TEXT_BYTES - len(own.encode("utf-8")) - len(_TIMEOUT_SEPARATOR.encode("utf-8"))
+    return own + _TIMEOUT_SEPARATOR + (_truncate(package_output, rest) or "")
+
+
 def _postprocess(cases: list[ParsedCase]) -> list[ParsedCase]:
     """Make gotestsum cases match what a reader means by "a failing test":
 
@@ -197,12 +210,7 @@ def _postprocess(cases: list[ParsedCase]) -> list[ParsedCase]:
     victims = 0
     for c in out:
         if c is not main and c.status == "failed" and was_running(c.name):
-            # The test's own output first: the size cap then trims the
-            # goroutine dump, not the test's logs.
-            stack = _truncate(
-                f"{c.stack_trace or ''}\n--- package output (test timed out) ---\n"
-                f"{package_output}"
-            )
+            stack = _timeout_stack(c.stack_trace or "", package_output)
             c = replace(
                 c,
                 error_message=main.error_message,

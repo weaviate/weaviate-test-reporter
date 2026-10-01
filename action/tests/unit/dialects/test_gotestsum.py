@@ -186,3 +186,28 @@ def test_gotestsum_different_panics_get_different_fingerprints():
     by_name = {c.name: c.failure_fingerprint for c in run1}
     assert by_name["TestIndex"] != by_name["TestWait"]
     assert by_name["TestWait"] != by_name["TestSlow/inner"]  # different running-test lists
+
+
+def test_gotestsum_timeout_panic_kept_when_test_output_fills_the_cap(tmp_path):
+    """The test's own output is already capped at MAX_TEXT_BYTES before the
+    dialect runs. A timed-out test that printed that much must still store the
+    panic and the running-test list, within the cap."""
+    from weaviate_test_reporter.parser import MAX_TEXT_BYTES
+
+    line = "    batching_test.go:224: Sent 200 articles&#xA;"
+    xml = (FIXTURES / "gotestsum_timeout.xml").read_text()
+    assert xml.count(line) == 1
+    path = tmp_path / "big.xml"
+    path.write_text(xml.replace(line, line * 1500))  # ~66 KB of the test's own output
+
+    victim = {c.name: c for c in parse_junit_file(path)}[
+        "TestGRPC_Batching/send_objects_and_references_as_fast_as_possible"
+    ]
+    stack = victim.stack_trace
+    assert stack is not None
+    assert len(stack.encode("utf-8")) <= MAX_TEXT_BYTES
+    assert stack.startswith(
+        "=== RUN   TestGRPC_Batching/send_objects_and_references_as_fast_as_possible"
+    )
+    assert "panic: test timed out after 1m30s" in stack
+    assert "running tests:" in stack
