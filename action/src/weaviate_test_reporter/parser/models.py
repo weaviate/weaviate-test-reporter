@@ -31,12 +31,14 @@ class ParsedCase:
 
 @dataclass
 class RunSummary:
-    """Run-level aggregates lifted from the <testsuite> elements themselves.
+    """Run-level aggregates.
 
-    Distinct from the per-case stream: `started_at` is the earliest suite
-    `timestamp` (WS1 D1) and the `tests_*` counts come from the suite summary
-    attributes (WS1 D2). junitparser recomputes the counts from child cases
-    when a dialect omits the attributes, so they are always populated.
+    `started_at` is the earliest suite `timestamp` (WS1 D1). The `tests_*`
+    counts (WS1 D2) come from the <testsuite> summary attributes for generic
+    suites (junitparser recomputes them from child cases when a producer
+    omits them), and from the stored cases for suites a dialect handled,
+    since a dialect can drop cases the attributes still count. Dialect suites
+    count <error> cases as failed, so they add nothing to `tests_errors`.
     """
 
     started_at: datetime | None = None
@@ -46,12 +48,15 @@ class RunSummary:
     tests_skipped: int = 0
     # Run duration. Generic suites: the sum of case durations. Dialect suites:
     # the <testsuite time> (Go parents include their subtests' time, so a case
-    # sum double-counts). None when unknown (malformed file); ingest then sums
-    # the parsed cases.
+    # sum double-counts), or the sum of the stored cases when that attribute is
+    # missing or unusable. None when unknown (malformed file); ingest then sums
+    # the parsed cases of the whole run.
     duration_ms: int | None = None
 
 
-def _truncate(text: str | None, limit: int = MAX_TEXT_BYTES) -> str | None:
+def truncate(text: str | None, limit: int = MAX_TEXT_BYTES) -> str | None:
+    """Cut `text` to at most `limit` UTF-8 bytes, ending with TRUNC_MARKER when
+    anything was cut."""
     if text is None:
         return None
     encoded = text.encode("utf-8", errors="replace")

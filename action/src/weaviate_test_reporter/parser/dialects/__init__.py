@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from junitparser import TestSuite
 
+from ...logging import get_logger
 from . import gotestsum
 from .base import Dialect
 
@@ -16,11 +17,17 @@ DIALECTS: tuple[Dialect, ...] = (gotestsum.DIALECT,)
 
 def select_dialect(suite: TestSuite) -> Dialect | None:
     """First dialect whose `matches` accepts the suite; None means generic
-    parsing only. A dialect whose `matches` raises is treated as no match."""
+    parsing only. A dialect whose `matches` raises is treated as no match
+    and logged."""
     for dialect in DIALECTS:
         try:
             if dialect.matches(suite):
                 return dialect
-        except Exception:
-            continue
+        except Exception as e:
+            get_logger().warning(
+                "dialect_match_failed",
+                framework=dialect.framework,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
     return None

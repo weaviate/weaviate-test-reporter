@@ -15,13 +15,15 @@ from dataclasses import replace
 from junitparser import TestSuite
 
 from ..fingerprint import stack_trace_fingerprint
-from ..models import MAX_TEXT_BYTES, ParsedCase, _truncate
+from ..models import MAX_TEXT_BYTES, ParsedCase, truncate
 from .base import Dialect
 
 # gotestsum writes `message="Failed"` on every <failure>; the reason is only in
 # the body (the test's own output).
 _GO_PLACEHOLDER_MESSAGES = frozenset({"", "Failed"})
-_GO_PANIC_RE = re.compile(r"^\s*(panic: .+?)\s*$", re.MULTILINE)
+# [ \t] rather than \s: \s also matches newlines, which made the search
+# quadratic on long runs of blank lines.
+_GO_PANIC_RE = re.compile(r"^[ \t]*(panic: .+?)[ \t]*$", re.MULTILINE)
 # Written by Go's `testing` package when -timeout expires, identical for every
 # Go module:
 #   panic: test timed out after <d>
@@ -31,9 +33,11 @@ _GO_PANIC_RE = re.compile(r"^\s*(panic: .+?)\s*$", re.MULTILINE)
 _GO_TIMEOUT_RE = re.compile(r"^panic: test timed out after .*$", re.MULTILINE)
 _GO_RUNNING_HEADER = "\trunning tests:"
 _GO_RUNNING_TEST_RE = re.compile(r"^\t\t(\S+) \([^)]*\)\s*$")
-# Parts of a Go goroutine dump that change between runs of the same failure.
+# Parts of a panic signature that change between runs of the same failure:
+# goroutine ids, and the elapsed times in the timeout's running-test list,
+# which Go prints compound, e.g. (1m12s).
 _GO_GOROUTINE_ID_RE = re.compile(r"\bgoroutine \d+\b")
-_GO_WAIT_MINUTES_RE = re.compile(r", \d+ minutes")
+_GO_ELAPSED_RE = re.compile(r"\((?:\d+(?:\.\d+)?(?:ms|us|µs|ns|h|m|s))+\)")
 _GO_GOROUTINE_HEADER_RE = re.compile(r"^goroutine \d+ \[", re.MULTILINE)
 # testify output: a key line `<indent>\tError:      \t<value>` followed by
 # continuation lines `<indent>\t            \t<value>`.
@@ -43,6 +47,8 @@ _GO_FRAMING_RE = re.compile(
     r"^\s*(?:=== (?:RUN|PAUSE|CONT|NAME)\b|--- (?:PASS|FAIL|SKIP):"
     r"|FAIL\b|ok\s|PASS$|exit status \d+$)"
 )
+_TIMEOUT_SEPARATOR = "\n--- package output (test timed out) ---\n"
+_SETUP_SEPARATOR = "\n--- package output before the timeout ---\n"
 
 
 def _matches(suite: TestSuite) -> bool:
@@ -50,17 +56,13 @@ def _matches(suite: TestSuite) -> bool:
     than the classname heuristic: nested Go modules (e.g. weaviate's
     `acceptance_tests_with_client`) have no `github.com/` prefix."""
     try:
-        props = suite.properties()
-        return props is not None and any(p.name == "go.version" for p in props)
+        return any(p.name == "go.version" for p in suite.properties())
     except Exception:
         return False
 
 
-_WS_RE = re.compile(r"\s+")
-
-
 def _collapse_ws(text: str) -> str:
-    return _WS_RE.sub(" ", text).strip()
+    return " ".join(text.split())
 
 
 def _testify_message(body: str) -> str | None:
@@ -110,9 +112,9 @@ def _go_failure_message(body: str | None) -> str | None:
 def _panic_signature(body: str | None) -> str | None:
     """The stable identity of a Go panic: from the first `panic:` line to the
     end of the first goroutine block (the goroutine that panicked), with
-    goroutine ids and wait durations removed. Setup logs before the panic,
-    the other goroutines and the trailing `FAIL <pkg> <elapsed>` line all
-    change between runs and are left out. None when the body has no panic."""
+    goroutine ids and elapsed times removed. Setup logs before the panic, the
+    other goroutines (whose set and wait times vary) and the trailing
+    `FAIL <pkg> <elapsed>` line are left out. None when the body has no panic."""
     if not body:
         return None
     panic = _GO_PANIC_RE.search(body)
@@ -123,37 +125,58 @@ def _panic_signature(body: str | None) -> str | None:
     end = rest.find("\n\n", header.start() if header is not None else 0)
     signature = rest if end == -1 else rest[:end]
     signature = _GO_GOROUTINE_ID_RE.sub("goroutine <N>", signature)
-    return _GO_WAIT_MINUTES_RE.sub("", signature)
+    return _GO_ELAPSED_RE.sub("(<DUR>)", signature)
 
 
-def _running_tests(package_output: str) -> set[str] | None:
-    """Names under `running tests:` of Go's timeout panic, wherever that panic
-    sits in the package output. None when the output has no timeout panic."""
-    timeout = _GO_TIMEOUT_RE.search(package_output)
-    if timeout is None:
-        return None
-    names: set[str] = set()
-    for line in package_output[timeout.end() :].splitlines()[1:]:
-        if line.rstrip() == _GO_RUNNING_HEADER:
-            continue
-        m = _GO_RUNNING_TEST_RE.match(line)
-        if m is None:
-            break
-        names.add(m.group(1))
-    return names
+class _Timeout:
+    """Go's timeout panic found in a package's output (gotestsum's TestMain
+    case), and what is taken from it for the tests it interrupted."""
 
+    def __init__(self, package_output: str) -> None:
+        match = _GO_TIMEOUT_RE.search(package_output)
+        if match is None:
+            raise ValueError("no timeout panic")
+        block = package_output[match.start() :]
+        setup = package_output[: match.start()].rstrip("\n")
+        self.message = match.group(0).strip()
+        self.fingerprint = stack_trace_fingerprint(_panic_signature(block))
+        # The panic first, any earlier package output after it: the size cap
+        # then trims setup logs and the goroutine dump, never the panic.
+        self.output = block + (_SETUP_SEPARATOR + setup if setup else "")
+        self.running: set[str] = set()
+        for line in block.splitlines()[1:]:
+            if line.rstrip() == _GO_RUNNING_HEADER:
+                continue
+            m = _GO_RUNNING_TEST_RE.match(line)
+            if m is None:
+                break
+            self.running.add(m.group(1))
 
-_TIMEOUT_SEPARATOR = "\n--- package output (test timed out) ---\n"
+    @classmethod
+    def find(cls, package_output: str) -> _Timeout | None:
+        try:
+            return cls(package_output)
+        except ValueError:
+            return None
 
+    def interrupted(self, case: ParsedCase) -> bool:
+        """A failed case the timeout stopped: listed as running, or a subtest
+        of a listed test, and with no `--- FAIL: <name>` line of its own (that
+        line means the test had already finished with its own failure)."""
+        parts = case.name.split("/")
+        if not any("/".join(parts[:i]) in self.running for i in range(1, len(parts) + 1)):
+            return False
+        finished = re.search(
+            rf"^\s*--- FAIL: {re.escape(case.name)} \(", case.stack_trace or "", re.MULTILINE
+        )
+        return finished is None
 
-def _timeout_stack(test_output: str, package_output: str) -> str:
-    """The test's own output, then the package output that holds the panic,
-    within MAX_TEXT_BYTES. The test's output gets at most half the budget so
-    the panic and the running-test list always fit; the goroutine dump at the
-    end of the package output is what gets cut."""
-    own = _truncate(test_output, MAX_TEXT_BYTES // 2) or ""
-    rest = MAX_TEXT_BYTES - len(own.encode("utf-8")) - len(_TIMEOUT_SEPARATOR.encode("utf-8"))
-    return own + _TIMEOUT_SEPARATOR + (_truncate(package_output, rest) or "")
+    def stack(self, test_output: str) -> str:
+        """The test's own output, then the package output starting at the
+        panic, within MAX_TEXT_BYTES. The test's output gets at most half."""
+        own = truncate(test_output, MAX_TEXT_BYTES // 2) or ""
+        rest = MAX_TEXT_BYTES - len(own.encode("utf-8")) - len(_TIMEOUT_SEPARATOR.encode("utf-8"))
+        return own + _TIMEOUT_SEPARATOR + (truncate(self.output, rest) or "")
 
 
 def _postprocess(cases: list[ParsedCase]) -> list[ParsedCase]:
@@ -169,21 +192,21 @@ def _postprocess(cases: list[ParsedCase]) -> list[ParsedCase]:
        defines a TestMain function (Go does not allow a regular test with that
        name). On a timeout that output holds Go's timeout panic, possibly after
        setup logs, while the tests that were running get only their own
-       output. Copy the panic onto every kept failure that is listed as
-       running or is a subtest of a listed test, then drop `TestMain`. It is
-       kept when no such failure exists, and when the package failed for
-       another reason (e.g. setup), since it is then the only record.
+       output. Every kept failure the timeout interrupted (`_Timeout.interrupted`)
+       gets the timeout's message and fingerprint and the panic in its stack,
+       then `TestMain` is dropped. It is kept when no such failure exists, and
+       when the package failed for another reason (e.g. setup), since it is
+       then the only record.
     4. Fingerprint a panic by its signature (`_panic_signature`), so the same
        panic hashes identically across runs.
+
+    Bodies arrive uncapped (Go prints the reason last); core caps them after.
     """
     out: list[ParsedCase] = []
     for c in cases:
         if c.status == "failed":
             if (c.error_message or "") in _GO_PLACEHOLDER_MESSAGES:
-                c = replace(
-                    c,
-                    error_message=_truncate(_go_failure_message(c.stack_trace)) or c.error_message,
-                )
+                c = replace(c, error_message=_go_failure_message(c.stack_trace) or c.error_message)
             signature = _panic_signature(c.stack_trace)
             if signature is not None:
                 c = replace(c, failure_fingerprint=stack_trace_fingerprint(signature))
@@ -197,29 +220,31 @@ def _postprocess(cases: list[ParsedCase]) -> list[ParsedCase]:
     out = [c for c in out if not (c.status == "failed" and c.name in failing_ancestors)]
 
     main = next((c for c in out if c.name == "TestMain" and c.status == "failed"), None)
-    package_output = (main.stack_trace or "") if main is not None else ""
-    running = _running_tests(package_output) if main is not None else None
-    if main is None or not running:
+    timeout = _Timeout.find(main.stack_trace or "") if main is not None else None
+    if main is None or timeout is None:
         return out
 
-    def was_running(name: str) -> bool:
-        parts = name.split("/")
-        return any("/".join(parts[:i]) in running for i in range(1, len(parts) + 1))
-
     enriched: list[ParsedCase] = []
-    victims = 0
+    interrupted = False
     for c in out:
-        if c is not main and c.status == "failed" and was_running(c.name):
-            stack = _timeout_stack(c.stack_trace or "", package_output)
+        if c is main:
             c = replace(
                 c,
-                error_message=main.error_message,
-                stack_trace=stack,
-                failure_fingerprint=main.failure_fingerprint,
+                error_message=timeout.message,
+                stack_trace=timeout.output,
+                failure_fingerprint=timeout.fingerprint,
             )
-            victims += 1
+            main = c
+        elif c.status == "failed" and timeout.interrupted(c):
+            c = replace(
+                c,
+                error_message=timeout.message,
+                stack_trace=timeout.stack(c.stack_trace or ""),
+                failure_fingerprint=timeout.fingerprint,
+            )
+            interrupted = True
         enriched.append(c)
-    return [c for c in enriched if c is not main] if victims else enriched
+    return [c for c in enriched if c is not main] if interrupted else enriched
 
 
 DIALECT = Dialect(framework="golang", matches=_matches, postprocess=_postprocess)

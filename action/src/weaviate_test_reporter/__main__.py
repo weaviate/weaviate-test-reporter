@@ -43,7 +43,7 @@ from .ingest import (
     resolve_run_started_at,
 )
 from .logging import configure_logging, get_logger, group
-from .parser import merge_summaries, parse_junit_file, parse_junit_summary
+from .parser import merge_summaries, parse_junit
 from .schema import (
     ensure_test_case_collection,
     ensure_test_case_properties,
@@ -160,7 +160,7 @@ def main() -> int:
             summaries = []
             for f in files:
                 try:
-                    file_cases = list(parse_junit_file(Path(f)))
+                    file_cases, file_summary = parse_junit(Path(f))
                 except Exception as e:
                     # Fail-safe: one malformed report must not abort the whole
                     # run — skip it and keep ingesting the good files.
@@ -172,7 +172,7 @@ def main() -> int:
                     )
                     continue
                 cases.extend(file_cases)
-                summaries.append(parse_junit_summary(Path(f)))
+                summaries.append(file_summary)
                 log.info("parsed_file", path=f, cases=len(file_cases))
             # WS1 D1/D2: real run-start timestamp + run-level counts, merged
             # across every matched report. One shared ingest clock so started_at

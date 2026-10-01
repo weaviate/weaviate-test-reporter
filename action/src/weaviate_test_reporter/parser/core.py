@@ -1,13 +1,17 @@
 """Generic JUnit parsing: XML -> ParsedCase stream + run-level summary.
 
-Handles pytest, gotestsum, jest, and surefire dialects via junitparser, which
-wraps lxml under the hood. Designed to be a pure-function streaming iterator
-so callers can keep memory bounded on large CI reports.
+Parses standard JUnit via junitparser (lxml under the hood), with light
+heuristics for pytest, jest-junit and surefire output. Suites from producers
+that need cases rewritten or dropped (gotestsum) are handed to a module in
+`dialects/`. Suites no dialect matches are streamed case by case, so memory
+stays bounded on large reports; a dialect suite is built as a list first.
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Iterator
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -15,10 +19,11 @@ from junitparser import Error, Failure, JUnitXml, Skipped, TestSuite
 from junitparser import TestCase as JUnitTestCase
 from junitparser.xunit2 import FlakyError, FlakyFailure, RerunError, RerunFailure
 
+from ..logging import get_logger
 from .dialects import select_dialect
 from .dialects.base import Dialect
 from .fingerprint import stack_trace_fingerprint
-from .models import ParsedCase, RunSummary, _truncate
+from .models import ParsedCase, RunSummary, truncate
 
 # Surefire (and gotestsum via the surefire-compatible writer) records retries
 # as extra child elements on a <testcase>. junitparser exposes their classes
@@ -31,7 +36,13 @@ from .models import ParsedCase, RunSummary, _truncate
 _RERUN_ELEMENT_TYPES = (RerunFailure, RerunError, FlakyFailure, FlakyError)
 
 
-def _classify(case: JUnitTestCase) -> tuple[str, str | None, str | None, str | None]:
+def _classify(
+    case: JUnitTestCase, cap: bool = True
+) -> tuple[str, str | None, str | None, str | None]:
+    """Status, message, body and failure type of a case. With `cap=False` the
+    text is returned whole: a dialect needs the end of a long body, where Go
+    prints the failure reason, and `_apply_dialect` caps it afterwards."""
+    limit = truncate if cap else _uncapped
     for result in case.result:
         if isinstance(result, (Failure, Error)):
             # Preserve the XML's type attribute verbatim. Don't invent a class
@@ -41,13 +52,17 @@ def _classify(case: JUnitTestCase) -> tuple[str, str | None, str | None, str | N
             ftype = result.type if result.type else None
             return (
                 "failed",
-                _truncate(result.message or ""),
-                _truncate(result.text or ""),
+                limit(result.message or ""),
+                limit(result.text or ""),
                 ftype,
             )
         if isinstance(result, Skipped):
-            return "skipped", _truncate(result.message or ""), None, None
+            return "skipped", limit(result.message or ""), None, None
     return "passed", None, None, None
+
+
+def _uncapped(text: str | None) -> str | None:
+    return text
 
 
 def _count_reruns(case: JUnitTestCase) -> int:
@@ -74,7 +89,8 @@ def _detect_framework(case: JUnitTestCase) -> str:
     """Best-effort framework detection from the case's classname/name.
 
     Note: `classname.startswith("github.com/")` is a deliberately loose
-    heuristic for gotestsum — a Java classname like
+    heuristic for Go output that no dialect matched (gotestsum suites carry a
+    `go.version` property and use the gotestsum dialect) — a Java classname like
     `com.github.foo.Bar` would NOT match (no leading slash and starts
     with `com.`, not `github.com`). False positives are theoretically
     possible if a Java package literally starts with `github.com.` but
@@ -127,7 +143,7 @@ def _iter_suite_cases(suite: TestSuite, dialect: Dialect | None) -> Iterator[Par
         # children of a TestSuite (system-out / properties / etc.).
         if not isinstance(case, JUnitTestCase):
             continue
-        status, msg, stack, ftype = _classify(case)
+        status, msg, stack, ftype = _classify(case, cap=dialect is None)
         retry_count = _count_reruns(case)
         if retry_count > 0:
             # Reruns only appear when the first attempt failed; the flake
@@ -155,12 +171,26 @@ def _iter_suite_cases(suite: TestSuite, dialect: Dialect | None) -> Iterator[Par
 
 
 def _apply_dialect(dialect: Dialect, cases: list[ParsedCase]) -> list[ParsedCase]:
-    """Run the dialect's fix-ups. Fail-safe: if they raise, keep the generic
-    parse of the suite rather than losing its results."""
+    """Run the dialect's fix-ups, then cap the text fields the dialect saw
+    uncapped. Fail-safe: if the fix-ups raise, keep the generic parse of the
+    suite rather than losing its results, and log why."""
     try:
-        return dialect.postprocess(cases)
-    except Exception:
-        return cases
+        cases = dialect.postprocess(cases)
+    except Exception as e:
+        get_logger().warning(
+            "dialect_postprocess_failed",
+            framework=dialect.framework,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+    return [_capped(c) for c in cases]
+
+
+def _capped(case: ParsedCase) -> ParsedCase:
+    message, stack = truncate(case.error_message), truncate(case.stack_trace)
+    if message is case.error_message and stack is case.stack_trace:
+        return case
+    return replace(case, error_message=message, stack_trace=stack)
 
 
 def _pick_test_suite(case: JUnitTestCase, fallback: str) -> str:
@@ -233,13 +263,34 @@ def _suite_count(suite: TestSuite, attr: str) -> int:
         return 0
 
 
+def parse_junit(path: Path) -> tuple[list[ParsedCase], RunSummary]:
+    """`parse_junit_file` and `parse_junit_summary` in one pass: every suite is
+    parsed once, so a dialect's fix-ups run once. Raises on a malformed file,
+    like `parse_junit_file`; the caller decides whether to skip it."""
+    xml = JUnitXml.fromfile(str(path))
+    suites: Iterable[TestSuite] = [xml] if isinstance(xml, TestSuite) else list(xml)
+    cases: list[ParsedCase] = []
+    totals = _Totals()
+    for suite in suites:
+        dialect = select_dialect(suite)
+        if dialect is None:
+            cases.extend(_iter_suite_cases(suite, None))
+            totals.add(suite, None)
+        else:
+            kept = _apply_dialect(dialect, list(_iter_suite_cases(suite, dialect)))
+            cases.extend(kept)
+            totals.add(suite, kept)
+    return cases, totals.summary()
+
+
 def parse_junit_summary(path: Path) -> RunSummary:
     """Parse a JUnit file for its RUN-level aggregates only.
 
-    Separate from `parse_junit_file` (which streams per-case) because these
-    live on the <testsuite> elements: `started_at` is the earliest suite
-    `timestamp`; the counts are the summed suite summary attributes. This does
-    a second lightweight lxml pass — cheap next to the per-case object build.
+    `started_at` is the earliest suite `timestamp`. For generic suites the
+    counts are the summed <testsuite> summary attributes, read in a cheap
+    second pass. For suites a dialect handles, the counts come from the kept
+    cases, so this re-parses and post-processes every case of those suites;
+    callers that also need the cases should use `parse_junit` instead.
 
     Fail-safe: a malformed file yields an empty RunSummary rather than raising,
     so the action never breaks a user's CI.
@@ -250,56 +301,76 @@ def parse_junit_summary(path: Path) -> RunSummary:
     except Exception:
         return RunSummary()
 
-    earliest: datetime | None = None
-    total = failed = errors = skipped = duration_ms = 0
+    totals = _Totals()
     for suite in suites:
-        ts = _parse_timestamp(getattr(suite, "timestamp", None))
-        if ts is not None and (earliest is None or ts < earliest):
-            earliest = ts
         dialect = select_dialect(suite)
+        kept = None
         if dialect is not None:
-            # A dialect may drop or merge cases, which the suite's summary
-            # attributes still count; count the kept cases so the run totals
-            # agree with the stored TestCase rows.
             try:
                 kept = _apply_dialect(dialect, list(_iter_suite_cases(suite, dialect)))
             except Exception:
-                kept = []
-            total += len(kept)
-            failed += sum(c.status == "failed" for c in kept)
-            skipped += sum(c.status == "skipped" for c in kept)
-            suite_ms = _suite_time_ms(suite)
-            duration_ms += suite_ms if suite_ms is not None else sum(c.duration_ms for c in kept)
-            continue
-        # junitparser returns the XML attribute when present, else recomputes
-        # from child cases — so these are populated even for dialects that omit
-        # the summary attributes (WS1 D2 fallback happens for free here).
-        total += _suite_count(suite, "tests")
-        failed += _suite_count(suite, "failures")
-        errors += _suite_count(suite, "errors")
-        skipped += _suite_count(suite, "skipped")
-        duration_ms += sum(_safe_duration_ms(c) for c in suite if isinstance(c, JUnitTestCase))
+                kept = None  # fall back to the suite's own attributes
+        totals.add(suite, kept)
+    return totals.summary()
 
-    return RunSummary(
-        started_at=earliest,
-        tests_total=total,
-        tests_failed=failed,
-        tests_errors=errors,
-        tests_skipped=skipped,
-        duration_ms=duration_ms,
-    )
+
+class _Totals:
+    """Run-level counts and duration accumulated suite by suite."""
+
+    def __init__(self) -> None:
+        self.earliest: datetime | None = None
+        self.total = self.failed = self.errors = self.skipped = self.duration_ms = 0
+
+    def add(self, suite: TestSuite, kept: list[ParsedCase] | None) -> None:
+        """`kept` is None for a generic suite, else the cases a dialect kept."""
+        ts = _parse_timestamp(getattr(suite, "timestamp", None))
+        if ts is not None and (self.earliest is None or ts < self.earliest):
+            self.earliest = ts
+        if kept is None:
+            # junitparser returns the XML attribute when present, else
+            # recomputes it from child cases (WS1 D2 fallback).
+            self.total += _suite_count(suite, "tests")
+            self.failed += _suite_count(suite, "failures")
+            self.errors += _suite_count(suite, "errors")
+            self.skipped += _suite_count(suite, "skipped")
+            self.duration_ms += sum(
+                _safe_duration_ms(c) for c in suite if isinstance(c, JUnitTestCase)
+            )
+            return
+        # A dialect may drop cases the suite attributes still count; count the
+        # kept cases, which are the ones stored.
+        self.total += len(kept)
+        self.failed += sum(c.status == "failed" for c in kept)
+        self.skipped += sum(c.status == "skipped" for c in kept)
+        suite_ms = _suite_time_ms(suite)
+        self.duration_ms += suite_ms if suite_ms is not None else sum(c.duration_ms for c in kept)
+
+    def summary(self) -> RunSummary:
+        return RunSummary(
+            started_at=self.earliest,
+            tests_total=self.total,
+            tests_failed=self.failed,
+            tests_errors=self.errors,
+            tests_skipped=self.skipped,
+            duration_ms=self.duration_ms,
+        )
 
 
 def _suite_time_ms(suite: TestSuite) -> int | None:
-    """<testsuite time> in ms; None when absent or not a number (junitparser
-    raises on a non-numeric FloatAttr)."""
+    """The <testsuite time> attribute in ms, read from the XML itself:
+    junitparser's `suite.time` sums the child cases when the attribute is
+    missing, which would count cases a dialect dropped. None when the
+    attribute is missing, not a number, not finite, or negative."""
     try:
-        t = suite.time
+        raw = suite._elem.get("time")
+        if raw is None:
+            return None
+        ms = float(raw) * 1000
     except Exception:
         return None
-    if t is None:
+    if not math.isfinite(ms) or ms < 0:
         return None
-    return int(round(t * 1000))
+    return int(round(ms))
 
 
 def merge_summaries(summaries: Iterable[RunSummary]) -> RunSummary:

@@ -74,7 +74,11 @@ _TEST_RUN_DESCRIPTIONS: dict[str, str] = {
         "status!='success' so infra failures are included. Run-level pass "
         "rate = success runs / total runs."
     ),
-    "total_duration_ms": "Total wall-clock duration of the run, in milliseconds.",
+    "total_duration_ms": (
+        "Total duration of the run, in milliseconds: the sum of its test "
+        "cases' durations, or for Go suites the sum of each package's "
+        "<testsuite time>."
+    ),
     "timestamp": (
         "When the run started (RFC3339 date-time). Use for time-window filters "
         "like 'last 7 days' and for chronological ordering."
@@ -112,19 +116,29 @@ _TEST_RUN_DESCRIPTIONS: dict[str, str] = {
         "Prefer this over 'timestamp' for 'last N days' windows and trends."
     ),
     "tests_total": (
-        "Total tests executed in the run (sum of <testsuite tests>). Baseline "
-        "for pass rate and 'expected vs executed' checks."
+        "Total tests executed in the run: the sum of <testsuite tests>, except "
+        "for Go (gotestsum) suites, where it is the number of stored test cases "
+        "(a failed parent test whose subtest failed, and the TestMain case of a "
+        "package timeout, are not stored). Baseline for pass rate and "
+        "'expected vs executed' checks."
     ),
     "tests_passed": (
         "Tests that passed: total - failed - errors - skipped (floored at 0). "
         "Test-level pass rate = tests_passed / tests_total (distinct from the "
         "run-level pass rate, which is successful runs / total runs)."
     ),
-    "tests_failed": "Tests that failed assertions (sum of <testsuite failures>).",
-    "tests_skipped": "Tests skipped / not run (sum of <testsuite skipped>).",
+    "tests_failed": (
+        "Tests that failed (sum of <testsuite failures>; for Go suites, the "
+        "stored failed cases)."
+    ),
+    "tests_skipped": (
+        "Tests skipped / not run (sum of <testsuite skipped>; for Go suites, "
+        "the stored skipped cases)."
+    ),
     "tests_errors": (
         "Tests that errored out (setup / runtime errors, sum of <testsuite "
-        "errors>); distinct from assertion failures."
+        "errors>); distinct from assertion failures. Always 0 for Go suites, "
+        "which count errors as failures."
     ),
 }
 
@@ -193,9 +207,11 @@ _TEST_CASE_DESCRIPTIONS: dict[str, str] = {
         "equal to 'status'. Compare with 'status' to spot recovered flakes."
     ),
     "failure_fingerprint": (
-        "Stable hash of the normalized stack trace (line numbers / addresses / "
-        "timestamps / temp paths stripped). Group by it to cluster identical "
-        "failures; null for passed / skipped tests."
+        "Stable hash of the failure: the normalized stack trace (line numbers / "
+        "addresses / timestamps / temp paths stripped), or for a Go panic its "
+        "signature (the panic line and the goroutine that panicked). Tests "
+        "stopped by the same Go timeout share one fingerprint. Group by it to "
+        "cluster identical failures; null for passed / skipped tests."
     ),
 }
 

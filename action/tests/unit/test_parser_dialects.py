@@ -7,6 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from structlog.testing import capture_logs
 
 from weaviate_test_reporter.parser import dialects, parse_junit_file, parse_junit_summary
 from weaviate_test_reporter.parser.dialects.base import Dialect
@@ -108,3 +109,27 @@ def test_duration_for_matched_suite_is_suite_time(monkeypatch, xml_file):
     _use(monkeypatch, STUB)
     # stub-suite: time="7.5" -> 7500 ms; other-suite: case sum 100 ms.
     assert parse_junit_summary(xml_file).duration_ms == 7_600
+
+
+def test_raising_dialect_is_logged(monkeypatch, xml_file):
+    """A broken dialect falls back to generic parsing; the action log must say
+    so, or Go data silently loses its fix-ups."""
+
+    def boom(cases):
+        raise RuntimeError("dialect bug")
+
+    _use(monkeypatch, Dialect(framework="stub", matches=lambda s: True, postprocess=boom))
+    with capture_logs() as logs:
+        list(parse_junit_file(xml_file))
+    events = [e for e in logs if e["event"] == "dialect_postprocess_failed"]
+    assert events and events[0]["framework"] == "stub" and "dialect bug" in events[0]["error"]
+
+
+def test_raising_matches_is_logged(monkeypatch, xml_file):
+    def boom(suite):
+        raise RuntimeError("matches bug")
+
+    _use(monkeypatch, Dialect(framework="stub", matches=boom, postprocess=lambda c: c))
+    with capture_logs() as logs:
+        list(parse_junit_file(xml_file))
+    assert any(e["event"] == "dialect_match_failed" for e in logs)

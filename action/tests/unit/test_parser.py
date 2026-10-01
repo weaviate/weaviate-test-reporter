@@ -15,6 +15,7 @@ from time import perf_counter
 from weaviate_test_reporter.parser import (
     MAX_TEXT_BYTES,
     TRUNC_MARKER,
+    RunSummary,
     merge_summaries,
     normalize_stack_trace,
     parse_junit_file,
@@ -641,8 +642,6 @@ def test_summary_duration_for_generic_dialects_is_the_case_sum():
 
 
 def test_merge_summaries_duration_sums_and_propagates_unknown():
-    from weaviate_test_reporter.parser import RunSummary
-
     assert merge_summaries([RunSummary(duration_ms=5), RunSummary(duration_ms=7)]).duration_ms == 12
     assert merge_summaries([RunSummary(duration_ms=5), RunSummary()]).duration_ms is None
 

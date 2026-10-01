@@ -80,10 +80,10 @@ The parser has two layers (`action/src/weaviate_test_reporter/parser/`):
 
 gotestsum is the only dialect today (`dialects/gotestsum.py`, matched by the `go.version` suite property):
 
-- The failure message is taken from the test output (panic line, else the first testify `Error:` block, else the last output line), because gotestsum writes `message="Failed"` on every failure.
+- The failure message is taken from the test output (panic line, else the first testify `Error:` block, else the last output line), because gotestsum writes `message="Failed"` on every failure. The dialect reads the whole output, since Go prints the reason last; the 32 KB cap on stored text is applied afterwards.
 - A failed parent test with a failing subtest is not stored: Go fails the parent whenever a subtest fails, so storing both would count one failure twice.
-- gotestsum records everything a failed package printed outside any test as a case named `TestMain`, whether or not the package defines a `TestMain` function. On a timeout, Go's `panic: test timed out after …` block is found anywhere in that output (setup logs may come first). It is copied onto the tests that were running, after each test's own output, and the `TestMain` case is dropped. It is kept when the package failed for another reason.
-- A panic is fingerprinted by its signature: the `panic:` line through the goroutine that panicked, without goroutine ids or wait times. The same panic gets the same fingerprint in every run.
+- gotestsum records everything a failed package printed outside any test as a case named `TestMain`, whether or not the package defines a `TestMain` function. On a timeout, Go's `panic: test timed out after …` block is found anywhere in that output (setup logs may come first). Each test the timeout interrupted gets the timeout as its message and fingerprint, and its stored output is its own output followed by the panic. A subtest under a running parent that had already finished with its own `--- FAIL` keeps its own reason. The `TestMain` case is then dropped; it is kept when the package failed for another reason.
+- A panic is fingerprinted by its signature: the `panic:` line through the goroutine that panicked, without goroutine ids or the elapsed times in a timeout's running-test list. The same panic gets the same fingerprint in every run, and tests stopped by the same timeout share it.
 
 ### Adding a JUnit dialect
 

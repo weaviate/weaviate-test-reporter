@@ -4,9 +4,15 @@ TestMain setup failures, nested Go modules)."""
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
-from weaviate_test_reporter.parser import parse_junit_file, parse_junit_summary
+from weaviate_test_reporter.parser import (
+    MAX_TEXT_BYTES,
+    parse_junit,
+    parse_junit_file,
+    parse_junit_summary,
+)
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 
@@ -192,8 +198,6 @@ def test_gotestsum_timeout_panic_kept_when_test_output_fills_the_cap(tmp_path):
     """The test's own output is already capped at MAX_TEXT_BYTES before the
     dialect runs. A timed-out test that printed that much must still store the
     panic and the running-test list, within the cap."""
-    from weaviate_test_reporter.parser import MAX_TEXT_BYTES
-
     line = "    batching_test.go:224: Sent 200 articles&#xA;"
     xml = (FIXTURES / "gotestsum_timeout.xml").read_text()
     assert xml.count(line) == 1
@@ -211,3 +215,162 @@ def test_gotestsum_timeout_panic_kept_when_test_output_fills_the_cap(tmp_path):
     )
     assert "panic: test timed out after 1m30s" in stack
     assert "running tests:" in stack
+
+
+# ---------- review round 4: uncapped output, timeout edge cases, summaries ----------
+
+TIMEOUT_VICTIM = "TestGRPC_Batching/send_objects_and_references_as_fast_as_possible"
+_TIMEOUT_START = '<failure message="Failed" type="">panic: test timed out'
+
+
+def _write(tmp_path: Path, xml: str) -> Path:
+    path = tmp_path / "junit.xml"
+    path.write_text(xml)
+    return path
+
+
+def _with_setup_output(xml: str, setup: str) -> str:
+    """The timeout fixture with `setup` printed by the package before the panic."""
+    assert xml.count(_TIMEOUT_START) == 1
+    return xml.replace(
+        _TIMEOUT_START, '<failure message="Failed" type="">' + setup + "panic: test timed out"
+    )
+
+
+def test_gotestsum_message_found_after_more_than_32kb_of_output(tmp_path):
+    """Go prints the failure reason last. The dialect must see the whole output,
+    not the first MAX_TEXT_BYTES, or the message becomes the truncation marker."""
+    line = "    plain_test.go:9: starting&#xA;"
+    xml = (FIXTURES / "gotestsum_subtests.xml").read_text()
+    path = _write(tmp_path, xml.replace(line, line * 1500))  # ~50 KB before the reason
+    case = {c.name: c for c in parse_junit_file(path)}["TestPlainError"]
+    assert case.error_message == "plain_test.go:10: want 3 objects, got 4"
+    assert case.stack_trace is not None
+    assert len(case.stack_trace.encode("utf-8")) <= MAX_TEXT_BYTES
+
+
+def test_gotestsum_timeout_found_after_more_than_32kb_of_setup_output(tmp_path):
+    setup = "setup: waiting for cluster node 0123456789&#xA;" * 1000  # ~40 KB
+    xml = _with_setup_output((FIXTURES / "gotestsum_timeout.xml").read_text(), setup)
+    cases = {c.name: c for c in parse_junit_file(_write(tmp_path, xml))}
+    assert "TestMain" not in cases
+    victim = cases[TIMEOUT_VICTIM]
+    assert victim.error_message == "panic: test timed out after 1m30s"
+    assert victim.stack_trace is not None
+    assert len(victim.stack_trace.encode("utf-8")) <= MAX_TEXT_BYTES
+    assert "panic: test timed out after 1m30s" in victim.stack_trace
+    assert "running tests:" in victim.stack_trace
+
+
+def test_gotestsum_timeout_panic_kept_with_setup_output_and_large_test_output(tmp_path):
+    """Setup output before the panic must not push the panic out of the stored
+    stack when the test's own output takes its half of the budget."""
+    setup = "setup: waiting for cluster node 0123456789&#xA;" * 550  # ~22 KB
+    own = "    batching_test.go:224: Sent 200 articles&#xA;"
+    xml = _with_setup_output((FIXTURES / "gotestsum_timeout.xml").read_text(), setup)
+    xml = xml.replace(own, own * 700)  # ~29 KB of the test's own output
+    stack = {c.name: c for c in parse_junit_file(_write(tmp_path, xml))}[TIMEOUT_VICTIM].stack_trace
+    assert stack is not None
+    assert len(stack.encode("utf-8")) <= MAX_TEXT_BYTES
+    assert "panic: test timed out after 1m30s" in stack
+    assert "running tests:" in stack
+
+
+def test_gotestsum_timeout_message_ignores_an_earlier_panic_line(tmp_path):
+    """Only Go's timeout panic identifies the timeout; an earlier panic line in
+    the package output (e.g. a logged, recovered panic) must not."""
+    xml = _with_setup_output(
+        (FIXTURES / "gotestsum_timeout.xml").read_text(),
+        "panic: retrying connection (recovered)&#xA;",
+    )
+    victim = {c.name: c for c in parse_junit_file(_write(tmp_path, xml))}[TIMEOUT_VICTIM]
+    assert victim.error_message == "panic: test timed out after 1m30s"
+    clean = {c.name: c for c in parse_junit_file(FIXTURES / "gotestsum_timeout.xml")}
+    assert victim.failure_fingerprint == clean[TIMEOUT_VICTIM].failure_fingerprint
+
+
+def test_gotestsum_timeout_fingerprint_stable_with_compound_elapsed_times(tmp_path):
+    """Go prints elapsed times like (1m12s); they differ between runs of the
+    same timeout and must not change the fingerprint."""
+    xml = (FIXTURES / "gotestsum_timeout.xml").read_text()
+    assert "(1m12s)" in xml
+    other = tmp_path / "other"
+    other.mkdir()
+    a = {c.name: c for c in parse_junit_file(_write(tmp_path, xml))}[TIMEOUT_VICTIM]
+    b = {c.name: c for c in parse_junit_file(_write(other, xml.replace("(1m12s)", "(1m13s)")))}[
+        TIMEOUT_VICTIM
+    ]
+    assert a.failure_fingerprint == b.failure_fingerprint
+
+
+def test_gotestsum_finished_failure_under_a_running_parent_keeps_its_reason(tmp_path):
+    """Go lists the parent of the hung subtest as running. A sibling that had
+    already failed and finished (it has its own --- FAIL line) keeps its reason."""
+    xml = (FIXTURES / "gotestsum_timeout_parent_listed.xml").read_text()
+    passed = (
+        '<testcase classname="github.com/weaviate/weaviate/entities/schema" '
+        'name="TestNested/plain" time="0.000000"></testcase>'
+    )
+    assert passed in xml
+    xml = xml.replace(
+        passed,
+        passed.replace(
+            "></testcase>",
+            '><failure message="Failed" type="">=== RUN   TestNested/plain&#xA;'
+            "    a_test.go:10: want 3 objects, got 4&#xA;"
+            "--- FAIL: TestNested/plain (0.00s)&#xA;</failure></testcase>",
+        ),
+    )
+    cases = {c.name: c for c in parse_junit_file(_write(tmp_path, xml))}
+    assert cases["TestNested/plain"].error_message == "a_test.go:10: want 3 objects, got 4"
+    assert cases["TestNested/inner"].error_message == "panic: test timed out after 1ms"
+    assert (
+        cases["TestNested/plain"].failure_fingerprint
+        != cases["TestNested/inner"].failure_fingerprint
+    )
+
+
+def test_gotestsum_tests_timed_out_together_share_the_timeout_fingerprint():
+    """Every test the timeout caught gets the timeout's fingerprint, not one
+    computed from its own output, so they group as one failure."""
+    cases = _by_name("gotestsum_timeout_two_running.xml")
+    assert set(cases) == {"TestA", "TestB"}
+    assert cases["TestA"].failure_fingerprint is not None
+    assert cases["TestA"].failure_fingerprint == cases["TestB"].failure_fingerprint
+
+
+def test_gotestsum_panic_line_search_is_linear_on_blank_lines(tmp_path):
+    """32 KB of blank lines took seconds with a regex that let leading
+    whitespace span newlines."""
+    xml = (FIXTURES / "gotestsum_subtests.xml").read_text()
+    path = _write(
+        tmp_path,
+        xml.replace(
+            "    plain_test.go:9: starting&#xA;",
+            "&#xA;" * 32_000 + "    plain_test.go:9: starting&#xA;",
+        ),
+    )
+    start = time.perf_counter()
+    list(parse_junit_file(path))
+    assert time.perf_counter() - start < 2.0
+
+
+def test_gotestsum_unusable_suite_time_falls_back_to_kept_cases(tmp_path):
+    """A non-numeric, non-finite, negative or missing <testsuite time> must not
+    raise (the action is fail-safe); the duration falls back to the kept cases."""
+    xml = (FIXTURES / "gotestsum_subtests.xml").read_text()
+    kept_ms = sum(c.duration_ms for c in parse_junit_file(FIXTURES / "gotestsum_subtests.xml"))
+    for value in ('time="oops"', 'time="NaN"', 'time="inf"', 'time="-5"', ""):
+        sub = tmp_path / (value.replace('"', "").replace("=", "") or "missing")
+        sub.mkdir()
+        path = _write(sub, xml.replace('time="0.500000" name=', f"{value} name=".lstrip()))
+        assert parse_junit_summary(path).duration_ms == kept_ms, value
+
+
+def test_parse_junit_matches_the_separate_functions():
+    """parse_junit returns in one pass what parse_junit_file plus
+    parse_junit_summary return, for every fixture."""
+    for path in sorted(FIXTURES.glob("*.xml")):
+        cases, summary = parse_junit(path)
+        assert cases == list(parse_junit_file(path)), path.name
+        assert summary == parse_junit_summary(path), path.name
