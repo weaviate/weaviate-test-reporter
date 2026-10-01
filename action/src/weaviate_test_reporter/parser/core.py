@@ -131,7 +131,7 @@ def parse_junit_file(path: Path) -> Iterator[ParsedCase]:
         if dialect is None:
             yield from _iter_suite_cases(suite, None)
         else:
-            yield from _apply_dialect(dialect, list(_iter_suite_cases(suite, dialect)))
+            yield from _apply_dialect(dialect, list(_iter_suite_cases(suite, dialect)))[0]
 
 
 def _iter_suite_cases(suite: TestSuite, dialect: Dialect | None) -> Iterator[ParsedCase]:
@@ -170,20 +170,23 @@ def _iter_suite_cases(suite: TestSuite, dialect: Dialect | None) -> Iterator[Par
         )
 
 
-def _apply_dialect(dialect: Dialect, cases: list[ParsedCase]) -> list[ParsedCase]:
+def _apply_dialect(dialect: Dialect, cases: list[ParsedCase]) -> tuple[list[ParsedCase], bool]:
     """Run the dialect's fix-ups, then cap the text fields the dialect saw
-    uncapped. Fail-safe: if the fix-ups raise, keep the generic parse of the
-    suite rather than losing its results, and log why."""
+    uncapped. Returns the cases and whether the fix-ups ran. Fail-safe: if
+    they raise, keep the generic parse of the suite rather than losing its
+    results, and log why; the run summary then also takes the generic path."""
+    ok = True
     try:
         cases = dialect.postprocess(cases)
     except Exception as e:
+        ok = False
         get_logger().warning(
             "dialect_postprocess_failed",
             framework=dialect.framework,
             error=str(e),
             error_type=type(e).__name__,
         )
-    return [_capped(c) for c in cases]
+    return [_capped(c) for c in cases], ok
 
 
 def _capped(case: ParsedCase) -> ParsedCase:
@@ -277,9 +280,9 @@ def parse_junit(path: Path) -> tuple[list[ParsedCase], RunSummary]:
             cases.extend(_iter_suite_cases(suite, None))
             totals.add(suite, None)
         else:
-            kept = _apply_dialect(dialect, list(_iter_suite_cases(suite, dialect)))
+            kept, ok = _apply_dialect(dialect, list(_iter_suite_cases(suite, dialect)))
             cases.extend(kept)
-            totals.add(suite, kept)
+            totals.add(suite, kept if ok else None)
     return cases, totals.summary()
 
 
@@ -307,7 +310,8 @@ def parse_junit_summary(path: Path) -> RunSummary:
         kept = None
         if dialect is not None:
             try:
-                kept = _apply_dialect(dialect, list(_iter_suite_cases(suite, dialect)))
+                cases, ok = _apply_dialect(dialect, list(_iter_suite_cases(suite, dialect)))
+                kept = cases if ok else None
             except Exception:
                 kept = None  # fall back to the suite's own attributes
         totals.add(suite, kept)

@@ -9,7 +9,12 @@ from pathlib import Path
 import pytest
 from structlog.testing import capture_logs
 
-from weaviate_test_reporter.parser import dialects, parse_junit_file, parse_junit_summary
+from weaviate_test_reporter.parser import (
+    dialects,
+    parse_junit,
+    parse_junit_file,
+    parse_junit_summary,
+)
 from weaviate_test_reporter.parser.dialects.base import Dialect
 
 XML = """<?xml version="1.0" encoding="UTF-8"?>
@@ -133,3 +138,30 @@ def test_raising_matches_is_logged(monkeypatch, xml_file):
     with capture_logs() as logs:
         list(parse_junit_file(xml_file))
     assert any(e["event"] == "dialect_match_failed" for e in logs)
+
+
+def test_raising_postprocess_summary_follows_the_generic_path(monkeypatch, tmp_path):
+    """When the dialect fails, the cases fall back to generic parsing and so
+    must the counts and duration: from the suite attributes, not the case list."""
+    xml = tmp_path / "junit.xml"
+    xml.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<testsuites><testsuite name="s" tests="5" failures="2" time="9.0">\n'
+        '  <testcase classname="pkg.mod" name="test_a" time="0.1"/>\n'
+        '  <testcase classname="pkg.mod" name="test_b" time="0.2">'
+        '<failure message="boom">trace</failure></testcase>\n'
+        '  <testcase classname="pkg.mod" name="test_c" time="0.3"/>\n'
+        "</testsuite></testsuites>\n"
+    )
+    _use(monkeypatch)
+    generic = parse_junit_summary(xml)
+    assert (generic.tests_total, generic.tests_failed) == (5, 2)
+
+    def boom(cases):
+        raise RuntimeError("dialect bug")
+
+    _use(monkeypatch, Dialect(framework="stub", matches=lambda s: True, postprocess=boom))
+    assert parse_junit_summary(xml) == generic
+    cases, summary = parse_junit(xml)
+    assert summary == generic
+    assert len(cases) == 3
