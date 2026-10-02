@@ -291,6 +291,7 @@ def _case_properties(
     version_minor: str | None = None,
     job_name: str | None = None,
     branch: str | None = None,
+    repository: str | None = None,
 ) -> dict[str, Any]:
     props: dict[str, Any] = {
         "name": c.name,
@@ -324,6 +325,8 @@ def _case_properties(
         props["job_name"] = job_name
     if branch is not None:
         props["branch"] = branch
+    if repository is not None:
+        props["repository"] = repository
     return props
 
 
@@ -349,9 +352,9 @@ def ingest_test_cases(
 
     Re-uses the parent run UUID as the belongsToRun cross-reference for
     every TestCase so downstream queries can fetch all cases of a run in
-    a single hop. `run_started_at` (WS1 D1) and `version_minor` / `job_name` /
-    `branch` (WS3 R3) are denormalized onto each case so the flakes + history
-    scans group/filter without hopping through the reference.
+    a single hop. `run_started_at` (WS1 D1), `version_minor` / `job_name` /
+    `branch` (WS3 R3) and `repository` are denormalized onto each case so the
+    flakes + history scans group/filter without hopping through the reference.
     """
     collection = client.collections.get(TEST_CASE)
     submitted = 0
@@ -372,6 +375,7 @@ def ingest_test_cases(
                     version_minor=version_minor,
                     job_name=job_name,
                     branch=branch,
+                    repository=repository,
                 ),
                 uuid=uid,
                 references={"belongsToRun": run_uuid},

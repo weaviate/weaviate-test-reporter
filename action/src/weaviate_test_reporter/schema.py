@@ -189,6 +189,12 @@ _TEST_CASE_DESCRIPTIONS: dict[str, str] = {
         "Git branch the run executed against (e.g. 'main'), denormalized from the "
         "run for direct branch-scoped filtering on TestCase."
     ),
+    "repository": (
+        "GitHub repository that produced the run, as owner/name (e.g. "
+        "'weaviate/weaviate'), denormalized from TestRun.repository. Tests from "
+        "different repositories are unrelated; filter on it to scope any "
+        "analytic to one repository."
+    ),
     "run_started_at": (
         "Real start time of the parent run (RFC3339), denormalized from "
         "TestRun.started_at. Filter time windows ('last 7 days') directly on "
@@ -310,7 +316,19 @@ _TEST_CASE_PROPERTY_SPEC: list[tuple[str, wvcc.DataType, bool, bool, bool, bool]
     ("version_minor", wvcc.DataType.TEXT, True, False, False, True),
     ("job_name", wvcc.DataType.TEXT, True, False, False, True),
     ("branch", wvcc.DataType.TEXT, True, False, False, True),
+    # Same shape as the WS3 identity fields, but field-tokenized (see
+    # _TEST_CASE_TOKENIZATION); lets every dashboard query scope to one
+    # repository.
+    ("repository", wvcc.DataType.TEXT, True, False, False, True),
 ]
+
+# TEXT properties default to word tokenization, under which an equality filter
+# matches every row containing the value's words: "weaviate/weaviate" would
+# also match "weaviate/weaviate-e2e-tests". Field tokenization matches the
+# whole value. Tokenization can't change once a property exists.
+_TEST_CASE_TOKENIZATION: dict[str, wvcc.Tokenization] = {
+    "repository": wvcc.Tokenization.FIELD,
+}
 
 
 def _build_property(
@@ -321,6 +339,7 @@ def _build_property(
     range_filters: bool,
     skip_vectorization: bool | None = None,
     description: str | None = None,
+    tokenization: wvcc.Tokenization | None = None,
 ) -> wvcc.Property:
     kwargs: dict[str, Any] = {
         "name": name,
@@ -333,6 +352,7 @@ def _build_property(
     # Only TEXT properties have a searchable inverted index.
     if data_type == wvcc.DataType.TEXT:
         kwargs["index_searchable"] = searchable
+        kwargs["tokenization"] = tokenization
     if skip_vectorization is not None:
         kwargs["skip_vectorization"] = skip_vectorization
     # Drop None-valued kwargs so the client uses its defaults for
@@ -364,6 +384,7 @@ def _test_case_properties() -> list[wvcc.Property]:
             rng,
             skip_vec,
             description=_TEST_CASE_DESCRIPTIONS.get(name),
+            tokenization=_TEST_CASE_TOKENIZATION.get(name),
         )
         for (name, dt, filt, search, rng, skip_vec) in _TEST_CASE_PROPERTY_SPEC
     ]
@@ -464,5 +485,9 @@ def ensure_test_case_properties(client: weaviate.WeaviateClient) -> None:
         if name in existing:
             continue
         collection.config.add_property(
-            _build_property(*spec, description=_TEST_CASE_DESCRIPTIONS.get(name))
+            _build_property(
+                *spec,
+                description=_TEST_CASE_DESCRIPTIONS.get(name),
+                tokenization=_TEST_CASE_TOKENIZATION.get(name),
+            )
         )

@@ -721,6 +721,30 @@ def test_case_properties_omit_version_minor_when_not_provided():
     assert props["branch"] == "main"
 
 
+def test_case_properties_include_repository():
+    """Every TestCase carries the run's repository so the dashboard can scope
+    each analytic to one repository without a belongsToRun hop."""
+    client = MagicMock()
+    collection = MagicMock()
+    client.collections.get.return_value = collection
+    batch_ctx = MagicMock()
+    collection.batch.stream.return_value.__enter__.return_value = batch_ctx
+    collection.batch.failed_objects = []
+
+    ingest_test_cases(
+        client,
+        [_case(), _case(name="test_b")],
+        "ru",
+        repository="weaviate/weaviate",
+        workflow_run_id="1",
+        workflow_run_attempt=1,
+        job_name="j",
+        branch="main",
+    )
+    for call in batch_ctx.add_object.call_args_list:
+        assert call.kwargs["properties"]["repository"] == "weaviate/weaviate"
+
+
 # ---------- insert_infra_failure_run ----------
 
 
