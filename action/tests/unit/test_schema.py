@@ -118,6 +118,9 @@ def test_test_run_index_flags_are_explicit():
     ):
         assert props[f].indexFilterable is True, f"{f} should be filterable"
 
+    # Same exact-match requirement as TestCase.repository.
+    assert props["repository"].tokenization == wvcc.Tokenization.FIELD
+
     # Display-only.
     assert props["run_url"].indexFilterable is False
     assert props["run_url"].indexSearchable is False

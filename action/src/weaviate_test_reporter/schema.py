@@ -317,16 +317,18 @@ _TEST_CASE_PROPERTY_SPEC: list[tuple[str, wvcc.DataType, bool, bool, bool, bool]
     ("job_name", wvcc.DataType.TEXT, True, False, False, True),
     ("branch", wvcc.DataType.TEXT, True, False, False, True),
     # Same shape as the WS3 identity fields, but field-tokenized (see
-    # _TEST_CASE_TOKENIZATION); lets every dashboard query scope to one
-    # repository.
+    # _TOKENIZATION); lets every dashboard query scope to one repository.
     ("repository", wvcc.DataType.TEXT, True, False, False, True),
 ]
 
 # TEXT properties default to word tokenization, under which an equality filter
 # matches every row containing the value's words: "weaviate/weaviate" would
 # also match "weaviate/weaviate-e2e-tests". Field tokenization matches the
-# whole value. Tokenization can't change once a property exists.
-_TEST_CASE_TOKENIZATION: dict[str, wvcc.Tokenization] = {
+# whole value. Applies to both collections, and only when a property is
+# created: an existing property keeps its tokenization until it is changed
+# with the index API (PUT /v1/schema/<Class>/properties/<prop>/index/filterable,
+# Weaviate >= 1.39 with RUNTIME_REINDEX_ENABLED=true).
+_TOKENIZATION: dict[str, wvcc.Tokenization] = {
     "repository": wvcc.Tokenization.FIELD,
 }
 
@@ -369,6 +371,7 @@ def _test_run_properties() -> list[wvcc.Property]:
             search,
             rng,
             description=_TEST_RUN_DESCRIPTIONS.get(name),
+            tokenization=_TOKENIZATION.get(name),
         )
         for (name, dt, filt, search, rng) in _TEST_RUN_PROPERTY_SPEC
     ]
@@ -384,7 +387,7 @@ def _test_case_properties() -> list[wvcc.Property]:
             rng,
             skip_vec,
             description=_TEST_CASE_DESCRIPTIONS.get(name),
-            tokenization=_TEST_CASE_TOKENIZATION.get(name),
+            tokenization=_TOKENIZATION.get(name),
         )
         for (name, dt, filt, search, rng, skip_vec) in _TEST_CASE_PROPERTY_SPEC
     ]
@@ -459,7 +462,11 @@ def ensure_test_run_properties(client: weaviate.WeaviateClient) -> None:
         if name in existing:
             continue
         collection.config.add_property(
-            _build_property(*spec, description=_TEST_RUN_DESCRIPTIONS.get(name))
+            _build_property(
+                *spec,
+                description=_TEST_RUN_DESCRIPTIONS.get(name),
+                tokenization=_TOKENIZATION.get(name),
+            )
         )
     status_prop = existing_props.get("status")
     expected_status_description = _TEST_RUN_DESCRIPTIONS["status"]
@@ -488,6 +495,6 @@ def ensure_test_case_properties(client: weaviate.WeaviateClient) -> None:
             _build_property(
                 *spec,
                 description=_TEST_CASE_DESCRIPTIONS.get(name),
-                tokenization=_TEST_CASE_TOKENIZATION.get(name),
+                tokenization=_TOKENIZATION.get(name),
             )
         )

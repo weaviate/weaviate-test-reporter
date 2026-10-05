@@ -140,6 +140,18 @@ def test_test_case_repository_filter_is_exact(weaviate_client):
         assert {o.properties["repository"] for o in found} == {repository}
 
 
+def test_test_run_repository_filter_is_exact(weaviate_client):
+    _ingest_pipeline(weaviate_client, _meta(repository="weaviate/weaviate-e2e-tests"), _cfg())
+    _ingest_pipeline(weaviate_client, _meta(repository="weaviate/weaviate"), _cfg())
+
+    runs = weaviate_client.collections.get(TEST_RUN)
+    for repository in ("weaviate/weaviate", "weaviate/weaviate-e2e-tests"):
+        found = runs.query.fetch_objects(
+            filters=Filter.by_property("repository").equal(repository), limit=10
+        ).objects
+        assert [o.properties["repository"] for o in found] == [repository]
+
+
 def test_test_run_carries_aggregated_properties(weaviate_client):
     run_uuid, _, _, _ = _ingest_pipeline(weaviate_client, _meta(), _cfg())
 
