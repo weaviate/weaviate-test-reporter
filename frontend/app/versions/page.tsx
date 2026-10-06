@@ -13,6 +13,8 @@ import { EmptyState } from "@/components/EmptyState";
 import { ErrorState, LoadingState } from "@/components/States";
 import { fetchVersionRollup } from "@/lib/queries";
 import { useAsync } from "@/lib/useAsync";
+import { withRepository } from "@/lib/repository";
+import { useRepository } from "@/lib/useRepository";
 import type { VersionRollup } from "@/lib/types";
 
 /**
@@ -28,7 +30,8 @@ import type { VersionRollup } from "@/lib/types";
  * label."
  */
 export default function VersionsPage() {
-  const rollup = useAsync(() => fetchVersionRollup(), []);
+  const repository = useRepository();
+  const rollup = useAsync(() => fetchVersionRollup(repository), [repository]);
 
   return (
     <>
@@ -55,7 +58,12 @@ export default function VersionsPage() {
             data-testid="version-grid"
           >
             {rollup.data.map((v, i) => (
-              <VersionCard key={v.minor} version={v} delay={i * 50} />
+              <VersionCard
+                key={v.minor}
+                version={v}
+                repository={repository}
+                delay={i * 50}
+              />
             ))}
           </div>
         )}
@@ -101,16 +109,21 @@ const TEST_PASS_RATE_HELP =
 
 function VersionCard({
   version,
+  repository,
   delay,
 }: {
   version: VersionRollup;
+  repository: string;
   delay: number;
 }) {
   const tone = passRateTone(version.testPassRate);
   const ToneIcon =
     tone === "good" ? CheckCircle2 : tone === "bad" ? XCircle : ListChecks;
   // Deep-link into the Test Explorer with the minor pre-filtered.
-  const href = `/?versionMinor=${encodeURIComponent(version.minor)}`;
+  const href = withRepository(
+    `/?versionMinor=${encodeURIComponent(version.minor)}`,
+    repository,
+  );
 
   return (
     <Link

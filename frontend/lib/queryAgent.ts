@@ -71,6 +71,8 @@ export type AskOptions = {
   /** Limit which collections the agent searches. Omit to use the server
    *  default. */
   collections?: AgentCollection[];
+  /** Repository the answer is scoped to; the server defaults it when omitted. */
+  repository?: string;
   /** Aborts the in-flight fetch. */
   signal?: AbortSignal;
 };
@@ -91,6 +93,7 @@ function buildBody(query: string, opts: AskOptions): string {
     query,
     history: opts.history,
     collections: opts.collections,
+    repository: opts.repository,
   });
 }
 

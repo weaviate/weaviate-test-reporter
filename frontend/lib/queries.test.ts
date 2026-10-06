@@ -3,11 +3,20 @@ import {
   fetchRecentRuns,
   fetchRunById,
   fetchDistinctRunValues,
+  fetchRepositories,
   fetchCasesForRun,
   semanticSearch,
   fetchDashboardKpis,
   fetchFlakyTests,
+  fetchVersionRollup,
+  fetchRunTrend,
+  fetchExecutedDrops,
+  fetchRegressions,
+  fetchFailureClusters,
+  fetchTestHistory,
 } from "./queries";
+
+const REPO = "weaviate/weaviate";
 
 /** Build a minimal fetch Response stand-in. */
 function res(data: unknown, ok = true, status = 200) {
@@ -41,9 +50,8 @@ function lastInit(): RequestInit {
 describe("fetchRecentRuns", () => {
   it("serializes filters into repeatable query params and hits /api/runs", async () => {
     fetchMock.mockResolvedValue(res([]));
-    await fetchRecentRuns({
+    await fetchRecentRuns(REPO, {
       search: "  main  ",
-      repositories: ["a", "b"],
       statuses: ["success"],
       versionMinors: ["1.37"],
       versionFulls: ["1.37.5"],
@@ -51,7 +59,7 @@ describe("fetchRecentRuns", () => {
     const u = lastUrl();
     expect(u.pathname).toBe("/api/runs");
     expect(u.searchParams.get("search")).toBe("main"); // trimmed
-    expect(u.searchParams.getAll("repository")).toEqual(["a", "b"]);
+    expect(u.searchParams.getAll("repository")).toEqual([REPO]);
     expect(u.searchParams.getAll("status")).toEqual(["success"]);
     expect(u.searchParams.getAll("versionMinor")).toEqual(["1.37"]);
     expect(u.searchParams.getAll("versionFull")).toEqual(["1.37.5"]);
@@ -61,7 +69,7 @@ describe("fetchRecentRuns", () => {
   it("omits empty filters and returns the parsed payload", async () => {
     const runs = [{ uuid: "r1" }];
     fetchMock.mockResolvedValue(res(runs));
-    const out = await fetchRecentRuns();
+    const out = await fetchRecentRuns(REPO);
     expect(lastUrl().searchParams.has("search")).toBe(false);
     expect(out).toEqual(runs);
   });
@@ -80,13 +88,25 @@ describe("fetchRunById", () => {
 });
 
 describe("fetchDistinctRunValues", () => {
-  it("passes the property and hits /api/runs/distinct", async () => {
-    fetchMock.mockResolvedValue(res([{ value: "weaviate", count: 3 }]));
-    const out = await fetchDistinctRunValues("repository");
+  it("passes the repository + property and hits /api/runs/distinct", async () => {
+    fetchMock.mockResolvedValue(res([{ value: "1.37", count: 3 }]));
+    const out = await fetchDistinctRunValues(REPO, "version_minor");
     const u = lastUrl();
     expect(u.pathname).toBe("/api/runs/distinct");
-    expect(u.searchParams.get("property")).toBe("repository");
-    expect(out).toEqual([{ value: "weaviate", count: 3 }]);
+    expect(u.searchParams.get("property")).toBe("version_minor");
+    expect(u.searchParams.get("repository")).toBe(REPO);
+    expect(out).toEqual([{ value: "1.37", count: 3 }]);
+  });
+});
+
+describe("fetchRepositories", () => {
+  it("hits /api/repositories with no params", async () => {
+    fetchMock.mockResolvedValue(res([{ value: REPO, count: 3 }]));
+    const out = await fetchRepositories();
+    const u = lastUrl();
+    expect(u.pathname).toBe("/api/repositories");
+    expect([...u.searchParams.keys()]).toEqual([]);
+    expect(out).toEqual([{ value: REPO, count: 3 }]);
   });
 });
 
@@ -105,7 +125,7 @@ describe("fetchCasesForRun", () => {
 describe("semanticSearch", () => {
   it("POSTs the query body to /api/search", async () => {
     fetchMock.mockResolvedValue(res([]));
-    await semanticSearch("connection timeout", {
+    await semanticSearch(REPO, "connection timeout", {
       targetVector: "error_message",
       failedOnly: true,
       limit: 5,
@@ -115,6 +135,7 @@ describe("semanticSearch", () => {
     const init = lastInit();
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body as string)).toEqual({
+      repository: REPO,
       query: "connection timeout",
       targetVector: "error_message",
       failedOnly: true,
@@ -123,7 +144,7 @@ describe("semanticSearch", () => {
   });
 
   it("short-circuits an empty query without calling fetch", async () => {
-    const out = await semanticSearch("   ");
+    const out = await semanticSearch(REPO, "   ");
     expect(out).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -132,24 +153,51 @@ describe("semanticSearch", () => {
 describe("fetchDashboardKpis", () => {
   it("includes ?since when provided, omits it otherwise", async () => {
     fetchMock.mockResolvedValue(res({ passRate: 1 }));
-    await fetchDashboardKpis("2026-06-10T00:00:00.000Z");
+    await fetchDashboardKpis(REPO, "2026-06-10T00:00:00.000Z");
     expect(lastUrl().searchParams.get("since")).toBe(
       "2026-06-10T00:00:00.000Z",
     );
-    await fetchDashboardKpis();
+    expect(lastUrl().searchParams.get("repository")).toBe(REPO);
+    await fetchDashboardKpis(REPO);
     expect(lastUrl().searchParams.has("since")).toBe(false);
+    expect(lastUrl().searchParams.get("repository")).toBe(REPO);
   });
 });
 
 describe("fetchFlakyTests", () => {
   it("passes window + minRuns", async () => {
     fetchMock.mockResolvedValue(res([]));
-    await fetchFlakyTests("30d", { minRuns: 5 });
+    await fetchFlakyTests(REPO, "30d", { minRuns: 5 });
     const u = lastUrl();
     expect(u.pathname).toBe("/api/flakes");
     expect(u.searchParams.get("window")).toBe("30d");
     expect(u.searchParams.get("minRuns")).toBe("5");
+    expect(u.searchParams.get("repository")).toBe(REPO);
   });
+});
+
+describe("repository scoping", () => {
+  // Every repo-scoped GET sends exactly one `repository` param.
+  const calls: Array<[string, () => Promise<unknown>]> = [
+    ["/api/versions", () => fetchVersionRollup(REPO)],
+    [
+      "/api/trend",
+      () => fetchRunTrend(REPO, undefined, { branches: ["main"] }),
+    ],
+    ["/api/drops", () => fetchExecutedDrops(REPO)],
+    ["/api/regressions", () => fetchRegressions(REPO, 7)],
+    ["/api/clusters", () => fetchFailureClusters(REPO, 7)],
+    ["/api/test-history", () => fetchTestHistory(REPO, "suite", "name")],
+  ];
+  for (const [path, call] of calls) {
+    it(`${path} carries the repository`, async () => {
+      fetchMock.mockResolvedValue(res({}));
+      await call();
+      const u = lastUrl();
+      expect(u.pathname).toBe(path);
+      expect(u.searchParams.getAll("repository")).toEqual([REPO]);
+    });
+  }
 });
 
 describe("error handling", () => {
@@ -164,5 +212,5 @@ describe("error handling", () => {
 // Imported lazily to keep the error-handling describe self-contained.
 async function fetchVersionRollupSafe() {
   const { fetchVersionRollup } = await import("./queries");
-  return fetchVersionRollup();
+  return fetchVersionRollup(REPO);
 }

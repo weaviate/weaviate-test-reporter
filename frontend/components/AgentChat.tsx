@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { Send, Square } from "lucide-react";
 import { AgentMessage, type StoredMessage } from "./AgentMessage";
+import { useRepository } from "@/lib/useRepository";
 import {
   QueryAgentError,
   streamAskAgent,
@@ -28,6 +29,7 @@ const EXAMPLE_PROMPTS = [
  * stream closes or the user cancels via the Stop button).
  */
 export function AgentChat() {
+  const repository = useRepository();
   const [messages, setMessages] = useState<StoredMessage[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -111,7 +113,7 @@ export function AgentChat() {
           onError: (e) =>
             updateLastAssistant((prev) => ({ ...prev, error: e.message })),
         },
-        { history, signal: ctrl.signal },
+        { history, repository, signal: ctrl.signal },
       );
     } catch (e) {
       if (ctrl.signal.aborted) {

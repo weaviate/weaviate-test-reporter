@@ -1,8 +1,10 @@
 """Seed the local-k8s Weaviate with realistic synthetic CI history.
 
-Designed for a demo: 10 TestRuns over the last 10 days, mixing pytest and
-Go-test suites, with a realistic spread of failures (network timeouts,
-assertion failures, OOM, race conditions). Each TestCase is vectorized
+Designed for a demo: 10 TestRuns over the last 10 days in the e2e repository,
+mixing pytest and Go-test suites, with a realistic spread of failures (network
+timeouts, assertion failures, OOM, race conditions), plus 4 Go-only runs in the
+core repository so the dashboard's repository selector has two repositories to
+switch between. Each TestCase is vectorized
 via the cluster's text2vec-model2vec module so the Semantic Search tab
 returns sensible results out of the box.
 
@@ -40,7 +42,15 @@ random.seed(0xC1)
 # In-cluster model2vec endpoint that Weaviate itself reaches via DNS.
 MODEL2VEC_IN_CLUSTER = "http://model2vec-inference.weaviate.svc.cluster.local.:8080"
 
-REPO = "weaviate/weaviate-test-reporter"
+# The dashboard's default repository, then a second one it can switch to.
+REPO = "weaviate/weaviate-e2e-tests"
+CORE_REPO = "weaviate/weaviate"
+
+# Core-only tests: they must never show up while the e2e repository is selected.
+CORE_SUITE = "github.com/weaviate/weaviate/test/acceptance/replication"
+CORE_FLAKY_TEST = "TestCoreOnly_ReplicaRepairFlaky"
+# Alternates every run, so it is flaky in any window holding all four runs.
+CORE_FLAKY_PATTERN = ["passed", "failed", "passed", "failed"]
 
 # Realistic suite mix: 4 pytest e2e suites + 2 Go unit suites.
 SUITES = [
@@ -292,6 +302,92 @@ def _finalize_ws1_fields(cases: list[ParsedCase]) -> None:
             c.failure_fingerprint = stack_trace_fingerprint(c.stack_trace or c.error_message)
 
 
+def _gen_core_cases(run_idx: int) -> list[ParsedCase]:
+    """Go acceptance cases for one core run: the alternating flaky test plus
+    six stable passes."""
+    flaky_status = CORE_FLAKY_PATTERN[run_idx]
+    cases = [
+        ParsedCase(
+            name=CORE_FLAKY_TEST,
+            test_suite=CORE_SUITE,
+            framework="golang",
+            status=flaky_status,
+            duration_ms=random.randint(2_000, 9_000),
+            error_message=("replica repair did not converge" if flaky_status == "failed" else None),
+            stack_trace=(
+                "    replication_test.go:211: replica repair did not converge within 20s\n"
+                "        node-2 still missing 18 objects"
+                if flaky_status == "failed"
+                else None
+            ),
+            failure_type="Error" if flaky_status == "failed" else None,
+        )
+    ]
+    for i in range(6):
+        cases.append(
+            ParsedCase(
+                name=f"TestCoreOnly_Stable_{i}",
+                test_suite=CORE_SUITE,
+                framework="golang",
+                status="passed",
+                duration_ms=random.randint(100, 3_000),
+                error_message=None,
+                stack_trace=None,
+                failure_type=None,
+            )
+        )
+    return cases
+
+
+def _insert_core_run(client: weaviate.WeaviateClient, run_idx: int) -> tuple[str, str, int]:
+    """One weaviate/weaviate regression run, `4 - run_idx` days ago."""
+    cases = _gen_core_cases(run_idx)
+    _finalize_ws1_fields(cases)
+    timestamp = _now_minus(days_back=4 - run_idx).isoformat()
+    workflow_run_id = str(50_000 + run_idx)
+    attempt = 1
+    job_name = "acceptance-tests-replication"
+    status = "failure" if any(c.status == "failed" for c in cases) else "success"
+    run_uuid = _run_uuid(CORE_REPO, workflow_run_id, attempt, job_name)
+    run_url = f"https://github.com/{CORE_REPO}/actions/runs/{workflow_run_id}/attempts/{attempt}"
+    props = {
+        "run_id": f"regression/{job_name}#{workflow_run_id}.{attempt}",
+        "repository": CORE_REPO,
+        "branch": "main",
+        "commit_hash": f"{random.randint(0, 0xfff_ffff):07x}{random.randint(0, 0xfff_ffff):07x}",
+        "trigger_type": "workflow_dispatch",
+        "status": status,
+        "total_duration_ms": sum(c.duration_ms for c in cases),
+        "timestamp": timestamp,
+        "started_at": timestamp,
+        **_resolve_counts(cases, None),
+        "workflow_run_id": workflow_run_id,
+        "workflow_run_attempt": attempt,
+        "workflow_name": "Regression Tests",
+        "job_name": job_name,
+        "actor": "weaviate-qa[bot]",
+        "run_url": run_url,
+        "job_url": run_url,
+        "version_full": "1.38.0-dev-4d9ec47",
+        "version_patch": "1.38.0",
+        "version_minor": "1.38",
+    }
+    client.collections.get(TEST_RUN).data.insert(properties=props, uuid=run_uuid)
+    ingest_test_cases(
+        client,
+        cases,
+        run_uuid,
+        repository=CORE_REPO,
+        workflow_run_id=workflow_run_id,
+        workflow_run_attempt=attempt,
+        job_name=job_name,
+        run_started_at=timestamp,
+        version_minor="1.38",
+        branch="main",
+    )
+    return run_uuid, status, len(cases)
+
+
 def _insert_run(client: weaviate.WeaviateClient, run_idx: int, cases: list[ParsedCase]):
     _finalize_ws1_fields(cases)
     timestamp = _now_minus(days_back=10 - run_idx).isoformat()
@@ -418,7 +514,17 @@ def main() -> int:
                 f"uuid={run_uuid[:8]}"
             )
 
-        print(f"\n✓ Seeded 10 TestRuns ({total_cases} TestCases) into Weaviate.")
+        print(f"\n✓ Seeded 10 {REPO} TestRuns ({total_cases} TestCases).")
+
+        core_cases = 0
+        for i in range(len(CORE_FLAKY_PATTERN)):
+            run_uuid, status, n = _insert_core_run(client, i)
+            core_cases += n
+            print(f"  • core run {i}: {status:<8} cases={n:<3} uuid={run_uuid[:8]}")
+        print(
+            f"✓ Seeded {len(CORE_FLAKY_PATTERN)} {CORE_REPO} TestRuns "
+            f"({core_cases} TestCases) into Weaviate."
+        )
         print("  Open the dashboard at http://localhost:3000 once the dev server is up.")
         return 0
     finally:

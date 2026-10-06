@@ -3,10 +3,9 @@ import { expect, test } from "@playwright/test";
 /**
  * Filter bar tests.
  *
- * These rely on the seeded Weaviate having multiple repositories and
- * statuses present. The synthetic seed produces both success and
- * failure runs across "weaviate/weaviate-test-reporter"; the
- * ingest_local fixture-runs add more repositories.
+ * These rely on the seeded Weaviate having both success and failure runs
+ * in the default repository ("weaviate/weaviate-e2e-tests"). Repository
+ * selection lives in the sidebar; see repository.spec.ts.
  */
 
 test.describe("Run filter bar", () => {
@@ -52,55 +51,6 @@ test.describe("Run filter bar", () => {
     await expect
       .poll(async () => page.getByTestId("run-row").count(), { timeout: 8_000 })
       .toBe(initial);
-  });
-
-  test("repository dropdown opens and shows available repos with counts", async ({
-    page,
-  }) => {
-    const repoButton = page
-      .getByTestId("filter-repository")
-      .getByRole("button")
-      .first();
-    await repoButton.click();
-
-    const optionList = page.getByTestId("filter-repository-options");
-    await expect(optionList).toBeVisible();
-
-    // At least one option from the seed should be present.
-    await expect(optionList).toContainText("weaviate", { timeout: 5_000 });
-  });
-
-  test("checking a repository filters runs to that repo only", async ({
-    page,
-  }) => {
-    await page.getByTestId("filter-repository").getByRole("button").first().click();
-
-    const optionList = page.getByTestId("filter-repository-options");
-    await expect(optionList).toBeVisible();
-
-    // Pick the first option in the list and capture its value.
-    const firstOption = optionList.getByRole("button").first();
-    const repoLabel = (await firstOption.innerText()).split("\n")[0].trim();
-    await firstOption.click();
-
-    // The filter button now shows an active count badge.
-    await expect(
-      page.getByTestId("filter-repository").getByRole("button").first()
-    ).toContainText("1");
-
-    // Close the dropdown by clicking outside.
-    await page.getByRole("heading", { name: /recent test runs/i }).click();
-
-    // Every visible row should be from the selected repository.
-    await expect(page.getByTestId("run-row").first()).toBeVisible({
-      timeout: 8_000,
-    });
-    const rows = page.getByTestId("run-row");
-    const count = await rows.count();
-    for (let i = 0; i < Math.min(count, 5); i++) {
-      const repo = await rows.nth(i).getAttribute("data-run-repository");
-      expect(repo).toBe(repoLabel);
-    }
   });
 
   test("status filter narrows by run outcome", async ({ page }) => {

@@ -6,27 +6,31 @@ import { fetchDistinctRunValues } from "@/lib/queries";
 import type { TrendFilters } from "@/lib/queries";
 
 /**
- * Repo / branch / minor-version slicing for the dashboard trend charts (WS2 H2).
- * Options come straight from Weaviate Aggregate groupBy; every change publishes
- * the next filter state to the parent, which re-fetches the trend series.
- * Scopes the charts only — the KPI tiles above stay global.
+ * Branch / minor-version slicing for the dashboard trend charts (WS2 H2),
+ * within the repository selected in the sidebar. Options come straight from
+ * Weaviate Aggregate groupBy; every change publishes the next filter state to
+ * the parent, which re-fetches the trend series. Scopes the charts only — the
+ * KPI tiles above are not sliced.
  */
 export function TrendFilterBar({
+  repository,
   filters,
   onChange,
 }: {
+  repository: string;
   filters: TrendFilters;
   onChange: (next: TrendFilters) => void;
 }) {
-  const repoOptions = useAsync(() => fetchDistinctRunValues("repository"), []);
-  const branchOptions = useAsync(() => fetchDistinctRunValues("branch"), []);
+  const branchOptions = useAsync(
+    () => fetchDistinctRunValues(repository, "branch"),
+    [repository],
+  );
   const versionOptions = useAsync(
-    () => fetchDistinctRunValues("version_minor"),
-    [],
+    () => fetchDistinctRunValues(repository, "version_minor"),
+    [repository],
   );
 
   const anyActive =
-    (filters.repositories?.length ?? 0) > 0 ||
     (filters.branches?.length ?? 0) > 0 ||
     (filters.versionMinors?.length ?? 0) > 0;
 
@@ -35,15 +39,6 @@ export function TrendFilterBar({
       className="flex flex-wrap items-center gap-2"
       data-testid="trend-filter-bar"
     >
-      <MultiSelectFilter
-        label="Repository"
-        testId="trend-filter-repository"
-        options={repoOptions.data ?? []}
-        selected={filters.repositories ?? []}
-        onChange={(next) => onChange({ ...filters, repositories: next })}
-        placeholder="Filter repositories…"
-        emptyHint={repoOptions.loading ? "Loading…" : "No repositories yet."}
-      />
       <MultiSelectFilter
         label="Branch"
         testId="trend-filter-branch"

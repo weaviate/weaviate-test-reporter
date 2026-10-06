@@ -61,6 +61,11 @@ import type {
  * Each function reproduces the exact semantics of its `lib/queries.ts`
  * predecessor; the pure derivations live in `lib/analysis.ts`. Route handlers
  * call these and return the results as JSON.
+ *
+ * Every scan is filtered to one repository (TestRun.repository, or the copy
+ * denormalized onto TestCase), so derived keys such as `flakeGroupKey` never
+ * need a repository component. TestCase rows ingested before that copy existed
+ * have no `repository` and match no repository until backfilled.
  */
 
 /**
@@ -113,6 +118,7 @@ type CaseProps = {
   version_minor: string;
   job_name: string;
   branch: string;
+  repository: string;
   belongsToRun: CrossReference<RunProps>;
 };
 
@@ -133,6 +139,11 @@ const TREND_MAX_ROWS = 100_000;
 // One test's history — bounded (one case per run) but paginate to be safe.
 const HISTORY_PAGE_SIZE = 1000;
 const HISTORY_MAX_ROWS = 50_000;
+
+/** AND of `ops`, which is never empty: every query carries a repository. */
+function allOf(ops: FilterValue[]): FilterValue {
+  return ops.length === 1 ? ops[0] : Filters.and(...ops);
+}
 
 function clamp(n: number, lo: number, hi: number): number {
   // Non-finite input (NaN/Infinity from a bad query param) falls back to the
@@ -241,6 +252,7 @@ function mapGroups(
 // ---------- queries ----------
 
 async function _fetchRecentRuns(
+  repository: string,
   filters: RunFilters = {},
   limit = RECENT_RUNS_LIMIT,
 ): Promise<TestRun[]> {
@@ -248,7 +260,9 @@ async function _fetchRecentRuns(
   const runs = runsCol(client);
   const safeLimit = clamp(limit, 1, 1000);
 
-  const ops: FilterValue[] = [];
+  const ops: FilterValue[] = [
+    runs.filter.byProperty("repository").equal(repository),
+  ];
   const term = filters.search?.trim();
   if (term) {
     const w = `*${term}*`;
@@ -261,9 +275,6 @@ async function _fetchRecentRuns(
       ),
     );
   }
-  if (filters.repositories?.length) {
-    ops.push(anyEqual(runs, "repository", filters.repositories));
-  }
   if (filters.statuses?.length) {
     ops.push(anyEqual(runs, "status", filters.statuses));
   }
@@ -273,12 +284,7 @@ async function _fetchRecentRuns(
   if (filters.versionFulls?.length) {
     ops.push(anyEqual(runs, "version_full", filters.versionFulls));
   }
-  const filter =
-    ops.length === 0
-      ? undefined
-      : ops.length === 1
-        ? ops[0]
-        : Filters.and(...ops);
+  const filter = allOf(ops);
 
   const res = await runs.query.fetchObjects({
     limit: safeLimit,
@@ -315,26 +321,45 @@ function anyEqual(
   return parts.length === 1 ? parts[0] : Filters.or(...parts);
 }
 
+// Count desc, then value asc: groupBy order is unspecified, so tied counts
+// would otherwise reorder between refreshes.
+function byCountThenValue(
+  a: { value: string; count: number },
+  b: { value: string; count: number },
+): number {
+  return b.count - a.count || a.value.localeCompare(b.value);
+}
+
 async function _fetchDistinctRunValues(
-  property:
-    | "repository"
-    | "branch"
-    | "actor"
-    | "status"
-    | "version_full"
-    | "version_minor",
+  repository: string,
+  property: "branch" | "actor" | "status" | "version_full" | "version_minor",
 ): Promise<Array<{ value: string; count: number }>> {
   const client = await getClient();
   const runs = runsCol(client);
   const result = await runs.aggregate.groupBy.overAll({
+    filters: runs.filter.byProperty("repository").equal(repository),
     groupBy: { property, limit: GROUP_LIMIT },
   });
-  return mapGroups(result).sort((a, b) => b.count - a.count);
+  return mapGroups(result).sort(byCountThenValue);
 }
 
-async function _fetchVersionRollup(): Promise<VersionRollup[]> {
+async function _fetchRepositories(): Promise<
+  Array<{ value: string; count: number }>
+> {
   const client = await getClient();
   const runs = runsCol(client);
+  const result = await runs.aggregate.groupBy.overAll({
+    groupBy: { property: "repository", limit: GROUP_LIMIT },
+  });
+  return mapGroups(result).sort(byCountThenValue);
+}
+
+async function _fetchVersionRollup(
+  repository: string,
+): Promise<VersionRollup[]> {
+  const client = await getClient();
+  const runs = runsCol(client);
+  const repoFilter = runs.filter.byProperty("repository").equal(repository);
 
   // Count actual TestRun rows (not Aggregate groupBy, which is approximate and
   // made the pass rate flicker between refreshes). Only three small fields per
@@ -349,6 +374,7 @@ async function _fetchVersionRollup(): Promise<VersionRollup[]> {
     const res = await runs.query.fetchObjects({
       limit: pageSize,
       offset,
+      filters: repoFilter,
       sort: runs.sort.byCreationTime(true),
       returnProperties: [
         "version_minor",
@@ -402,6 +428,7 @@ export async function fetchCasesForRun(
 }
 
 export async function semanticSearch(
+  repository: string,
   query: string,
   opts: {
     limit?: number;
@@ -415,9 +442,11 @@ export async function semanticSearch(
   const cases = casesCol(client);
   const limit = clamp(opts.limit ?? SEARCH_LIMIT, 1, 100);
   const targetVector = opts.targetVector ?? DEFAULT_TARGET_VECTOR;
-  const filter = opts.failedOnly
-    ? cases.filter.byProperty("status").equal("failed")
-    : undefined;
+  const ops = [cases.filter.byProperty("repository").equal(repository)];
+  if (opts.failedOnly) {
+    ops.push(cases.filter.byProperty("status").equal("failed"));
+  }
+  const filter = allOf(ops);
 
   const res = await cases.query.nearText(trimmed, {
     limit,
@@ -429,7 +458,10 @@ export async function semanticSearch(
   return (res.objects as unknown as RawObject[]).map(asTestCase);
 }
 
-async function _fetchDashboardKpis(sinceIso?: string): Promise<DashboardKpis> {
+async function _fetchDashboardKpis(
+  repository: string,
+  sinceIso?: string,
+): Promise<DashboardKpis> {
   const client = await getClient();
   const runs = runsCol(client);
   const cases = casesCol(client);
@@ -437,24 +469,31 @@ async function _fetchDashboardKpis(sinceIso?: string): Promise<DashboardKpis> {
 
   // Window by the real run start (started_at / run_started_at, WS1 D1), not
   // ingest time — so "last 7 days" means when the tests actually ran.
-  const runFilter = since
-    ? runs.filter.byProperty("started_at").greaterOrEqual(since)
-    : undefined;
-  const caseWindow = since
-    ? cases.filter.byProperty("run_started_at").greaterOrEqual(since)
-    : undefined;
-  const failedOp = cases.filter.byProperty("status").equal("failed");
-  const failedFilter = caseWindow
-    ? Filters.and(failedOp, caseWindow)
-    : failedOp;
+  const runOps: FilterValue[] = [
+    runs.filter.byProperty("repository").equal(repository),
+  ];
+  const caseOps: FilterValue[] = [
+    cases.filter.byProperty("repository").equal(repository),
+    cases.filter.byProperty("status").equal("failed"),
+  ];
+  if (since) {
+    runOps.push(runs.filter.byProperty("started_at").greaterOrEqual(since));
+    caseOps.push(
+      cases.filter.byProperty("run_started_at").greaterOrEqual(since),
+    );
+  }
+  const runFilter = allOf(runOps);
+  const failedFilter = allOf(caseOps);
 
   // Pass rate + totals come from summing the run-level counts (TestRun.tests_*,
   // WS1 D2) — no full TestCase scan. Only the top-failing-suite still needs a
   // (filtered) TestCase aggregate.
   // Exact filtered count for the infra-failure KPI — groupBy counts are
   // approximate and jitter between refreshes (see rollupRunsByMinor).
-  const infraOp = runs.filter.byProperty("status").equal("infra_failure");
-  const infraFilter = runFilter ? Filters.and(infraOp, runFilter) : infraOp;
+  const infraFilter = Filters.and(
+    runs.filter.byProperty("status").equal("infra_failure"),
+    runFilter,
+  );
   const [runAgg, failedSuite, infraAgg] = await Promise.all([
     runs.aggregate.overAll({
       filters: runFilter,
@@ -505,6 +544,7 @@ async function _fetchDashboardKpis(sinceIso?: string): Promise<DashboardKpis> {
  * unlike Weaviate's approximate date-grouped Aggregate.
  */
 async function _fetchRunTrend(
+  repository: string,
   sinceIso?: string,
   filters: TrendFilters = {},
 ): Promise<TrendPoint[]> {
@@ -512,14 +552,13 @@ async function _fetchRunTrend(
   const runs = runsCol(client);
   const since = sinceIso ? new Date(sinceIso) : undefined;
 
-  // Window (started_at) AND any repo/branch/version slice — same filter algebra
-  // as fetchRecentRuns.
-  const ops: FilterValue[] = [];
+  // Repository AND window (started_at) AND any branch/version slice — same
+  // filter algebra as fetchRecentRuns.
+  const ops: FilterValue[] = [
+    runs.filter.byProperty("repository").equal(repository),
+  ];
   if (since) {
     ops.push(runs.filter.byProperty("started_at").greaterOrEqual(since));
-  }
-  if (filters.repositories?.length) {
-    ops.push(anyEqual(runs, "repository", filters.repositories));
   }
   if (filters.branches?.length) {
     ops.push(anyEqual(runs, "branch", filters.branches));
@@ -527,12 +566,7 @@ async function _fetchRunTrend(
   if (filters.versionMinors?.length) {
     ops.push(anyEqual(runs, "version_minor", filters.versionMinors));
   }
-  const filter =
-    ops.length === 0
-      ? undefined
-      : ops.length === 1
-        ? ops[0]
-        : Filters.and(...ops);
+  const filter = allOf(ops);
 
   const rows: TrendRunRow[] = [];
   let offset = 0;
@@ -599,13 +633,20 @@ async function _fetchRunTrend(
  * meaningfully fewer tests than the run before. Windowed by started_at so a job
  * needs at least two runs in the range to be evaluated.
  */
-async function _fetchExecutedDrops(sinceIso?: string): Promise<ExecutedDrop[]> {
+async function _fetchExecutedDrops(
+  repository: string,
+  sinceIso?: string,
+): Promise<ExecutedDrop[]> {
   const client = await getClient();
   const runs = runsCol(client);
   const since = sinceIso ? new Date(sinceIso) : undefined;
-  const filter = since
-    ? runs.filter.byProperty("started_at").greaterOrEqual(since)
-    : undefined;
+  const ops: FilterValue[] = [
+    runs.filter.byProperty("repository").equal(repository),
+  ];
+  if (since) {
+    ops.push(runs.filter.byProperty("started_at").greaterOrEqual(since));
+  }
+  const filter = allOf(ops);
 
   const rows: ExecutedDropRow[] = [];
   let offset = 0;
@@ -661,6 +702,7 @@ async function _fetchExecutedDrops(sinceIso?: string): Promise<ExecutedDrop[]> {
  * `belongsToRun` cross-reference, then shapes it with the pure `buildTestHistory`.
  */
 async function _fetchTestHistory(
+  repository: string,
   testSuite: string,
   name: string,
   versionMinor?: string,
@@ -673,6 +715,7 @@ async function _fetchTestHistory(
   // each job strip single-version. Unscoped (from the Test Explorer) = the full
   // cross-version picture.
   const ops = [
+    cases.filter.byProperty("repository").equal(repository),
     cases.filter.byProperty("test_suite").equal(testSuite),
     cases.filter.byProperty("name").equal(name),
   ];
@@ -743,6 +786,7 @@ async function _fetchTestHistory(
 }
 
 async function _fetchFlakyTests(
+  repository: string,
   window: FlakesWindow,
   opts: { minRuns?: number } = {},
 ): Promise<FlakyTest[]> {
@@ -759,6 +803,7 @@ async function _fetchFlakyTests(
   const minRuns = Number.isFinite(opts.minRuns) ? (opts.minRuns as number) : 3;
 
   const windowFilter = Filters.and(
+    cases.filter.byProperty("repository").equal(repository),
     // Window by the real run start (run_started_at, WS1 D1), not object
     // creation time — out-of-order / backfilled ingestion must not scramble
     // each test's chronological status sequence.
@@ -831,6 +876,7 @@ async function _fetchFlakyTests(
  * ONE consistency (trailing trend, like the flakes scan).
  */
 async function _fetchRegressions(
+  repository: string,
   opts: { days?: number } = {},
 ): Promise<RegressionReport> {
   const days = Number.isFinite(opts.days) ? (opts.days as number) : 7;
@@ -840,7 +886,9 @@ async function _fetchRegressions(
   const priorSince = new Date(isoDaysAgo(2 * days));
 
   // ---- Scan 1: current window (passed+failed) → flakes set + failures ----
+  const repoFilter = cases.filter.byProperty("repository").equal(repository);
   const currentFilter = Filters.and(
+    repoFilter,
     cases.filter.byProperty("run_started_at").greaterOrEqual(since),
     Filters.or(
       cases.filter.byProperty("status").equal("passed"),
@@ -928,6 +976,7 @@ async function _fetchRegressions(
 
   // ---- Scan 2: prior window (failed only) → key set ----
   const priorFilter = Filters.and(
+    repoFilter,
     cases.filter.byProperty("run_started_at").greaterOrEqual(priorSince),
     cases.filter.byProperty("run_started_at").lessThan(since),
     cases.filter.byProperty("status").equal("failed"),
@@ -971,6 +1020,7 @@ async function _fetchRegressions(
  * denormalized fields; `clusterFailures` does the grouping. ONE consistency.
  */
 async function _fetchFailureClusters(
+  repository: string,
   opts: { days?: number } = {},
 ): Promise<ClusterReport> {
   const days = Number.isFinite(opts.days) ? (opts.days as number) : 7;
@@ -979,6 +1029,7 @@ async function _fetchFailureClusters(
   const since = new Date(isoDaysAgo(days));
 
   const filter = Filters.and(
+    cases.filter.byProperty("repository").equal(repository),
     cases.filter.byProperty("run_started_at").greaterOrEqual(since),
     cases.filter.byProperty("status").equal("failed"),
   );
@@ -1063,6 +1114,10 @@ export const fetchRecentRuns = dailyCache("fetchRecentRuns", _fetchRecentRuns);
 export const fetchDistinctRunValues = dailyCache(
   "fetchDistinctRunValues",
   _fetchDistinctRunValues,
+);
+export const fetchRepositories = dailyCache(
+  "fetchRepositories",
+  _fetchRepositories,
 );
 export const fetchVersionRollup = dailyCache(
   "fetchVersionRollup",

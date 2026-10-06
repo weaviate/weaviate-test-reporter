@@ -23,6 +23,7 @@ import {
 } from "@/lib/queries";
 import type { TrendFilters } from "@/lib/queries";
 import type { DashboardKpis } from "@/lib/types";
+import { useRepository } from "@/lib/useRepository";
 
 const RANGES = [
   { id: "7d", label: "Last 7 days", days: 7 },
@@ -101,29 +102,36 @@ function DashboardKpiGrid({ kpis }: { kpis: DashboardKpis }) {
 }
 
 export default function DashboardPage() {
+  const repository = useRepository();
   const [rangeId, setRangeId] = useState<RangeId>("7d");
   const range = RANGES.find((r) => r.id === rangeId)!;
   const sinceIso = range.days > 0 ? isoDaysAgo(range.days) : undefined;
 
   const kpis = useAsync(
-    () => fetchDashboardKpis(sinceIso),
-    [sinceIso ?? "all"],
+    () => fetchDashboardKpis(repository, sinceIso),
+    [repository, sinceIso ?? "all"],
   );
   const drops = useAsync(
-    () => fetchExecutedDrops(sinceIso),
-    [sinceIso ?? "all"],
+    () => fetchExecutedDrops(repository, sinceIso),
+    [repository, sinceIso ?? "all"],
   );
   // Regressions compare a window to the window before it, so "all time" has no
   // meaningful prior window — fall back to 7d there.
   const regDays = range.days > 0 ? range.days : 7;
-  const regressions = useAsync(() => fetchRegressions(regDays), [regDays]);
-  const clusters = useAsync(() => fetchFailureClusters(regDays), [regDays]);
+  const regressions = useAsync(
+    () => fetchRegressions(repository, regDays),
+    [repository, regDays],
+  );
+  const clusters = useAsync(
+    () => fetchFailureClusters(repository, regDays),
+    [repository, regDays],
+  );
   const [trendFilters, setTrendFilters] = useState<TrendFilters>({});
   const trend = useAsync(
-    () => fetchRunTrend(sinceIso, trendFilters),
+    () => fetchRunTrend(repository, sinceIso, trendFilters),
     [
+      repository,
       sinceIso ?? "all",
-      (trendFilters.repositories ?? []).join("|"),
       (trendFilters.branches ?? []).join("|"),
       (trendFilters.versionMinors ?? []).join("|"),
     ],
@@ -179,7 +187,11 @@ export default function DashboardPage() {
             <p className="text-[11px] uppercase tracking-[0.2em] font-mono text-wv-fog-muted">
               Trends
             </p>
-            <TrendFilterBar filters={trendFilters} onChange={setTrendFilters} />
+            <TrendFilterBar
+              repository={repository}
+              filters={trendFilters}
+              onChange={setTrendFilters}
+            />
           </div>
 
           {trend.loading ? (
