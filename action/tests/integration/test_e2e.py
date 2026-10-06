@@ -112,16 +112,44 @@ def test_full_pipeline_lands_one_run_and_three_cases(weaviate_client):
 
 
 def test_test_case_carries_denormalized_run_identity(weaviate_client):
-    """WS3 R3: the run's branch + job_name are stamped on every TestCase so
-    flakes/history scope without a belongsToRun hop. version_minor is absent
-    here because the fixture cfg carries no version_under_test."""
+    """WS3 R3: the run's branch + job_name + repository are stamped on every
+    TestCase so flakes/history scope without a belongsToRun hop. version_minor
+    is absent here because the fixture cfg carries no version_under_test."""
     _ingest_pipeline(weaviate_client, _meta(), _cfg())
 
     case = weaviate_client.collections.get(TEST_CASE).query.fetch_objects(limit=1).objects[0]
     props = case.properties
     assert props["branch"] == "main"
     assert props["job_name"] == "integration"
+    assert props["repository"] == "weaviate/weaviate-test-reporter"
     assert props.get("version_minor") is None
+
+
+def test_test_case_repository_filter_is_exact(weaviate_client):
+    """One repository name containing every word of another must not match it:
+    filtering on "weaviate/weaviate" returns none of the e2e repository's cases."""
+    _ingest_pipeline(weaviate_client, _meta(repository="weaviate/weaviate-e2e-tests"), _cfg())
+    _ingest_pipeline(weaviate_client, _meta(repository="weaviate/weaviate"), _cfg())
+
+    cases = weaviate_client.collections.get(TEST_CASE)
+    for repository in ("weaviate/weaviate", "weaviate/weaviate-e2e-tests"):
+        found = cases.query.fetch_objects(
+            filters=Filter.by_property("repository").equal(repository), limit=10
+        ).objects
+        assert len(found) == 3
+        assert {o.properties["repository"] for o in found} == {repository}
+
+
+def test_test_run_repository_filter_is_exact(weaviate_client):
+    _ingest_pipeline(weaviate_client, _meta(repository="weaviate/weaviate-e2e-tests"), _cfg())
+    _ingest_pipeline(weaviate_client, _meta(repository="weaviate/weaviate"), _cfg())
+
+    runs = weaviate_client.collections.get(TEST_RUN)
+    for repository in ("weaviate/weaviate", "weaviate/weaviate-e2e-tests"):
+        found = runs.query.fetch_objects(
+            filters=Filter.by_property("repository").equal(repository), limit=10
+        ).objects
+        assert [o.properties["repository"] for o in found] == [repository]
 
 
 def test_test_run_carries_aggregated_properties(weaviate_client):

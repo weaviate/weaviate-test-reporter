@@ -118,6 +118,9 @@ def test_test_run_index_flags_are_explicit():
     ):
         assert props[f].indexFilterable is True, f"{f} should be filterable"
 
+    # Same exact-match requirement as TestCase.repository.
+    assert props["repository"].tokenization == wvcc.Tokenization.FIELD
+
     # Display-only.
     assert props["run_url"].indexFilterable is False
     assert props["run_url"].indexSearchable is False
@@ -207,6 +210,8 @@ def test_ensure_test_case_creates_with_named_vector_config():
         "version_minor",
         "job_name",
         "branch",
+        # Denormalized run repository (per-repository scoping).
+        "repository",
     }
     assert prop_names == expected
 
@@ -234,10 +239,15 @@ def test_test_case_index_flags_match_schema_doc():
         "version_minor",
         "job_name",
         "branch",
+        "repository",
     ):
         assert props[f].indexFilterable is True, f"{f} should be filterable"
         assert props[f].indexSearchable is False, f"{f} should not be searchable"
         assert props[f].skip_vectorization is True
+
+    # repository needs exact matching: under word tokenization
+    # "weaviate/weaviate" would also match "weaviate/weaviate-e2e-tests".
+    assert props["repository"].tokenization == wvcc.Tokenization.FIELD
 
     # duration_ms is filterable + range-filterable for "slowest tests" queries.
     assert props["duration_ms"].indexFilterable is True
@@ -593,6 +603,8 @@ _WS1_CASE_PROPS = {
 }
 # WS3 R3: denormalized run identity added to TestCase.
 _WS3_CASE_PROPS = {"version_minor", "job_name", "branch"}
+# Denormalized run repository, added after WS3.
+_REPOSITORY_CASE_PROPS = {"repository"}
 
 
 def test_ensure_test_case_properties_is_idempotent_on_current_spec():
@@ -609,6 +621,7 @@ def test_ensure_test_case_properties_is_idempotent_on_current_spec():
         "failure_type",
         *_WS1_CASE_PROPS,
         *_WS3_CASE_PROPS,
+        *_REPOSITORY_CASE_PROPS,
     }
     client, collection = _mock_existing_collection(full_case_spec_names)
 
@@ -634,15 +647,16 @@ def test_ensure_test_case_properties_adds_missing_spec_props():
 
     ensure_test_case_properties(client)
 
-    expected = _WS1_CASE_PROPS | _WS3_CASE_PROPS
+    expected = _WS1_CASE_PROPS | _WS3_CASE_PROPS | _REPOSITORY_CASE_PROPS
     assert collection.config.add_property.call_count == len(expected)
     added_names = {call.args[0].name for call in collection.config.add_property.call_args_list}
     assert added_names == expected
 
 
 def test_ensure_test_case_properties_adds_missing_ws3_props():
-    """A post-WS1 TestCase collection gains ONLY the WS3 R3 identity fields
-    (version_minor / job_name / branch) — the additive migration is minimal."""
+    """A post-WS1 TestCase collection gains ONLY the run identity fields
+    (version_minor / job_name / branch / repository) — the additive migration
+    is minimal."""
     pre_ws3 = {
         "name",
         "test_suite",
@@ -658,9 +672,40 @@ def test_ensure_test_case_properties_adds_missing_ws3_props():
 
     ensure_test_case_properties(client)
 
-    assert collection.config.add_property.call_count == len(_WS3_CASE_PROPS)
+    expected = _WS3_CASE_PROPS | _REPOSITORY_CASE_PROPS
+    assert collection.config.add_property.call_count == len(expected)
     added_names = {call.args[0].name for call in collection.config.add_property.call_args_list}
-    assert added_names == _WS3_CASE_PROPS
+    assert added_names == expected
+
+
+def test_ensure_test_case_properties_adds_only_repository_to_post_ws3_collection():
+    """The live collection already has the WS3 identity fields; the migration
+    adds only `repository`, as a filterable, non-vectorized TEXT property."""
+    post_ws3 = {
+        "name",
+        "test_suite",
+        "framework",
+        "status",
+        "duration_ms",
+        "error_message",
+        "stack_trace",
+        "failure_type",
+        *_WS1_CASE_PROPS,
+        *_WS3_CASE_PROPS,
+    }
+    client, collection = _mock_existing_collection(post_ws3)
+
+    ensure_test_case_properties(client)
+
+    collection.config.add_property.assert_called_once()
+    added = collection.config.add_property.call_args.args[0]
+    assert added.name == "repository"
+    assert added.dataType == wvcc.DataType.TEXT
+    assert added.indexFilterable is True
+    assert added.indexSearchable is False
+    assert added.skip_vectorization is True
+    assert added.tokenization == wvcc.Tokenization.FIELD
+    assert added.description
 
 
 # Silence unused-import lint when wvcc isn't directly referenced.
