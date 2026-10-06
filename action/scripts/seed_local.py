@@ -49,8 +49,9 @@ CORE_REPO = "weaviate/weaviate"
 # Core-only tests: they must never show up while the e2e repository is selected.
 CORE_SUITE = "github.com/weaviate/weaviate/test/acceptance/replication"
 CORE_FLAKY_TEST = "TestCoreOnly_ReplicaRepairFlaky"
-# Alternates every run, so it is flaky in any window holding all four runs.
-CORE_FLAKY_PATTERN = ["passed", "failed", "passed", "failed"]
+# Alternates every run, so it is flaky in any window holding all four runs. The
+# newest run passes: a window starting at it has runs but no failed cases.
+CORE_FLAKY_PATTERN = ["failed", "passed", "failed", "passed"]
 
 # Realistic suite mix: 4 pytest e2e suites + 2 Go unit suites.
 SUITES = [

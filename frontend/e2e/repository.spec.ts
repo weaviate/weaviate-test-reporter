@@ -4,7 +4,7 @@ import { expect, test, type Locator } from "@playwright/test";
  * Repository scoping: the sidebar selects one repository and every page shows
  * only its data. Relies on seed_local.py: 10 runs in the default repository
  * (weaviate/weaviate-e2e-tests) and 4 runs in weaviate/weaviate whose only
- * flaky test is CORE_FLAKY.
+ * flaky test is CORE_FLAKY. The newest weaviate/weaviate run passed.
  */
 const E2E = "weaviate/weaviate-e2e-tests";
 const CORE = "weaviate/weaviate";
@@ -136,6 +136,45 @@ test.describe("Repository-scoped API", () => {
     );
     expect(res.ok()).toBe(true);
     expect((await res.json()).totalRuns).toBe(CORE_RUNS);
+  });
+
+  test("KPIs for a window without failures still report pass rate and duration", async ({
+    request,
+  }) => {
+    const runs = await request.get(
+      `/api/runs?repository=${encodeURIComponent(CORE)}&limit=1`,
+    );
+    const [latest] = (await runs.json()) as Array<{
+      status: string;
+      started_at: string;
+    }>;
+    expect(latest.status).toBe("success");
+
+    const res = await request.get(
+      `/api/kpis?repository=${encodeURIComponent(CORE)}` +
+        `&since=${encodeURIComponent(latest.started_at)}`,
+    );
+    expect(res.status()).toBe(200);
+    const kpis = await res.json();
+    expect(kpis.totalRuns).toBe(1);
+    expect(kpis.passRate).toBe(1);
+    expect(kpis.avgRunDurationMs).toBeGreaterThan(0);
+    expect(kpis.topFailingSuite).toBeNull();
+  });
+
+  test("a repository without runs gets empty results, not errors", async ({
+    request,
+  }) => {
+    const none = encodeURIComponent("nobody/none");
+    const kpis = await request.get(`/api/kpis?repository=${none}`);
+    expect(kpis.status()).toBe(200);
+    expect((await kpis.json()).totalRuns).toBe(0);
+
+    const branches = await request.get(
+      `/api/runs/distinct?repository=${none}&property=branch`,
+    );
+    expect(branches.status()).toBe(200);
+    expect(await branches.json()).toEqual([]);
   });
 
   test("semantic search returns only the requested repository's cases", async ({

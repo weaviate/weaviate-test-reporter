@@ -249,6 +249,19 @@ function mapGroups(
   }));
 }
 
+const NO_GROUPS = "No grouped results in aggregate response";
+
+/** The client throws instead of returning `[]` when no object matches a
+ *  groupBy aggregate: a repository without runs, a window without failures. */
+async function groupsOrEmpty<T>(query: Promise<T[]>): Promise<T[]> {
+  try {
+    return await query;
+  } catch (e) {
+    if (e instanceof Error && e.message.endsWith(NO_GROUPS)) return [];
+    throw e;
+  }
+}
+
 // ---------- queries ----------
 
 async function _fetchRecentRuns(
@@ -336,10 +349,12 @@ async function _fetchDistinctRunValues(
 ): Promise<Array<{ value: string; count: number }>> {
   const client = await getClient();
   const runs = runsCol(client);
-  const result = await runs.aggregate.groupBy.overAll({
-    filters: runs.filter.byProperty("repository").equal(repository),
-    groupBy: { property, limit: GROUP_LIMIT },
-  });
+  const result = await groupsOrEmpty(
+    runs.aggregate.groupBy.overAll({
+      filters: runs.filter.byProperty("repository").equal(repository),
+      groupBy: { property, limit: GROUP_LIMIT },
+    }),
+  );
   return mapGroups(result).sort(byCountThenValue);
 }
 
@@ -348,9 +363,11 @@ async function _fetchRepositories(): Promise<
 > {
   const client = await getClient();
   const runs = runsCol(client);
-  const result = await runs.aggregate.groupBy.overAll({
-    groupBy: { property: "repository", limit: GROUP_LIMIT },
-  });
+  const result = await groupsOrEmpty(
+    runs.aggregate.groupBy.overAll({
+      groupBy: { property: "repository", limit: GROUP_LIMIT },
+    }),
+  );
   return mapGroups(result).sort(byCountThenValue);
 }
 
@@ -504,10 +521,12 @@ async function _fetchDashboardKpis(
         runs.metrics.aggregate("tests_skipped").integer(["sum"]),
       ],
     }),
-    cases.aggregate.groupBy.overAll({
-      filters: failedFilter,
-      groupBy: { property: "test_suite", limit: GROUP_LIMIT },
-    }),
+    groupsOrEmpty(
+      cases.aggregate.groupBy.overAll({
+        filters: failedFilter,
+        groupBy: { property: "test_suite", limit: GROUP_LIMIT },
+      }),
+    ),
     runs.aggregate.overAll({ filters: infraFilter }),
   ]);
 
