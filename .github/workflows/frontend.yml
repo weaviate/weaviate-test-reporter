@@ -59,14 +59,26 @@ jobs:
       - name: Run unit tests
         run: npm run test:unit
 
+  # Latest Weaviate release, release candidates included: the same lookup
+  # the e2e suites use. A job of its own because service images are
+  # resolved before any step of the job that uses them runs.
+  weaviate-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.latest.outputs.latest_weaviate_version }}
+    steps:
+      - id: latest
+        uses: weaviate/github-common-actions/.github/actions/get-latest-weaviate-version@main
+
   # Playwright E2E suite. Spins up Weaviate + model2vec via docker compose,
   # seeds the cluster with the same script developers use locally, then
   # runs Playwright against the dev server.
   e2e:
+    needs: weaviate-version
     runs-on: ubuntu-latest
     services:
       weaviate:
-        image: semitechnologies/weaviate:1.37.3
+        image: semitechnologies/weaviate:${{ needs.weaviate-version.outputs.version }}
         ports:
           - 8080:8080
           - 50051:50051
