@@ -307,15 +307,15 @@ function TestExplorerBody() {
     [pinnedUuid ?? ""],
   );
   // A linked run from another repository (Agent citations carry only the
-  // uuid) switches the selection to that repository, keeping the pin.
+  // uuid) switches the selection to that repository, keeping only the pin:
+  // other filters belong to the previous repository.
   const pinnedRepository = pinned.data?.repository;
   useEffect(() => {
-    if (pinnedRepository && pinnedRepository !== repository) {
-      router.replace(
-        withRepository(`/?${searchParams.toString()}`, pinnedRepository),
-      );
+    if (pinnedUuid && pinnedRepository && pinnedRepository !== repository) {
+      const params = new URLSearchParams({ run: pinnedUuid });
+      router.replace(withRepository(`/?${params}`, pinnedRepository));
     }
-  }, [pinnedRepository, repository, router, searchParams]);
+  }, [pinnedUuid, pinnedRepository, repository, router]);
   const [pinnedExpanded, setPinnedExpanded] = useState(true);
   // A different linked run should open expanded regardless of a prior toggle.
   // React's "adjust state during render on a key change" pattern — resets

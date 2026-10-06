@@ -104,7 +104,7 @@ test.describe("Repository selector", () => {
     );
   });
 
-  test("a linked run from another repository switches the selection", async ({
+  test("a linked run from another repository switches the selection and drops filters", async ({
     page,
     request,
   }) => {
@@ -113,9 +113,10 @@ test.describe("Repository selector", () => {
     );
     const [run] = (await res.json()) as Array<{ uuid: string }>;
 
-    await page.goto(`/?run=${run.uuid}`);
+    // versionMinor belongs to the e2e repository the link was opened from.
+    await page.goto(`/?versionMinor=1.37&run=${run.uuid}`);
     await expect(page.getByTestId("repository-select")).toHaveValue(CORE);
-    await expect(page).toHaveURL(new RegExp(`run=${run.uuid}`));
+    await expect(page).toHaveURL(new RegExp(`/\\?run=${run.uuid}&${CORE_QS}$`));
     await expect(
       page.getByTestId("pinned-run").getByTestId("run-row"),
     ).toHaveAttribute("data-run-repository", CORE);

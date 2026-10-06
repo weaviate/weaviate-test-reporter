@@ -31,7 +31,7 @@ jobs:
       # the e2e suites use.
       - name: Resolve the latest Weaviate version
         id: weaviate
-        uses: weaviate/github-common-actions/.github/actions/get-latest-weaviate-version@main
+        uses: weaviate/github-common-actions/.github/actions/get-latest-weaviate-version@6deeb2efa2d1ede3e79ef11fabd6c4b6fb0cbd9f # main
 
       # Pre-pull images so the test wall-time is bounded and the pulls
       # don't fight with testcontainers' container start.

@@ -68,7 +68,7 @@ jobs:
       version: ${{ steps.latest.outputs.latest_weaviate_version }}
     steps:
       - id: latest
-        uses: weaviate/github-common-actions/.github/actions/get-latest-weaviate-version@main
+        uses: weaviate/github-common-actions/.github/actions/get-latest-weaviate-version@6deeb2efa2d1ede3e79ef11fabd6c4b6fb0cbd9f # main
 
   # Playwright E2E suite. Spins up Weaviate + model2vec via docker compose,
   # seeds the cluster with the same script developers use locally, then

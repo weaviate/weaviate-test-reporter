@@ -33,6 +33,13 @@ describe("parseRepository", () => {
       expect(parseRepository(bad)).toBeNull();
     }
   });
+
+  it("limits the owner to 39 characters and the name to 100", () => {
+    const longest = `${"a".repeat(39)}/${"b".repeat(100)}`;
+    expect(parseRepository(longest)).toBe(longest);
+    expect(parseRepository(`${"a".repeat(40)}/repo`)).toBeNull();
+    expect(parseRepository(`owner/${"b".repeat(101)}`)).toBeNull();
+  });
 });
 
 describe("repositoryFromParams", () => {

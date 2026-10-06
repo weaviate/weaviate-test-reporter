@@ -10,8 +10,9 @@ export const DEFAULT_REPOSITORY = "weaviate/weaviate-e2e-tests";
 /** Page-URL query param holding the selected repository. */
 export const REPO_PARAM = "repo";
 
-// GitHub owner/name: owners max 39 chars, repositories max 100.
-const REPOSITORY_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
+// GitHub owner/name: owners max 39 chars, repositories max 100. Owners keep
+// `_`: Enterprise Managed User logins end in `_<shortcode>`.
+const REPOSITORY_RE = /^[A-Za-z0-9_.-]{1,39}\/[A-Za-z0-9_.-]{1,100}$/;
 
 /** The trimmed value when it is a GitHub `owner/name`, otherwise null. The
  *  value reaches Weaviate filters, cache keys and the agent prompt, so nothing
