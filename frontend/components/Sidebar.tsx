@@ -12,7 +12,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { BrandMark } from "./BrandMark";
 import { fetchRepositories } from "@/lib/queries";
-import { withRepository } from "@/lib/repository";
+import { DEFAULT_REPOSITORY, withRepository } from "@/lib/repository";
 import { useAsync } from "@/lib/useAsync";
 import { useRepository } from "@/lib/useRepository";
 
@@ -56,8 +56,10 @@ function RepositorySelect({
   const repos = useAsync(() => fetchRepositories(), []);
   const options = (repos.data ?? []).map((r) => r.value);
   // The selected repository stays selectable while the list loads, or when it
-  // has no runs (a hand-edited URL).
+  // has no runs (a hand-edited URL); the default one stays reachable when the
+  // list fails to load.
   if (!options.includes(repository)) options.unshift(repository);
+  if (!options.includes(DEFAULT_REPOSITORY)) options.push(DEFAULT_REPOSITORY);
 
   return (
     <div className="px-4 py-4 border-b border-wv-navy-3/40">

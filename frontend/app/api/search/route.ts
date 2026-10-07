@@ -1,6 +1,5 @@
-import { handle, badRequest } from "@/lib/server-respond";
+import { handle, badRequest, repositoryField } from "@/lib/server-respond";
 import { semanticSearch } from "@/lib/weaviate/queries.server";
-import { DEFAULT_REPOSITORY, parseRepository } from "@/lib/repository";
 import {
   TARGET_VECTORS,
   DEFAULT_TARGET_VECTOR,
@@ -23,15 +22,8 @@ export async function POST(req: Request): Promise<Response> {
   if (!body || typeof body.query !== "string") {
     return badRequest("query (string) is required");
   }
-  const repository =
-    body.repository === undefined
-      ? DEFAULT_REPOSITORY
-      : parseRepository(
-          typeof body.repository === "string" ? body.repository : null,
-        );
-  if (!repository) {
-    return badRequest("Invalid 'repository'; expected owner/name.");
-  }
+  const repository = repositoryField(body.repository);
+  if (repository instanceof Response) return repository;
   const targetVector: TargetVector = (
     TARGET_VECTORS as readonly string[]
   ).includes(body.targetVector as string)

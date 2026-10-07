@@ -148,7 +148,7 @@ For demoing the dashboard without a real CI run:
 .venv/bin/python scripts/seed_local.py
 ```
 
-Generates 10 TestRuns over the last 10 days with a rising failure curve and ~190 TestCases. Vectorizes via `text2vec-model2vec` against the in-cluster `model2vec-inference` service that [`weaviate-local-k8s`](https://github.com/weaviate/weaviate-local-k8s) ships by default.
+Generates 10 `weaviate/weaviate-e2e-tests` TestRuns over the last 10 days with a rising failure curve (~230 TestCases), plus 4 `weaviate/weaviate` runs so the repository selector has a second repository. The Playwright suite relies on both. Vectorizes via `text2vec-model2vec` against the in-cluster `model2vec-inference` service that [`weaviate-local-k8s`](https://github.com/weaviate/weaviate-local-k8s) ships by default.
 
 ## Local development — the dashboard
 

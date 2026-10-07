@@ -1,5 +1,5 @@
 import { serverEnv, getAgentAvailable } from "@/lib/server-env";
-import { DEFAULT_REPOSITORY, parseRepository } from "@/lib/repository";
+import { repositoryField } from "@/lib/server-respond";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -73,18 +73,8 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
   // Validated: the value is interpolated into the system prompt.
-  const repository =
-    body.repository === undefined
-      ? DEFAULT_REPOSITORY
-      : parseRepository(
-          typeof body.repository === "string" ? body.repository : null,
-        );
-  if (!repository) {
-    return Response.json(
-      { error: "Invalid 'repository'; expected owner/name." },
-      { status: 400 },
-    );
-  }
+  const repository = repositoryField(body.repository);
+  if (repository instanceof Response) return repository;
 
   // Multi-turn: trailing user message is the current question. Single-shot:
   // bare string. (The agent has no server-side memory; the client replays

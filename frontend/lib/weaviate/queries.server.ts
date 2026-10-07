@@ -62,8 +62,8 @@ import type {
  * predecessor; the pure derivations live in `lib/analysis.ts`. Route handlers
  * call these and return the results as JSON.
  *
- * Every scan is filtered to one repository (TestRun.repository, or the copy
- * denormalized onto TestCase), so derived keys such as `flakeGroupKey` never
+ * Every scan except the repository list is filtered to one repository
+ * (TestRun.repository, or the copy denormalized onto TestCase), so derived keys such as `flakeGroupKey` never
  * need a repository component. TestCase rows ingested before that copy existed
  * have no `repository` and match no repository until backfilled.
  */

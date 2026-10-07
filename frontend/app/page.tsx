@@ -22,7 +22,7 @@ import {
   type RunFilters,
 } from "@/lib/queries";
 import { RECENT_RUNS_LIMIT } from "@/lib/constants";
-import { withRepository } from "@/lib/repository";
+import { runHref, withRepository } from "@/lib/repository";
 import { useRepository } from "@/lib/useRepository";
 import type { TestRun } from "@/lib/types";
 import { summarizeRunCounts } from "@/lib/analysis";
@@ -306,14 +306,13 @@ function TestExplorerBody() {
     () => (pinnedUuid ? fetchRunById(pinnedUuid) : Promise.resolve(null)),
     [pinnedUuid ?? ""],
   );
-  // A linked run from another repository (Agent citations carry only the
-  // uuid) switches the selection to that repository, keeping only the pin:
-  // other filters belong to the previous repository.
+  // A linked run from another repository switches the selection to that
+  // repository, keeping only the pin: other filters belong to the previous
+  // repository.
   const pinnedRepository = pinned.data?.repository;
   useEffect(() => {
     if (pinnedUuid && pinnedRepository && pinnedRepository !== repository) {
-      const params = new URLSearchParams({ run: pinnedUuid });
-      router.replace(withRepository(`/?${params}`, pinnedRepository));
+      router.replace(runHref(pinnedUuid, pinnedRepository));
     }
   }, [pinnedUuid, pinnedRepository, repository, router]);
   const [pinnedExpanded, setPinnedExpanded] = useState(true);

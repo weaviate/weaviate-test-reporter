@@ -5,12 +5,16 @@ on:
     paths:
       - "frontend/**"
       - ".github/workflows/frontend.yml"
+      # The e2e job seeds with it, and e2e/repository.spec.ts relies on its data.
+      - "action/scripts/seed_local.py"
   push:
     branches:
       - main
     paths:
       - "frontend/**"
       - ".github/workflows/frontend.yml"
+      # The e2e job seeds with it, and e2e/repository.spec.ts relies on its data.
+      - "action/scripts/seed_local.py"
 
 jobs:
   build:

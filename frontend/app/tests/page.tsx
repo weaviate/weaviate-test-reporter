@@ -58,7 +58,7 @@ function TestHistoryBody() {
         <PageHeader
           eyebrow="Test history"
           title="Single-test history"
-          description="A test's pass/fail timeline across every run, branch, and version."
+          description="A test's pass/fail timeline across the repository's runs, branches, and versions."
         />
         <section className="px-8 py-8">
           <EmptyState

@@ -7,9 +7,9 @@
  * Weaviate query with the official TypeScript client (see
  * `lib/weaviate/queries.server.ts`).
  *
- * Every query except the per-run / per-id lookups takes the selected
- * repository first and sends it as `repository`, so no page mixes data from two
- * repositories.
+ * Every query except the per-run / per-id lookups and the repository list
+ * takes the selected repository first and sends it as `repository`, so no page
+ * mixes data from two repositories.
  */
 import type {
   TestRun,

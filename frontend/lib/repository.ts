@@ -33,6 +33,16 @@ export function repositoryFromParams(
   return parseRepository(raw);
 }
 
+/** A POST body's `repository` field, with the rules of a query param:
+ *  DEFAULT_REPOSITORY when absent, null or blank, null when malformed or not
+ *  a string. */
+export function repositoryFromBody(value: unknown): string | null {
+  if (value === undefined || value === null) return DEFAULT_REPOSITORY;
+  if (typeof value !== "string") return null;
+  if (value.trim() === "") return DEFAULT_REPOSITORY;
+  return parseRepository(value);
+}
+
 /** `href` scoped to `repository`: sets `?repo=` for a non-default repository
  *  and drops it for the default one, keeping every other param. */
 export function withRepository(href: string, repository: string): string {
@@ -42,4 +52,9 @@ export function withRepository(href: string, repository: string): string {
     url.searchParams.set(REPO_PARAM, repository);
   }
   return `${url.pathname}${url.search}${url.hash}`;
+}
+
+/** The Test Explorer with run `uuid` pinned, scoped to `repository`. */
+export function runHref(uuid: string, repository: string): string {
+  return withRepository(`/?${new URLSearchParams({ run: uuid })}`, repository);
 }

@@ -38,7 +38,7 @@ export default function VersionsPage() {
       <PageHeader
         eyebrow="Versions"
         title="By version under test"
-        description="Roll-up of every CI run that declared `version_under_test`, grouped by minor version lineage."
+        description="Roll-up of the repository's CI runs that declared `version_under_test`, grouped by minor version lineage."
       />
 
       <section className="px-8 py-8">

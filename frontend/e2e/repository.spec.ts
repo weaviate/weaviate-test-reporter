@@ -117,15 +117,47 @@ test.describe("Repository selector", () => {
     await page.goto(`/?versionMinor=1.37&run=${run.uuid}`);
     await expect(page.getByTestId("repository-select")).toHaveValue(CORE);
     await expect(page).toHaveURL(new RegExp(`/\\?run=${run.uuid}&${CORE_QS}$`));
+    await expect(page.getByTestId("filter-clear-all")).toHaveCount(0);
     await expect(
       page.getByTestId("pinned-run").getByTestId("run-row"),
     ).toHaveAttribute("data-run-repository", CORE);
   });
 });
 
+test.describe("Repository without data", () => {
+  test("the default repository stays selectable when the repository list fails", async ({
+    page,
+  }) => {
+    await page.route("**/api/repositories", (route) =>
+      route.fulfill({ status: 500, json: { error: "unavailable" } }),
+    );
+    await page.goto(`/?${CORE_QS}`);
+    const select = page.getByTestId("repository-select");
+    await expect(select.locator("option")).toHaveText([CORE, E2E]);
+
+    await select.selectOption(E2E);
+    await expect(page).toHaveURL(/\/$/);
+  });
+
+  test("the dashboard says when the repository has no runs in the window", async ({
+    page,
+  }) => {
+    await page.goto(`/dashboard?repo=${encodeURIComponent("nobody/none")}`);
+    await expect(page.getByTestId("kpi-no-runs")).toBeVisible();
+    await expect(page.getByTestId("kpi-pass-rate")).toHaveCount(0);
+  });
+});
+
 test.describe("Repository-scoped API", () => {
   test("rejects a malformed repository", async ({ request }) => {
     const res = await request.get("/api/flakes?repository=not-a-repo");
+    expect(res.status()).toBe(400);
+  });
+
+  test("rejects a malformed repository in a POST body", async ({ request }) => {
+    const res = await request.post("/api/search", {
+      data: { query: "replica repair", repository: "not-a-repo" },
+    });
     expect(res.status()).toBe(400);
   });
 
@@ -197,6 +229,8 @@ test.describe("Repository-scoped API", () => {
     const core = await search(CORE);
     expect(core.length).toBeGreaterThan(0);
     expect(new Set(core)).toEqual(new Set([CORE_SUITE]));
-    expect(await search(E2E)).not.toContain(CORE_SUITE);
+    const e2e = await search(E2E);
+    expect(e2e.length).toBeGreaterThan(0);
+    expect(e2e).not.toContain(CORE_SUITE);
   });
 });

@@ -28,6 +28,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Latest Weaviate release, release candidates included: the same lookup
+      # the integration and Playwright jobs use.
+      - name: Resolve the latest Weaviate version
+        id: weaviate
+        uses: weaviate/github-common-actions/.github/actions/get-latest-weaviate-version@6deeb2efa2d1ede3e79ef11fabd6c4b6fb0cbd9f # main
+
       # Spin up Weaviate + model2vec via the official weaviate-local-k8s
       # GitHub Action. This is the same tool downstream users would run
       # locally to host an internal cluster, so the smoke exercises a
@@ -41,7 +47,7 @@ jobs:
         with:
           workers: "1"
           replicas: "1"
-          weaviate-version: "1.37.3"
+          weaviate-version: ${{ steps.weaviate.outputs.latest_weaviate_version }}
           modules: "text2vec-model2vec"
           observability: "false"
 

@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   DEFAULT_REPOSITORY,
   parseRepository,
+  repositoryFromBody,
   repositoryFromParams,
+  runHref,
   withRepository,
 } from "./repository";
 
@@ -62,6 +64,30 @@ describe("repositoryFromParams", () => {
     expect(
       repositoryFromParams(new URLSearchParams("repo=nope"), "repo"),
     ).toBeNull();
+  });
+});
+
+describe("repositoryFromBody", () => {
+  it("falls back to the default repository when the field is absent, null or blank", () => {
+    for (const v of [undefined, null, "", "  "]) {
+      expect(repositoryFromBody(v)).toBe(DEFAULT_REPOSITORY);
+    }
+  });
+
+  it("returns the validated value, or null when it is malformed or not a string", () => {
+    expect(repositoryFromBody(" weaviate/weaviate ")).toBe("weaviate/weaviate");
+    for (const v of ["weaviate", "a/b/c", 42, {}, ["weaviate/weaviate"]]) {
+      expect(repositoryFromBody(v)).toBeNull();
+    }
+  });
+});
+
+describe("runHref", () => {
+  it("links the Test Explorer to one run, scoped to its repository", () => {
+    expect(runHref("8c6672c1", DEFAULT_REPOSITORY)).toBe("/?run=8c6672c1");
+    expect(runHref("8c6672c1", "weaviate/weaviate")).toBe(
+      "/?run=8c6672c1&repo=weaviate%2Fweaviate",
+    );
   });
 });
 

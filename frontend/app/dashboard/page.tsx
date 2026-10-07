@@ -68,7 +68,7 @@ function DashboardKpiGrid({ kpis }: { kpis: DashboardKpis }) {
     <div className="grid gap-5 sm:grid-cols-3">
       <KpiCard
         testId="kpi-pass-rate"
-        label="Global pass rate"
+        label="Pass rate"
         value={formatPct(kpis.passRate)}
         helper={`Of ${Math.max(0, kpis.totalCases - kpis.skippedCases).toLocaleString()} executed TestCases · ${kpis.skippedCases.toLocaleString()} skipped (excluded).`}
         Icon={CheckCircle2}
@@ -176,10 +176,16 @@ export default function DashboardPage() {
           <LoadingState label="Aggregating Weaviate metrics…" />
         ) : kpis.error ? (
           <ErrorState error={kpis.error} />
+        ) : kpis.data?.totalRuns === 0 ? (
+          <div data-testid="kpi-no-runs">
+            <EmptyState
+              Icon={Gauge}
+              title="No runs in this window."
+              description={`${repository} has no TestRuns that started in the selected window.`}
+            />
+          </div>
         ) : kpis.data ? (
-          <>
-            <DashboardKpiGrid kpis={kpis.data} />
-          </>
+          <DashboardKpiGrid kpis={kpis.data} />
         ) : null}
 
         <div>
