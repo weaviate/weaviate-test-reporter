@@ -1,11 +1,11 @@
-import { handle, badRequest } from "@/lib/server-respond";
+import { handle, badRequest, repositoryParam } from "@/lib/server-respond";
 import { fetchDistinctRunValues } from "@/lib/weaviate/queries.server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// The repository list itself is /api/repositories; these are per repository.
 const ALLOWED = [
-  "repository",
   "branch",
   "actor",
   "status",
@@ -15,11 +15,14 @@ const ALLOWED = [
 type Allowed = (typeof ALLOWED)[number];
 
 export async function GET(req: Request): Promise<Response> {
-  const property = new URL(req.url).searchParams.get("property") ?? "";
+  const sp = new URL(req.url).searchParams;
+  const property = sp.get("property") ?? "";
   if (!(ALLOWED as readonly string[]).includes(property)) {
     return badRequest(
       `Unknown property "${property}". Allowed: ${ALLOWED.join(", ")}`,
     );
   }
-  return handle(() => fetchDistinctRunValues(property as Allowed));
+  const repository = repositoryParam(sp);
+  if (repository instanceof Response) return repository;
+  return handle(() => fetchDistinctRunValues(repository, property as Allowed));
 }

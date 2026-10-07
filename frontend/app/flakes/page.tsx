@@ -9,6 +9,8 @@ import { EmptyState } from "@/components/EmptyState";
 import { ErrorState, LoadingState } from "@/components/States";
 import { fetchFlakyTests, type FlakesWindow } from "@/lib/queries";
 import { useAsync } from "@/lib/useAsync";
+import { withRepository } from "@/lib/repository";
+import { useRepository } from "@/lib/useRepository";
 import { CacheHint } from "@/components/CacheHint";
 import type { FlakyTest, TestCaseStatus } from "@/lib/types";
 
@@ -29,7 +31,11 @@ const WINDOWS: { id: FlakesWindow; label: string }[] = [
 export default function FlakesPage() {
   const [window, setWindow] = useState<FlakesWindow>("7d");
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
-  const flakes = useAsync(() => fetchFlakyTests(window), [window]);
+  const repository = useRepository();
+  const flakes = useAsync(
+    () => fetchFlakyTests(repository, window),
+    [repository, window],
+  );
 
   const data = flakes.data ?? [];
   const versionGroups = groupByVersion(data);
@@ -257,6 +263,7 @@ function FlakeTable({
 }
 
 function FlakeRow({ row }: { row: FlakyTest }) {
+  const repository = useRepository();
   const passRate = row.passed / Math.max(1, row.total_runs);
   const scorePct = Math.round(row.flakiness_score * 100);
   const tone = scoreTone(row.flakiness_score);
@@ -270,7 +277,10 @@ function FlakeRow({ row }: { row: FlakyTest }) {
       <td className="px-5 py-2.5 font-mono text-[13px]">
         <HoverMeta suite={row.test_suite} job={row.job_name}>
           <Link
-            href={`/tests?suite=${encodeURIComponent(row.test_suite)}&name=${encodeURIComponent(row.name)}${row.version_minor ? `&version=${encodeURIComponent(row.version_minor)}` : ""}&from=flakes`}
+            href={withRepository(
+              `/tests?suite=${encodeURIComponent(row.test_suite)}&name=${encodeURIComponent(row.name)}${row.version_minor ? `&version=${encodeURIComponent(row.version_minor)}` : ""}&from=flakes`,
+              repository,
+            )}
             className="text-wv-fog hover:text-wv-green transition-colors underline decoration-dotted decoration-wv-fog-muted/40 underline-offset-[3px]"
             data-testid="flake-history-link"
           >

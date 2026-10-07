@@ -7,11 +7,11 @@ import { useAsync } from "@/lib/useAsync";
 import { fetchDistinctRunValues } from "@/lib/queries";
 
 /**
- * Composite filter bar for the Test Explorer.
+ * Composite filter bar for the Test Explorer, within the repository selected
+ * in the sidebar.
  *
  * - Free-text search across run_id / branch / actor / commit_hash.
- * - Repository multi-select (populated from Weaviate Aggregate groupBy).
- * - Status multi-select (populated from Weaviate).
+ * - Status multi-select (populated from Weaviate Aggregate groupBy).
  * - "Clear all" link when any filter is active.
  *
  * Live updates: every keystroke / checkbox flip publishes the next filter
@@ -19,26 +19,29 @@ import { fetchDistinctRunValues } from "@/lib/queries";
  * query on its side.
  */
 export function RunFilterBar({
+  repository,
   filters,
   onChange,
 }: {
+  repository: string;
   filters: RunFilters;
   onChange: (next: RunFilters) => void;
 }) {
-  const repoOptions = useAsync(() => fetchDistinctRunValues("repository"), []);
-  const statusOptions = useAsync(() => fetchDistinctRunValues("status"), []);
+  const statusOptions = useAsync(
+    () => fetchDistinctRunValues(repository, "status"),
+    [repository],
+  );
   const versionMinorOptions = useAsync(
-    () => fetchDistinctRunValues("version_minor"),
-    [],
+    () => fetchDistinctRunValues(repository, "version_minor"),
+    [repository],
   );
   const versionFullOptions = useAsync(
-    () => fetchDistinctRunValues("version_full"),
-    [],
+    () => fetchDistinctRunValues(repository, "version_full"),
+    [repository],
   );
 
   const anyActive =
     Boolean(filters.search?.trim()) ||
-    (filters.repositories?.length ?? 0) > 0 ||
     (filters.statuses?.length ?? 0) > 0 ||
     (filters.versionMinors?.length ?? 0) > 0 ||
     (filters.versionFulls?.length ?? 0) > 0;
@@ -76,18 +79,6 @@ export function RunFilterBar({
           </button>
         ) : null}
       </div>
-
-      <MultiSelectFilter
-        label="Repository"
-        testId="filter-repository"
-        options={repoOptions.data ?? []}
-        selected={filters.repositories ?? []}
-        onChange={(next) => onChange({ ...filters, repositories: next })}
-        placeholder="Filter repositories…"
-        emptyHint={
-          repoOptions.loading ? "Loading repositories…" : "No repositories yet."
-        }
-      />
 
       <MultiSelectFilter
         label="Status"

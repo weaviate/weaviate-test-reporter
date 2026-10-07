@@ -13,6 +13,7 @@ import {
   semanticSearch,
   type TargetVector,
 } from "@/lib/queries";
+import { useRepository } from "@/lib/useRepository";
 
 const EXAMPLE = `Traceback (most recent call last):
   File "backup.py", line 42, in restore
@@ -35,9 +36,15 @@ export default function SemanticSearchPage() {
   const [submitted, setSubmitted] = useState<string>("");
   const [target, setTarget] = useState<TargetVector>(DEFAULT_TARGET_VECTOR);
 
+  const repository = useRepository();
   const results = useAsync(
-    () => semanticSearch(submitted, { limit: 20, failedOnly: true, targetVector: target }),
-    [submitted, target]
+    () =>
+      semanticSearch(repository, submitted, {
+        limit: 20,
+        failedOnly: true,
+        targetVector: target,
+      }),
+    [repository, submitted, target],
   );
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {

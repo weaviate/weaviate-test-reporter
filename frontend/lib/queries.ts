@@ -7,9 +7,9 @@
  * Weaviate query with the official TypeScript client (see
  * `lib/weaviate/queries.server.ts`).
  *
- * The PUBLIC SHAPE of this module is unchanged — same function names, args,
- * and return types — so pages, components, and the `useAsync` hook are
- * untouched by the migration.
+ * Every query except the per-run / per-id lookups and the repository list
+ * takes the selected repository first and sends it as `repository`, so no page
+ * mixes data from two repositories.
  */
 import type {
   TestRun,
@@ -111,13 +111,13 @@ function apiPost<T>(
 // ---------- queries ----------
 
 export async function fetchRecentRuns(
+  repository: string,
   filters: RunFilters = {},
   limit = RECENT_RUNS_LIMIT,
 ): Promise<TestRun[]> {
-  const p = new URLSearchParams();
+  const p = new URLSearchParams({ repository });
   const term = filters.search?.trim();
   if (term) p.set("search", term);
-  for (const r of filters.repositories ?? []) p.append("repository", r);
   for (const s of filters.statuses ?? []) p.append("status", s);
   for (const v of filters.versionMinors ?? []) p.append("versionMinor", v);
   for (const v of filters.versionFulls ?? []) p.append("versionFull", v);
@@ -138,24 +138,34 @@ export async function fetchRunById(uuid: string): Promise<TestRun | null> {
 }
 
 export async function fetchDistinctRunValues(
-  property:
-    | "repository"
-    | "branch"
-    | "actor"
-    | "status"
-    | "version_full"
-    | "version_minor",
+  repository: string,
+  property: "branch" | "actor" | "status" | "version_full" | "version_minor",
 ): Promise<Array<{ value: string; count: number }>> {
+  const p = new URLSearchParams({ property, repository });
   return apiGet(
-    `/api/runs/distinct?property=${encodeURIComponent(property)}`,
+    `/api/runs/distinct?${p.toString()}`,
     API_TIMEOUTS_MS.default,
     "Fetch filter values",
   );
 }
 
-export async function fetchVersionRollup(): Promise<VersionRollup[]> {
+/** Every repository with at least one TestRun, most runs first. */
+export async function fetchRepositories(): Promise<
+  Array<{ value: string; count: number }>
+> {
+  return apiGet(
+    `/api/repositories`,
+    API_TIMEOUTS_MS.default,
+    "Fetch repositories",
+  );
+}
+
+export async function fetchVersionRollup(
+  repository: string,
+): Promise<VersionRollup[]> {
+  const p = new URLSearchParams({ repository });
   return apiGet<VersionRollup[]>(
-    `/api/versions`,
+    `/api/versions?${p.toString()}`,
     API_TIMEOUTS_MS.default,
     "Fetch versions",
   );
@@ -176,6 +186,7 @@ export async function fetchCasesForRun(
 }
 
 export async function semanticSearch(
+  repository: string,
   query: string,
   opts: {
     limit?: number;
@@ -187,6 +198,7 @@ export async function semanticSearch(
   return apiPost<TestCase[]>(
     `/api/search`,
     {
+      repository,
       query,
       limit: opts.limit,
       failedOnly: opts.failedOnly,
@@ -198,56 +210,55 @@ export async function semanticSearch(
 }
 
 export async function fetchDashboardKpis(
+  repository: string,
   sinceIso?: string,
 ): Promise<DashboardKpis> {
-  const p = new URLSearchParams();
+  const p = new URLSearchParams({ repository });
   if (sinceIso) p.set("since", sinceIso);
-  const qs = p.toString();
   return apiGet<DashboardKpis>(
-    `/api/kpis${qs ? `?${qs}` : ""}`,
+    `/api/kpis?${p.toString()}`,
     API_TIMEOUTS_MS.default,
     "Fetch metrics",
   );
 }
 
 export async function fetchRunTrend(
+  repository: string,
   sinceIso?: string,
   filters: TrendFilters = {},
 ): Promise<TrendPoint[]> {
-  const p = new URLSearchParams();
+  const p = new URLSearchParams({ repository });
   if (sinceIso) p.set("since", sinceIso);
-  for (const r of filters.repositories ?? []) p.append("repository", r);
   for (const b of filters.branches ?? []) p.append("branch", b);
   for (const v of filters.versionMinors ?? []) p.append("versionMinor", v);
-  const qs = p.toString();
   return apiGet<TrendPoint[]>(
-    `/api/trend${qs ? `?${qs}` : ""}`,
+    `/api/trend?${p.toString()}`,
     API_TIMEOUTS_MS.default,
     "Fetch trend",
   );
 }
 
 export async function fetchExecutedDrops(
+  repository: string,
   sinceIso?: string,
 ): Promise<ExecutedDrop[]> {
-  const p = new URLSearchParams();
+  const p = new URLSearchParams({ repository });
   if (sinceIso) p.set("since", sinceIso);
-  const qs = p.toString();
   return apiGet<ExecutedDrop[]>(
-    `/api/drops${qs ? `?${qs}` : ""}`,
+    `/api/drops?${p.toString()}`,
     API_TIMEOUTS_MS.default,
     "Fetch executed drops",
   );
 }
 
 export async function fetchRegressions(
+  repository: string,
   days?: number,
 ): Promise<RegressionReport> {
-  const p = new URLSearchParams();
+  const p = new URLSearchParams({ repository });
   if (days != null) p.set("days", String(days));
-  const qs = p.toString();
   return apiGet<RegressionReport>(
-    `/api/regressions${qs ? `?${qs}` : ""}`,
+    `/api/regressions?${p.toString()}`,
     // Two windowed case scans (like flakes) — use the longer flakes timeout.
     API_TIMEOUTS_MS.flakes,
     "Fetch regressions",
@@ -255,13 +266,13 @@ export async function fetchRegressions(
 }
 
 export async function fetchFailureClusters(
+  repository: string,
   days?: number,
 ): Promise<ClusterReport> {
-  const p = new URLSearchParams();
+  const p = new URLSearchParams({ repository });
   if (days != null) p.set("days", String(days));
-  const qs = p.toString();
   return apiGet<ClusterReport>(
-    `/api/clusters${qs ? `?${qs}` : ""}`,
+    `/api/clusters?${p.toString()}`,
     // A full windowed failed-case scan — use the longer flakes timeout.
     API_TIMEOUTS_MS.flakes,
     "Fetch failure clusters",
@@ -269,11 +280,12 @@ export async function fetchFailureClusters(
 }
 
 export async function fetchTestHistory(
+  repository: string,
   testSuite: string,
   name: string,
   versionMinor?: string,
 ): Promise<TestHistory> {
-  const p = new URLSearchParams({ suite: testSuite, name });
+  const p = new URLSearchParams({ repository, suite: testSuite, name });
   if (versionMinor) p.set("version", versionMinor);
   return apiGet<TestHistory>(
     `/api/test-history?${p.toString()}`,
@@ -283,10 +295,11 @@ export async function fetchTestHistory(
 }
 
 export async function fetchFlakyTests(
+  repository: string,
   window: FlakesWindow,
   opts: { minRuns?: number } = {},
 ): Promise<FlakyTest[]> {
-  const p = new URLSearchParams({ window });
+  const p = new URLSearchParams({ repository, window });
   if (opts.minRuns != null) p.set("minRuns", String(opts.minRuns));
   return apiGet<FlakyTest[]>(
     `/api/flakes?${p.toString()}`,

@@ -1,11 +1,14 @@
-import { handle } from "@/lib/server-respond";
+import { handle, repositoryParam } from "@/lib/server-respond";
 import { fetchDashboardKpis } from "@/lib/weaviate/queries.server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request): Promise<Response> {
-  const sinceRaw = new URL(req.url).searchParams.get("since") ?? undefined;
+  const sp = new URL(req.url).searchParams;
+  const repository = repositoryParam(sp);
+  if (repository instanceof Response) return repository;
+  const sinceRaw = sp.get("since") ?? undefined;
   if (sinceRaw !== undefined) {
     const parsed = new Date(sinceRaw);
     if (Number.isNaN(parsed.getTime())) {
@@ -15,5 +18,5 @@ export async function GET(req: Request): Promise<Response> {
       );
     }
   }
-  return handle(() => fetchDashboardKpis(sinceRaw));
+  return handle(() => fetchDashboardKpis(repository, sinceRaw));
 }

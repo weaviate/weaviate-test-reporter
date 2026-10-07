@@ -10,6 +10,8 @@ import {
   User2,
   Wand2,
 } from "lucide-react";
+import { runHref } from "@/lib/repository";
+import { useRepository } from "@/lib/useRepository";
 import type {
   AgentAnswer,
   AgentSearch,
@@ -132,6 +134,7 @@ function UsageFooter({ answer }: { answer: AgentAnswer }) {
 }
 
 function Sources({ sources }: { sources: NonNullable<AgentAnswer["sources"]> }) {
+  const repository = useRepository();
   // Group by collection so multiple sources from the same collection
   // share a header — keeps the chip strip readable when the agent
   // pulls 10+ rows.
@@ -153,7 +156,7 @@ function Sources({ sources }: { sources: NonNullable<AgentAnswer["sources"]> }) 
           </span>
           {ids.map((id) => {
             const href =
-              collection === "TestRun" ? `/?run=${encodeURIComponent(id)}` : null;
+              collection === "TestRun" ? runHref(id, repository) : null;
             const label = id.slice(0, 8);
             const className =
               "inline-flex items-center gap-1 px-2 py-0.5 rounded " +

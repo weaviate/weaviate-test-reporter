@@ -1,8 +1,8 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowUpRight,
   ChevronRight,
@@ -22,6 +22,8 @@ import {
   type RunFilters,
 } from "@/lib/queries";
 import { RECENT_RUNS_LIMIT } from "@/lib/constants";
+import { runHref, withRepository } from "@/lib/repository";
+import { useRepository } from "@/lib/useRepository";
 import type { TestRun } from "@/lib/types";
 import { summarizeRunCounts } from "@/lib/analysis";
 
@@ -81,7 +83,10 @@ function ExpandedRunBody({ run }: { run: TestRun }) {
             >
               <div className="flex items-center justify-between gap-3 mb-1.5">
                 <Link
-                  href={`/tests?suite=${encodeURIComponent(c.test_suite)}&name=${encodeURIComponent(c.name)}&from=explorer`}
+                  href={withRepository(
+                    `/tests?suite=${encodeURIComponent(c.test_suite)}&name=${encodeURIComponent(c.name)}&from=explorer`,
+                    run.repository,
+                  )}
                   className="min-w-0 flex-1 font-mono text-[13px] text-wv-fog hover:text-wv-green transition-colors truncate"
                   data-testid="case-history-link"
                   title="Open this test's history"
@@ -250,8 +255,6 @@ function initialFiltersFromURL(params: URLSearchParams | null): RunFilters {
   if (versionMinors.length) seed.versionMinors = versionMinors;
   const versionFulls = params.getAll("versionFull").filter(Boolean);
   if (versionFulls.length) seed.versionFulls = versionFulls;
-  const repos = params.getAll("repository").filter(Boolean);
-  if (repos.length) seed.repositories = repos;
   const statuses = params.getAll("status").filter(Boolean);
   if (statuses.length) seed.statuses = statuses;
   const search = params.get("search")?.trim();
@@ -272,6 +275,8 @@ export default function TestExplorerPage() {
 
 function TestExplorerBody() {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const repository = useRepository();
   // useState initializer runs once — captures the URL-seeded filters
   // on first render. Subsequent navigation back to / preserves whatever
   // the user typed; deep-links from /versions still work.
@@ -282,10 +287,10 @@ function TestExplorerBody() {
   // refetch, so "Load more" doesn't flash the list.
   const [limit, setLimit] = useState(RECENT_RUNS_LIMIT);
   const runs = useAsync(
-    () => fetchRecentRuns(filters, limit),
+    () => fetchRecentRuns(repository, filters, limit),
     [
+      repository,
       filters.search ?? "",
-      (filters.repositories ?? []).join("|"),
       (filters.statuses ?? []).join("|"),
       (filters.versionMinors ?? []).join("|"),
       (filters.versionFulls ?? []).join("|"),
@@ -301,6 +306,15 @@ function TestExplorerBody() {
     () => (pinnedUuid ? fetchRunById(pinnedUuid) : Promise.resolve(null)),
     [pinnedUuid ?? ""],
   );
+  // A linked run from another repository switches the selection to that
+  // repository, keeping only the pin: other filters belong to the previous
+  // repository.
+  const pinnedRepository = pinned.data?.repository;
+  useEffect(() => {
+    if (pinnedUuid && pinnedRepository && pinnedRepository !== repository) {
+      router.replace(runHref(pinnedUuid, pinnedRepository));
+    }
+  }, [pinnedUuid, pinnedRepository, repository, router]);
   const [pinnedExpanded, setPinnedExpanded] = useState(true);
   // A different linked run should open expanded regardless of a prior toggle.
   // React's "adjust state during render on a key change" pattern — resets
@@ -357,7 +371,11 @@ function TestExplorerBody() {
         style={{ animationDelay: "80ms" }}
       >
         <div className="mb-5">
-          <RunFilterBar filters={filters} onChange={handleFilterChange} />
+          <RunFilterBar
+            repository={repository}
+            filters={filters}
+            onChange={handleFilterChange}
+          />
         </div>
 
         {pinnedUuid ? (

@@ -10,6 +10,8 @@ import { ErrorState, LoadingState } from "@/components/States";
 import { TestHistoryView } from "@/components/TestHistoryView";
 import { useAsync } from "@/lib/useAsync";
 import { fetchTestHistory } from "@/lib/queries";
+import { withRepository } from "@/lib/repository";
+import { useRepository } from "@/lib/useRepository";
 
 // Known deep-link origins → the "← Back to …" target. An unknown or
 // directly-opened URL falls back to the Test Explorer.
@@ -31,6 +33,7 @@ export default function TestHistoryPage() {
 
 function TestHistoryBody() {
   const params = useSearchParams();
+  const repository = useRepository();
   const suite = params.get("suite") ?? "";
   const name = params.get("name") ?? "";
   // Optional version scope (set by the per-version Flakes deep-link) — keeps the
@@ -44,9 +47,9 @@ function TestHistoryBody() {
   const history = useAsync(
     () =>
       enabled
-        ? fetchTestHistory(suite, name, version || undefined)
+        ? fetchTestHistory(repository, suite, name, version || undefined)
         : Promise.resolve(null),
-    [suite, name, version],
+    [repository, suite, name, version],
   );
 
   if (!enabled) {
@@ -55,7 +58,7 @@ function TestHistoryBody() {
         <PageHeader
           eyebrow="Test history"
           title="Single-test history"
-          description="A test's pass/fail timeline across every run, branch, and version."
+          description="A test's pass/fail timeline across the repository's runs, branches, and versions."
         />
         <section className="px-8 py-8">
           <EmptyState
@@ -72,7 +75,7 @@ function TestHistoryBody() {
     <>
       <div className="px-8 pt-6">
         <Link
-          href={back.href}
+          href={withRepository(back.href, repository)}
           className="inline-flex items-center gap-1.5 text-[13px] text-wv-fog-muted hover:text-wv-fog transition-colors"
           data-testid="test-history-back"
         >

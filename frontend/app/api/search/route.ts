@@ -1,4 +1,4 @@
-import { handle, badRequest } from "@/lib/server-respond";
+import { handle, badRequest, repositoryField } from "@/lib/server-respond";
 import { semanticSearch } from "@/lib/weaviate/queries.server";
 import {
   TARGET_VECTORS,
@@ -13,6 +13,7 @@ export const dynamic = "force-dynamic";
 // length limits.
 export async function POST(req: Request): Promise<Response> {
   const body = (await req.json().catch(() => null)) as {
+    repository?: unknown;
     query?: unknown;
     limit?: unknown;
     failedOnly?: unknown;
@@ -21,6 +22,8 @@ export async function POST(req: Request): Promise<Response> {
   if (!body || typeof body.query !== "string") {
     return badRequest("query (string) is required");
   }
+  const repository = repositoryField(body.repository);
+  if (repository instanceof Response) return repository;
   const targetVector: TargetVector = (
     TARGET_VECTORS as readonly string[]
   ).includes(body.targetVector as string)
@@ -32,7 +35,11 @@ export async function POST(req: Request): Promise<Response> {
   const failedOnly = Boolean(body.failedOnly);
   return handle(
     () =>
-      semanticSearch(body.query as string, { limit, failedOnly, targetVector }),
+      semanticSearch(repository, body.query as string, {
+        limit,
+        failedOnly,
+        targetVector,
+      }),
     req,
   );
 }

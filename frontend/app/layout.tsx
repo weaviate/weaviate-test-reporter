@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Inter, Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "@/components/Sidebar";
+import { RepositoryScope } from "@/components/RepositoryScope";
 import { getAgentAvailable } from "@/lib/server-env";
 
 // Rendered per-request so `getAgentAvailable()` reads the runtime WEAVIATE_URL
@@ -41,8 +43,16 @@ export default function RootLayout({
     >
       <body className="min-h-full">
         <div className="flex min-h-screen">
-          <Sidebar agentAvailable={getAgentAvailable()} />
-          <main className="flex-1 min-w-0">{children}</main>
+          {/* Both read the selected repository from the URL
+              (useSearchParams), which needs a Suspense boundary. */}
+          <Suspense fallback={null}>
+            <Sidebar agentAvailable={getAgentAvailable()} />
+          </Suspense>
+          <main className="flex-1 min-w-0">
+            <Suspense fallback={null}>
+              <RepositoryScope>{children}</RepositoryScope>
+            </Suspense>
+          </main>
         </div>
       </body>
     </html>

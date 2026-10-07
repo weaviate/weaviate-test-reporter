@@ -1,8 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Send, Square } from "lucide-react";
 import { AgentMessage, type StoredMessage } from "./AgentMessage";
+import { useRepository } from "@/lib/useRepository";
 import {
   QueryAgentError,
   streamAskAgent,
@@ -28,10 +29,14 @@ const EXAMPLE_PROMPTS = [
  * stream closes or the user cancels via the Stop button).
  */
 export function AgentChat() {
+  const repository = useRepository();
   const [messages, setMessages] = useState<StoredMessage[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // Leaving the page or switching repository unmounts the chat; an abandoned
+  // stream would keep using Query Agent quota.
+  useEffect(() => () => abortRef.current?.abort(), []);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   function scrollToBottom() {
@@ -111,7 +116,7 @@ export function AgentChat() {
           onError: (e) =>
             updateLastAssistant((prev) => ({ ...prev, error: e.message })),
         },
-        { history, signal: ctrl.signal },
+        { history, repository, signal: ctrl.signal },
       );
     } catch (e) {
       if (ctrl.signal.aborted) {

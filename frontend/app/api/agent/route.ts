@@ -1,4 +1,5 @@
 import { serverEnv, getAgentAvailable } from "@/lib/server-env";
+import { repositoryField } from "@/lib/server-respond";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,24 +20,32 @@ const DEFAULT_COLLECTIONS = [
  * playbook (no "if asked X, do Y") — that wouldn't scale. It gives the agent:
  *   1. the two collections + key fields, meanings and VALID VALUES,
  *   2. what's denormalized onto TestCase now — run_started_at, version_minor,
- *      job_name and branch live directly on the case, so time windows AND
- *      version/job/branch scoping DON'T need the cross-reference (repository does),
+ *      job_name, branch and repository live directly on the case, so time
+ *      windows AND version/job/branch/repository scoping DON'T need the
+ *      cross-reference,
  *   3. generic methodology (answer from the data; finish multi-step calcs).
  * Without this the agent reliably flakes on filters/aggregations and even
  * mislabels the `status` value as a result.
  */
 const SYSTEM_PROMPT = `You answer questions about CI/CD test results stored in this Weaviate instance, using only its data. There are two collections:
 
-- TestRun: one CI test-run execution. Key fields: status (values 'success', 'failure' or 'infra_failure' — 'failure' means tests ran and some failed; 'infra_failure' means the CI job died before producing any test report, so its tests_* counts are all zero and mean "nothing ran", not "all green"; for ALL unsuccessful runs filter status != 'success' so infra failures are included), started_at (when the run actually ran — use this for time windows and chronological ordering), timestamp (when the row was ingested; prefer started_at for "when"), repository, branch, version_minor / version_patch / version_full (the Weaviate version under test), total_duration_ms, tests_total / tests_passed / tests_failed / tests_skipped / tests_errors (per-run test-case counts — read these directly instead of counting TestCases), actor, trigger_type, run_id, run_url / job_url (run_url links to the GitHub Actions run; job_url is the best available job link and may fall back to run_url when a per-job deep link is unavailable).
-- TestCase: one individual test result within a run. Key fields: name (the test's identifier), test_suite, framework, status (values 'passed', 'failed' or 'skipped'), duration_ms (this test's execution time in milliseconds — distinct from the run's total_duration_ms), error_message, stack_trace, failure_type, failure_fingerprint (a hash that is IDENTICAL for failures with the same cause — the same normalized stack trace, or for Go panics the same panic; tests stopped by one Go timeout share it — group by it to cluster identical failures), run_started_at (the parent run's start time, copied onto the case), version_minor / job_name / branch (the Weaviate version under test, the CI job name, and the branch — denormalized onto every case so you can filter and group by them DIRECTLY, no cross-reference needed).
+- TestRun: one CI test-run execution. Key fields: status (values 'success', 'failure' or 'infra_failure' — 'failure' means tests ran and some failed; 'infra_failure' means the CI job died before producing any test report, so its tests_* counts are all zero and mean "nothing ran", not "all green"; for ALL unsuccessful runs filter status != 'success' so infra failures are included), started_at (when the run actually ran — use this for time windows and chronological ordering), timestamp (when the row was ingested; prefer started_at for "when"), repository (the GitHub owner/name whose CI produced the run; tests from different repositories are unrelated), branch, version_minor / version_patch / version_full (the Weaviate version under test), total_duration_ms, tests_total / tests_passed / tests_failed / tests_skipped / tests_errors (per-run test-case counts — read these directly instead of counting TestCases), actor, trigger_type, run_id, run_url / job_url (run_url links to the GitHub Actions run; job_url is the best available job link and may fall back to run_url when a per-job deep link is unavailable).
+- TestCase: one individual test result within a run. Key fields: name (the test's identifier), test_suite, framework, status (values 'passed', 'failed' or 'skipped'), duration_ms (this test's execution time in milliseconds — distinct from the run's total_duration_ms), error_message, stack_trace, failure_type, failure_fingerprint (a hash that is IDENTICAL for failures with the same cause — the same normalized stack trace, or for Go panics the same panic; tests stopped by one Go timeout share it — group by it to cluster identical failures), run_started_at (the parent run's start time, copied onto the case), version_minor / job_name / branch / repository (the Weaviate version under test, the CI job name, the branch and the repository — denormalized onto every case so you can filter and group by them DIRECTLY, no cross-reference needed).
 
-Relationship: each TestCase has a cross-reference 'belongsToRun' to its parent TestRun. Filter TestCase DIRECTLY — no cross-reference — for time windows (run_started_at) and for version_minor / job_name / branch: all four are denormalized onto the case. For fields that exist only on TestRun, traverse through belongsToRun (for example: repository, actor, trigger_type, run_id, commit_hash, workflow_run_id / workflow_run_attempt / workflow_name, total_duration_ms, tests_* counts, run_url / job_url, and the finer version fields version_patch / version_full). To count or list the tests within a run, traverse from TestRun to its TestCases, or read the run's tests_* counts directly.
+Relationship: each TestCase has a cross-reference 'belongsToRun' to its parent TestRun. Filter TestCase DIRECTLY — no cross-reference — for time windows (run_started_at) and for version_minor / job_name / branch / repository: all five are denormalized onto the case. For fields that exist only on TestRun, traverse through belongsToRun (for example: actor, trigger_type, run_id, commit_hash, workflow_run_id / workflow_run_attempt / workflow_name, total_duration_ms, tests_* counts, run_url / job_url, and the finer version fields version_patch / version_full). To count or list the tests within a run, traverse from TestRun to its TestCases, or read the run's tests_* counts directly.
 
 Answer directly from this data: run the searches and aggregations you need, and finish multi-step calculations. A run-level pass rate is successful runs / total runs; a test-level pass rate is tests_passed / tests_total summed over the runs in scope. A "most frequent" ranking (e.g. which tests fail most) is a grouped count ordered by count. Never ask the user to supply data.`;
 
+/** SYSTEM_PROMPT scoped to the repository the user has selected. */
+function scopedPrompt(repository: string): string {
+  return `${SYSTEM_PROMPT}
+
+The user is viewing repository '${repository}'. Unless they name another repository, answer about that repository only: filter TestRun and TestCase on repository = '${repository}'.`;
+}
+
 /**
  * Server-side proxy to the Weaviate Query Agent (Cloud-only). The browser
- * POSTs `{ query, history?, collections? }`; we attach the server-held key +
+ * POSTs `{ query, history?, repository? }`; we attach the server-held key +
  * cluster URL and stream the SSE response straight back. This keeps the key
  * off the client entirely (the old browser path embedded it).
  */
@@ -55,6 +64,7 @@ export async function POST(req: Request): Promise<Response> {
   const body = (await req.json().catch(() => null)) as {
     query?: string;
     history?: ChatMessage[];
+    repository?: unknown;
   } | null;
   if (!body || typeof body.query !== "string" || !body.query.trim()) {
     return Response.json(
@@ -62,6 +72,9 @@ export async function POST(req: Request): Promise<Response> {
       { status: 400 },
     );
   }
+  // Validated: the value is interpolated into the system prompt.
+  const repository = repositoryField(body.repository);
+  if (repository instanceof Response) return repository;
 
   // Multi-turn: trailing user message is the current question. Single-shot:
   // bare string. (The agent has no server-side memory; the client replays
@@ -82,7 +95,7 @@ export async function POST(req: Request): Promise<Response> {
       headers: {},
       query: askPayload,
       collections: DEFAULT_COLLECTIONS,
-      system_prompt: SYSTEM_PROMPT,
+      system_prompt: scopedPrompt(repository),
       result_evaluation: "none",
       include_progress: true,
       include_final_state: true,

@@ -9,8 +9,12 @@ import {
   SearchCode,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { BrandMark } from "./BrandMark";
+import { fetchRepositories } from "@/lib/queries";
+import { DEFAULT_REPOSITORY, withRepository } from "@/lib/repository";
+import { useAsync } from "@/lib/useAsync";
+import { useRepository } from "@/lib/useRepository";
 
 type NavItem = {
   href: string;
@@ -37,8 +41,64 @@ function isActive(pathname: string, href: string): boolean {
   return pathname.startsWith(href);
 }
 
+/**
+ * Picks the repository every page is scoped to. Switching keeps the current
+ * page but drops its other params: filters and deep links are per repository.
+ */
+function RepositorySelect({
+  pathname,
+  repository,
+}: {
+  pathname: string;
+  repository: string;
+}) {
+  const router = useRouter();
+  const repos = useAsync(() => fetchRepositories(), []);
+  const options = (repos.data ?? []).map((r) => r.value);
+  // The selected repository stays selectable while the list loads, or when it
+  // has no runs (a hand-edited URL); the default one stays reachable when the
+  // list fails to load.
+  if (!options.includes(repository)) options.unshift(repository);
+  if (!options.includes(DEFAULT_REPOSITORY)) options.push(DEFAULT_REPOSITORY);
+
+  return (
+    <div className="px-4 py-4 border-b border-wv-navy-3/40">
+      <label
+        htmlFor="repository-select"
+        className="block mb-1.5 text-[10px] uppercase tracking-[0.2em] font-mono text-wv-fog-muted"
+      >
+        Repository
+      </label>
+      <select
+        id="repository-select"
+        data-testid="repository-select"
+        value={repository}
+        onChange={(e) => router.push(withRepository(pathname, e.target.value))}
+        className="
+          w-full px-2.5 py-1.5 rounded-md text-[13px] font-mono
+          bg-wv-navy-2/60 text-wv-fog
+          border border-wv-navy-3/60 hover:border-wv-navy-3
+          outline-none focus-visible:border-wv-green/60
+        "
+      >
+        {options.map((r) => (
+          <option key={r} value={r}>
+            {r}
+          </option>
+        ))}
+      </select>
+      {repos.error ? (
+        <p className="mt-1.5 text-[11px] text-wv-danger">
+          Couldn&apos;t load repositories.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function Sidebar({ agentAvailable }: { agentAvailable: boolean }) {
   const pathname = usePathname() ?? "/";
+  const repository = useRepository();
   // Agent nav is gated to WCD deployments. `agentAvailable` is computed
   // server-side (from WEAVIATE_URL) and passed down from the root layout, so
   // the cluster URL never reaches the browser and there's no hydration
@@ -55,7 +115,7 @@ export function Sidebar({ agentAvailable }: { agentAvailable: boolean }) {
     >
       <div className="px-6 pt-7 pb-5 border-b border-wv-navy-3/40">
         <Link
-          href="/"
+          href={withRepository("/", repository)}
           className="flex flex-col gap-2 group"
           aria-label="Weaviate Test Reporter, go to Test Explorer"
         >
@@ -66,13 +126,15 @@ export function Sidebar({ agentAvailable }: { agentAvailable: boolean }) {
         </Link>
       </div>
 
+      <RepositorySelect pathname={pathname} repository={repository} />
+
       <nav className="flex-1 p-3 space-y-1" aria-label="Primary">
         {nav.map(({ href, label, Icon }, i) => {
           const active = isActive(pathname, href);
           return (
             <Link
               key={href}
-              href={href}
+              href={withRepository(href, repository)}
               aria-current={active ? "page" : undefined}
               className={[
                 "wv-reveal flex items-center gap-3 px-3 py-2.5 rounded-md text-sm",

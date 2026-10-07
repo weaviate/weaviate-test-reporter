@@ -94,8 +94,6 @@ export type RunFilters = {
   /** Free-text fragment matched (case-insensitive) against run_id, branch,
    *  actor, commit_hash. */
   search?: string;
-  /** Repository property — multi-select. */
-  repositories?: string[];
   /** Status property — multi-select. */
   statuses?: string[];
   /** Minor version (e.g. "1.37") — multi-select. */
@@ -104,10 +102,9 @@ export type RunFilters = {
   versionFulls?: string[];
 };
 
-/** Filters for the dashboard trend charts (WS2 H2 slicing) — repo / branch /
- *  minor version. Scopes the charts only; the KPI tiles stay global. */
+/** Filters for the dashboard trend charts (WS2 H2 slicing) — branch / minor
+ *  version within the selected repository. Scopes the charts only. */
 export type TrendFilters = {
-  repositories?: string[];
   branches?: string[];
   versionMinors?: string[];
 };

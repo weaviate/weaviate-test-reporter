@@ -27,16 +27,22 @@ jobs:
       - name: Verify Docker is available
         run: docker version
 
+      # Latest Weaviate release, release candidates included: the same lookup
+      # the e2e suites use.
+      - name: Resolve the latest Weaviate version
+        id: weaviate
+        uses: weaviate/github-common-actions/.github/actions/get-latest-weaviate-version@6deeb2efa2d1ede3e79ef11fabd6c4b6fb0cbd9f # main
+
       # Pre-pull images so the test wall-time is bounded and the pulls
       # don't fight with testcontainers' container start.
       - name: Pre-pull container images
         run: |
-          docker pull semitechnologies/weaviate:1.37.3
+          docker pull semitechnologies/weaviate:${{ steps.weaviate.outputs.latest_weaviate_version }}
           docker pull semitechnologies/model2vec-inference:minishlab-potion-retrieval-32M
 
       - name: pytest tests/integration/
         working-directory: action
         env:
-          WEAVIATE_TEST_IMAGE: semitechnologies/weaviate:1.37.3
+          WEAVIATE_TEST_IMAGE: semitechnologies/weaviate:${{ steps.weaviate.outputs.latest_weaviate_version }}
           MODEL2VEC_TEST_IMAGE: semitechnologies/model2vec-inference:minishlab-potion-retrieval-32M
         run: pytest tests/integration/ -v --tb=short

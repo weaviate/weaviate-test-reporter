@@ -1,4 +1,5 @@
 import "server-only";
+import { repositoryFromBody, repositoryFromParams } from "./repository";
 
 /**
  * Run a route-handler body and return its result as JSON. A thrown error
@@ -43,6 +44,26 @@ export async function handle<T>(
 
 export function badRequest(message: string): Response {
   return Response.json({ error: message }, { status: 400 });
+}
+
+/**
+ * The request's `repository` query param: DEFAULT_REPOSITORY when absent or
+ * blank, a 400 response when it is not a GitHub `owner/name`. Callers return
+ * the Response as is.
+ */
+export function repositoryParam(sp: URLSearchParams): string | Response {
+  return (
+    repositoryFromParams(sp, "repository") ??
+    badRequest("Invalid 'repository' parameter; expected owner/name.")
+  );
+}
+
+/** `repositoryParam` for a POST body's `repository` field. */
+export function repositoryField(value: unknown): string | Response {
+  return (
+    repositoryFromBody(value) ??
+    badRequest("Invalid 'repository'; expected owner/name.")
+  );
 }
 
 /**
